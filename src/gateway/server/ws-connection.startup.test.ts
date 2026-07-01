@@ -1,7 +1,7 @@
 /**
  * WebSocket connection startup regression tests.
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GATEWAY_CLIENT_MODES,
   GATEWAY_CLIENT_NAMES,
@@ -13,6 +13,10 @@ import {
   GATEWAY_STARTUP_PENDING_CLOSE_CAUSE,
   GATEWAY_STARTUP_UNAVAILABLE_REASON,
 } from "../../../packages/gateway-protocol/src/startup-unavailable.js";
+import {
+  listRecentGatewayWsCloseEvents,
+  resetGatewayWsCloseEventsForTest,
+} from "./ws-close-diagnostics.js";
 import { attachGatewayWsConnectionHandler } from "./ws-connection.js";
 import {
   attachGatewayWsForTest,
@@ -22,6 +26,10 @@ import {
 } from "./ws-connection.test-helpers.js";
 
 describe("attachGatewayWsConnectionHandler startup readiness", () => {
+  beforeEach(() => {
+    resetGatewayWsCloseEventsForTest();
+  });
+
   it("returns a retryable startup-unavailable connect response while sidecars are pending", async () => {
     const sent: unknown[] = [];
     const socket = createGatewayWsTestSocket({
@@ -123,5 +131,25 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
       expect.stringContaining("closed before connect"),
       expect.anything(),
     );
+    // Expected startup-retry closes are known-benign noise; recording them would
+    // let a burst of retries evict genuine failure diagnostics from the buffer.
+    expect(listRecentGatewayWsCloseEvents()).toEqual([]);
+  });
+
+  it("does not record benign SwiftPM test-helper close noise in gateway WS diagnostics", async () => {
+    const socket = createGatewayWsTestSocket({ closeEmits: true });
+    attachGatewayWsForTest({
+      attach: attachGatewayWsConnectionHandler,
+      socket,
+      headers: { "user-agent": "swiftpm-testing-helper/1.0" },
+      options: {
+        logWsControl: createGatewayWsTestLogger() as never,
+        buildRequestContext: () => createGatewayWsTestRequestContext() as never,
+      },
+    });
+
+    socket.emit("close", 1001, Buffer.from("client left"));
+
+    expect(listRecentGatewayWsCloseEvents()).toEqual([]);
   });
 });

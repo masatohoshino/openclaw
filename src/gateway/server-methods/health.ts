@@ -9,6 +9,7 @@ import { getGatewayModelPricingHealth } from "../model-pricing-cache-state.js";
 import type { ChannelRuntimeSnapshot } from "../server-channel-runtime.types.js";
 import { HEALTH_REFRESH_INTERVAL_MS } from "../server-constants.js";
 import { formatError } from "../server-utils.js";
+import { listRecentGatewayWsCloseEvents } from "../server/ws-close-diagnostics.js";
 import { formatForLog } from "../ws-log.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
@@ -92,7 +93,11 @@ function mergeCachedHealthRuntimeState(params: {
   cached: HealthSummary;
   eventLoop?: HealthSummary["eventLoop"];
 }): HealthSummary {
-  const { contextEngines: _cachedContextEngines, ...cached } = params.cached;
+  const {
+    contextEngines: _cachedContextEngines,
+    gatewayWsCloses: _cachedGatewayWsCloses,
+    ...cached
+  } = params.cached;
   const quarantinedContextEngines: NonNullable<HealthSummary["contextEngines"]>["quarantined"] = [];
   for (const entry of listContextEngineQuarantines()) {
     const summary: NonNullable<HealthSummary["contextEngines"]>["quarantined"][number] = {
@@ -106,11 +111,15 @@ function mergeCachedHealthRuntimeState(params: {
     }
     quarantinedContextEngines.push(summary);
   }
+  const recentGatewayWsCloses = listRecentGatewayWsCloseEvents();
   return {
     ...cached,
     ...(params.eventLoop ? { eventLoop: params.eventLoop } : {}),
     ...(quarantinedContextEngines.length > 0
       ? { contextEngines: { quarantined: quarantinedContextEngines } }
+      : {}),
+    ...(recentGatewayWsCloses.length > 0
+      ? { gatewayWsCloses: { recent: recentGatewayWsCloses } }
       : {}),
     modelPricing: getGatewayModelPricingHealth({
       enabled: params.cached.modelPricing?.state !== "disabled",

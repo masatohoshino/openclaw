@@ -35,6 +35,7 @@ import { isGatewaySecretRefUnavailableError } from "../gateway/credentials.js";
 import { getGatewayModelPricingHealth } from "../gateway/model-pricing-cache-state.js";
 import { isGatewayModelPricingEnabled } from "../gateway/model-pricing-config.js";
 import type { ChannelRuntimeSnapshot } from "../gateway/server-channel-runtime.types.js";
+import { listRecentGatewayWsCloseEvents } from "../gateway/server/ws-close-diagnostics.js";
 import { info } from "../globals.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -54,6 +55,7 @@ import type {
   ChannelAccountHealthSummary,
   ChannelHealthSummary,
   ContextEngineHealthSummary,
+  GatewayWsCloseHealthSummary,
   HealthSummary,
   PluginHealthErrorSummary,
   PluginHealthSummary,
@@ -240,6 +242,28 @@ export function formatContextEngineHealthLine(summary: HealthSummary): string | 
   }
   const engines = quarantined.map((entry) => entry.engineId).join(", ");
   return `Context engine: warning (${quarantined.length} quarantined; downgraded to legacy: ${engines})`;
+}
+
+function buildGatewayWsCloseHealthSummary(): GatewayWsCloseHealthSummary | undefined {
+  const recent = listRecentGatewayWsCloseEvents();
+  return recent.length > 0 ? { recent } : undefined;
+}
+
+/** Formats recent gateway WebSocket close diagnostics for text health output. */
+export function formatGatewayWsCloseHealthLine(summary: HealthSummary): string | null {
+  const recent = summary.gatewayWsCloses?.recent ?? [];
+  if (recent.length === 0) {
+    return null;
+  }
+  const causeCounts = new Map<string, number>();
+  for (const entry of recent) {
+    const cause = entry.cause ?? "unknown";
+    causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
+  }
+  const causes = Array.from(causeCounts.entries())
+    .map(([cause, count]) => (count > 1 ? `${cause} x${count}` : cause))
+    .join(", ");
+  return `Gateway WS closes: ${recent.length} recent (causes: ${causes})`;
 }
 
 const resolveHeartbeatSummary = (cfg: OpenClawConfig, agentId: string) =>
@@ -658,6 +682,7 @@ export async function getHealthSnapshot(params?: {
 
   const pluginHealth = buildPluginHealthSummary();
   const contextEngineHealth = buildContextEngineHealthSummary();
+  const gatewayWsCloseHealth = buildGatewayWsCloseHealthSummary();
   const summary: HealthSummary = {
     ok: true,
     ts: Date.now(),
@@ -665,6 +690,7 @@ export async function getHealthSnapshot(params?: {
     ...(params?.eventLoop ? { eventLoop: params.eventLoop } : {}),
     ...(pluginHealth ? { plugins: pluginHealth } : {}),
     ...(contextEngineHealth ? { contextEngines: contextEngineHealth } : {}),
+    ...(gatewayWsCloseHealth ? { gatewayWsCloses: gatewayWsCloseHealth } : {}),
     modelPricing: getGatewayModelPricingHealth({ enabled: isGatewayModelPricingEnabled(cfg) }),
     channels,
     channelOrder,
@@ -899,6 +925,10 @@ export async function healthCommand(
     const contextEngineLine = formatContextEngineHealthLine(summary);
     if (contextEngineLine) {
       runtime.log(styleHealthChannelLine(contextEngineLine, rich));
+    }
+    const gatewayWsCloseLine = formatGatewayWsCloseHealthLine(summary);
+    if (gatewayWsCloseLine) {
+      runtime.log(styleHealthChannelLine(gatewayWsCloseLine, rich));
     }
     for (const plugin of displayPlugins) {
       const channelSummary = summary.channels?.[plugin.id];

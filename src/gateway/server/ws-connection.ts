@@ -34,6 +34,7 @@ import { logWs } from "../ws-log.js";
 import { getHealthVersion, incrementPresenceVersion } from "./health-state.js";
 import type { PreauthConnectionBudget } from "./preauth-connection-budget.js";
 import { broadcastPresenceSnapshot } from "./presence-events.js";
+import { recordGatewayWsCloseEvent } from "./ws-close-diagnostics.js";
 import {
   buildHandshakeAuthLogKey,
   HandshakeAuthLogLimiter,
@@ -408,7 +409,8 @@ export function attachGatewayWsConnectionHandler(params: AttachGatewayWsConnecti
       isLoopbackAddress(remote);
 
     socket.once("close", (code, reason) => {
-      const durationMs = Date.now() - openedAt;
+      const closedAt = Date.now();
+      const durationMs = closedAt - openedAt;
       const logForwardedFor = sanitizeLogValue(forwardedFor);
       const logOrigin = sanitizeLogValue(requestOrigin);
       const logHost = sanitizeLogValue(requestHost);
@@ -432,13 +434,24 @@ export function attachGatewayWsConnectionHandler(params: AttachGatewayWsConnecti
         endpoint,
         ...closeMeta,
       };
+      const isExpectedStartupRetryClose =
+        closeCause === GATEWAY_STARTUP_PENDING_CLOSE_CAUSE && code === GATEWAY_STARTUP_CLOSE_CODE;
+      // Known-benign pre-connect noise (macOS SwiftPM test helper churn, startup
+      // retries) is excluded so it can't evict genuine failures from the bounded buffer.
+      const isNoisyPreConnectClose =
+        !client &&
+        (isNoisySwiftPmHelperClose(requestUserAgent, remoteAddr) || isExpectedStartupRetryClose);
+      if (!isNoisyPreConnectClose) {
+        recordGatewayWsCloseEvent({
+          ts: closedAt,
+          code,
+          cause: closeCause,
+          handshake: handshakeState,
+          durationMs,
+        });
+      }
       if (!client) {
-        const isExpectedStartupRetryClose =
-          closeCause === GATEWAY_STARTUP_PENDING_CLOSE_CAUSE && code === GATEWAY_STARTUP_CLOSE_CODE;
-        const logFn =
-          isNoisySwiftPmHelperClose(requestUserAgent, remoteAddr) || isExpectedStartupRetryClose
-            ? logWsControl.debug
-            : logWsControl.warn;
+        const logFn = isNoisyPreConnectClose ? logWsControl.debug : logWsControl.warn;
         const authReason = stringMetaValue(closeMeta, "authReason");
         // This pre-connect close path has no client object yet; treat only
         // missing shared credentials as suppressible startup retry noise.

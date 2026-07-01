@@ -55,6 +55,11 @@ export type ContextEngineHealthSummary = {
   quarantined: ContextEngineHealthQuarantineSummary[];
 };
 
+/** Bounded recent gateway WebSocket close diagnostics, already reduced to non-sensitive classification fields. */
+export type GatewayWsCloseHealthSummary = {
+  recent: import("../gateway/server/ws-close-diagnostics.js").GatewayWsCloseEvent[];
+};
+
 /** Optional model pricing cache health reported by the gateway. */
 type ModelPricingHealthSummary =
   import("../gateway/model-pricing-cache-state.js").GatewayModelPricingHealth;
@@ -67,6 +72,7 @@ export type HealthSummary = {
   eventLoop?: import("../gateway/server/event-loop-health.js").GatewayEventLoopHealth;
   plugins?: PluginHealthSummary;
   contextEngines?: ContextEngineHealthSummary;
+  gatewayWsCloses?: GatewayWsCloseHealthSummary;
   modelPricing?: ModelPricingHealthSummary;
   channels: Record<string, ChannelHealthSummary>;
   channelOrder: string[];

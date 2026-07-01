@@ -10,6 +10,7 @@ import { formatHealthCheckFailure } from "./health-format.js";
 import type { HealthSummary } from "./health.js";
 import {
   formatContextEngineHealthLine,
+  formatGatewayWsCloseHealthLine,
   formatHealthChannelLines,
   formatModelPricingHealthLine,
   healthCommand,
@@ -482,6 +483,42 @@ describe("formatContextEngineHealthLine", () => {
 
     expect(formatContextEngineHealthLine(summary)).toBe(
       "Context engine: warning (1 quarantined; downgraded to legacy: lossless-claw)",
+    );
+  });
+});
+
+describe("formatGatewayWsCloseHealthLine", () => {
+  it("returns null when there are no recent close events", () => {
+    const summary = createHealthSummary({
+      channels: {},
+      channelOrder: [],
+      channelLabels: {},
+    });
+
+    expect(formatGatewayWsCloseHealthLine(summary)).toBeNull();
+  });
+
+  it("summarizes recent gateway WS close causes", () => {
+    const summary = createHealthSummary({
+      channels: {},
+      channelOrder: [],
+      channelLabels: {},
+    });
+    summary.gatewayWsCloses = {
+      recent: [
+        {
+          ts: 1,
+          code: 1008,
+          cause: "outbound-buffer-exceeded",
+          handshake: "connected",
+          durationMs: 5,
+        },
+        { ts: 2, code: 1000, cause: undefined, handshake: "connected", durationMs: 10 },
+      ],
+    };
+
+    expect(formatGatewayWsCloseHealthLine(summary)).toBe(
+      "Gateway WS closes: 2 recent (causes: outbound-buffer-exceeded, unknown)",
     );
   });
 });

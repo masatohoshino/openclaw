@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedGatewayAuth } from "../auth.js";
 import { MAX_BUFFERED_BYTES } from "../server-constants.js";
 import {
+  listRecentGatewayWsCloseEvents,
+  resetGatewayWsCloseEventsForTest,
+} from "./ws-close-diagnostics.js";
+import {
   attachGatewayWsForTest,
   createGatewayWsTestRequestContext,
   createGatewayWsTestSocket,
@@ -69,6 +73,7 @@ describe("attachGatewayWsConnectionHandler", () => {
     attachGatewayWsMessageHandlerMock.mockReset();
     broadcastPresenceSnapshotMock.mockReset();
     upsertPresenceMock.mockReset();
+    resetGatewayWsCloseEventsForTest();
   });
 
   afterEach(() => {
@@ -231,5 +236,33 @@ describe("attachGatewayWsConnectionHandler", () => {
     expect(unregister).toHaveBeenCalledTimes(1);
     expect(upsertPresenceMock).not.toHaveBeenCalled();
     expect(broadcastPresenceSnapshotMock).not.toHaveBeenCalled();
+  });
+
+  it("records a sanitized, bounded diagnostic event on close without headers or reason text", async () => {
+    const { socket } = await connectTestWs({
+      headers: {
+        "user-agent": "sensitive-ua/1.0",
+        "x-forwarded-for": "203.0.113.7",
+        origin: "https://attacker.example",
+      },
+    });
+
+    socket.emit("close", 1008, Buffer.from("secret-token=abc123"));
+
+    const recent = listRecentGatewayWsCloseEvents();
+    expect(recent).toHaveLength(1);
+    expect(recent[0]).toEqual({
+      ts: expect.any(Number),
+      code: 1008,
+      cause: undefined,
+      handshake: "pending",
+      durationMs: expect.any(Number),
+    });
+    expect(Object.keys(recent[0])).toEqual(["ts", "code", "cause", "handshake", "durationMs"]);
+    const serialized = JSON.stringify(recent);
+    expect(serialized).not.toContain("sensitive-ua");
+    expect(serialized).not.toContain("203.0.113.7");
+    expect(serialized).not.toContain("attacker.example");
+    expect(serialized).not.toContain("secret-token");
   });
 });
