@@ -263,7 +263,7 @@ export function formatGatewayWsCloseHealthLine(summary: HealthSummary): string |
   const causes = Array.from(causeCounts.entries())
     .map(([cause, count]) => (count > 1 ? `${cause} x${count}` : cause))
     .join(", ");
-  return `Gateway WS closes: ${recent.length} recent (causes: ${causes})`;
+  return `Gateway WebSocket closes: ${recent.length} recent (causes: ${causes})`;
 }
 
 const resolveHeartbeatSummary = (cfg: OpenClawConfig, agentId: string) =>

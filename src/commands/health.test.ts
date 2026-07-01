@@ -518,7 +518,7 @@ describe("formatGatewayWsCloseHealthLine", () => {
     };
 
     expect(formatGatewayWsCloseHealthLine(summary)).toBe(
-      "Gateway WS closes: 2 recent (causes: outbound-buffer-exceeded, unknown)",
+      "Gateway WebSocket closes: 2 recent (causes: outbound-buffer-exceeded, unknown)",
     );
   });
 });

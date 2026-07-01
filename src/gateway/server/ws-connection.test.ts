@@ -238,15 +238,22 @@ describe("attachGatewayWsConnectionHandler", () => {
     expect(broadcastPresenceSnapshotMock).not.toHaveBeenCalled();
   });
 
-  it("records a sanitized, bounded diagnostic event on close without headers or reason text", async () => {
-    const { socket } = await connectTestWs({
+  it("records a sanitized, bounded diagnostic event on a classified close without headers or reason text", async () => {
+    const socket = createGatewayWsTestSocket();
+    const { passed } = await connectTestWs({
+      socket,
       headers: {
         "user-agent": "sensitive-ua/1.0",
         "x-forwarded-for": "203.0.113.7",
         origin: "https://attacker.example",
       },
     });
-
+    const handlerParams = passed as { send: (frame: unknown) => void };
+    socket.bufferedAmount = MAX_BUFFERED_BYTES + 1;
+    // Triggers setCloseCause("outbound-buffer-exceeded", ...) + close(1008, ...);
+    // the mock socket.close() doesn't itself emit "close", so simulate the
+    // underlying transport actually closing.
+    handlerParams.send({ type: "res", id: "req-slow", ok: true, payload: { ok: true } });
     socket.emit("close", 1008, Buffer.from("secret-token=abc123"));
 
     const recent = listRecentGatewayWsCloseEvents();
@@ -254,7 +261,7 @@ describe("attachGatewayWsConnectionHandler", () => {
     expect(recent[0]).toEqual({
       ts: expect.any(Number),
       code: 1008,
-      cause: undefined,
+      cause: "outbound-buffer-exceeded",
       handshake: "pending",
       durationMs: expect.any(Number),
     });
@@ -264,5 +271,16 @@ describe("attachGatewayWsConnectionHandler", () => {
     expect(serialized).not.toContain("203.0.113.7");
     expect(serialized).not.toContain("attacker.example");
     expect(serialized).not.toContain("secret-token");
+  });
+
+  it("does not record a close with no classified cause, so routine disconnects can't self-seed the diagnostic buffer", async () => {
+    const { socket } = await connectTestWs();
+
+    // No setCloseCause() call happened before this — a normal disconnect,
+    // e.g. a one-shot CLI command closing its own connection after a
+    // successful request.
+    socket.emit("close", 1000, Buffer.from("done"));
+
+    expect(listRecentGatewayWsCloseEvents()).toEqual([]);
   });
 });

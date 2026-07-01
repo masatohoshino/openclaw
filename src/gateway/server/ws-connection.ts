@@ -441,7 +441,12 @@ export function attachGatewayWsConnectionHandler(params: AttachGatewayWsConnecti
       const isNoisyPreConnectClose =
         !client &&
         (isNoisySwiftPmHelperClose(requestUserAgent, remoteAddr) || isExpectedStartupRetryClose);
-      if (!isNoisyPreConnectClose) {
+      // A close with no classified cause is a normal, healthy disconnect (e.g. a
+      // one-shot CLI command like `openclaw health` closing its own gateway
+      // connection after a successful request) — recording it would let routine
+      // traffic self-seed the diagnostic buffer with noise, defeating the point
+      // of a buffer meant to explain failures.
+      if (!isNoisyPreConnectClose && closeCause) {
         recordGatewayWsCloseEvent({
           ts: closedAt,
           code,
