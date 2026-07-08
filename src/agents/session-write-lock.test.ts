@@ -456,6 +456,16 @@ describe("acquireSessionWriteLock", () => {
         expect(transientReads).toBeGreaterThanOrEqual(3);
         expect(result.cleaned).toEqual([]);
         await expect(fs.access(lockPath)).resolves.toBeUndefined();
+        // The preserved lock is surfaced as unreadable (not silently dropped) so
+        // doctor/startup diagnostics can report it.
+        expect(result.locks).toHaveLength(1);
+        expect(result.locks[0]).toMatchObject({
+          lockPath,
+          unreadable: true,
+          removable: false,
+          removed: false,
+          stale: false,
+        });
       } finally {
         spy.mockRestore();
       }

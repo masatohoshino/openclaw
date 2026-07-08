@@ -39,6 +39,10 @@ export type SessionLockInspection = {
   staleReasons: string[];
   removable: boolean;
   removed: boolean;
+  // The lock file could not be read during cleanup (transient IO persisted
+  // across retries); it was preserved rather than removed, and staleness is
+  // unknown. Surfaced so diagnostics can report the skipped lock.
+  unreadable: boolean;
 };
 
 export type SessionLockOwnerProcessArgsReader = (pid: number) => string[] | null;
@@ -901,8 +905,22 @@ export async function cleanStaleLockFiles(params: {
     const lockPath = path.join(sessionsDir, entry.name);
     const cleanupRead = await readLockPayloadForCleanup(lockPath);
     if (cleanupRead.status === "unreadable") {
-      // Fail closed: a lock we could not read is not proof of staleness. Leave it
-      // for a later sweep rather than deleting a possibly-live holder's lock.
+      // Fail closed: a lock we could not read is not proof of staleness. Surface
+      // it as unreadable + preserved so doctor/startup diagnostics report the
+      // skipped lock instead of silently dropping it; a later sweep re-evaluates
+      // once the read succeeds.
+      locks.push({
+        lockPath,
+        pid: null,
+        pidAlive: false,
+        createdAt: null,
+        ageMs: null,
+        stale: false,
+        staleReasons: [],
+        removable: false,
+        removed: false,
+        unreadable: true,
+      });
       continue;
     }
     const payload = cleanupRead.payload;
@@ -920,6 +938,7 @@ export async function cleanStaleLockFiles(params: {
       ...inspected,
       removable,
       removed: false,
+      unreadable: false,
     };
 
     if (removeStale && removable) {

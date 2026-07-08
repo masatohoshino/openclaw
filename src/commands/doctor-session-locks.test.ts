@@ -110,6 +110,50 @@ describe("noteSessionLockHealth", () => {
     await expect(fs.access(freshLock)).resolves.toBeUndefined();
   });
 
+  it("reports a preserved unreadable lock instead of silently skipping it", async () => {
+    const sessionsDir = state.sessionsDir();
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const lockPath = path.join(sessionsDir, "unreadable.jsonl.lock");
+    await fs.writeFile(
+      lockPath,
+      JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+      "utf8",
+    );
+    const aged = new Date(Date.now() - 120_000);
+    await fs.utimes(lockPath, aged, aged);
+
+    // A sustained transient read makes cleanup fail closed; doctor should still
+    // list the preserved lock rather than emit nothing.
+    const realReadFile = fs.readFile.bind(fs);
+    const spy = vi.spyOn(fs, "readFile").mockImplementation(((
+      target: Parameters<typeof fs.readFile>[0],
+      ...rest: unknown[]
+    ) => {
+      if (typeof target === "string" && target === lockPath) {
+        return Promise.reject(Object.assign(new Error("EAGAIN"), { code: "EAGAIN", errno: -11 }));
+      }
+      return (realReadFile as (...a: unknown[]) => Promise<unknown>)(target, ...rest);
+    }) as typeof fs.readFile);
+
+    try {
+      await noteSessionLockHealth({
+        shouldRepair: true,
+        staleMs: 60_000,
+        readOwnerProcessArgs: () => ["node", "/opt/openclaw/openclaw.mjs", "doctor"],
+      });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(note).toHaveBeenCalledTimes(1);
+    const [message] = firstNoteCall();
+    expect(message).toContain("Found 1 session lock file");
+    expect(message).toContain("unreadable (transient read error; preserved)");
+    expect(message).toContain("was unreadable and left in place");
+    expect(message).not.toContain("[removed]");
+    await expect(fs.access(lockPath)).resolves.toBeUndefined();
+  });
+
   it("detects stale locks without removing them for structured lint", async () => {
     const sessionsDir = state.sessionsDir();
     await fs.mkdir(sessionsDir, { recursive: true });

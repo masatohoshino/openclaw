@@ -41,6 +41,11 @@ function formatAge(ageMs: number | null): string {
 }
 
 function formatLockLine(lock: SessionLockInspection): string {
+  if (lock.unreadable) {
+    // The cleanup sweep could not read this lock (transient IO) and preserved it
+    // instead of removing it; report it so it is not silently invisible.
+    return `- ${shortenHomePath(lock.lockPath)} unreadable (transient read error; preserved)`;
+  }
   const pidStatus =
     lock.pid === null ? "pid=missing" : `pid=${lock.pid} (${lock.pidAlive ? "alive" : "dead"})`;
   const ageStatus = `age=${formatAge(lock.ageMs)}`;
@@ -141,6 +146,7 @@ export async function noteSessionLockHealth(params?: {
 
   const staleCount = allLocks.filter((lock) => lock.stale).length;
   const removedCount = allLocks.filter((lock) => lock.removed).length;
+  const unreadableCount = allLocks.filter((lock) => lock.unreadable).length;
   const lines: string[] = [
     `- Found ${allLocks.length} session lock file${allLocks.length === 1 ? "" : "s"}.`,
     ...allLocks.toSorted((a, b) => a.lockPath.localeCompare(b.lockPath)).map(formatLockLine),
@@ -149,6 +155,11 @@ export async function noteSessionLockHealth(params?: {
   if (staleCount > 0 && !shouldRepair) {
     lines.push(`- ${staleCount} lock file${staleCount === 1 ? " is" : "s are"} stale.`);
     lines.push('- Run "openclaw doctor --fix" to remove stale lock files automatically.');
+  }
+  if (unreadableCount > 0) {
+    lines.push(
+      `- ${unreadableCount} lock file${unreadableCount === 1 ? " was" : "s were"} unreadable and left in place; rerun once filesystem load subsides.`,
+    );
   }
   if (shouldRepair && removedCount > 0) {
     lines.push(
