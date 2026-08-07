@@ -90,8 +90,10 @@ OpenClaw uses **auth profiles** for both API keys and OAuth tokens.
 
 - Secrets and runtime auth-routing state live in `~/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite`.
 - Config `auth.profiles` / `auth.order` are **metadata + routing only** (no secrets).
-- Legacy import-only OAuth file: `~/.openclaw/credentials/oauth.json` (imported into the per-agent auth store on first use).
-- Legacy `auth-profiles.json`, `auth-state.json`, and per-agent `auth.json` files are imported by `openclaw doctor --fix`.
+- Legacy `credentials/oauth.json`, `auth-profiles.json`, `auth-state.json`, and
+  per-agent `auth.json` files are imported only by `openclaw doctor --fix`.
+  Runtime fails closed for the affected agent until credential-bearing legacy
+  files are migrated; it never silently imports or falls back to them.
 
 More detail: [OAuth](/concepts/oauth)
 
@@ -106,7 +108,7 @@ Credential types:
 OAuth logins create distinct profiles so multiple accounts can coexist.
 
 - Default: `provider:default` when no email is available.
-- OAuth with email: `provider:<email>` (for example `google-antigravity:user@gmail.com`).
+- OAuth with email: `provider:<email>` (for example `openai:user@example.com`).
 
 Profiles live in the per-agent `openclaw-agent.sqlite` auth profile store.
 
@@ -172,6 +174,8 @@ Use a user-pinned profile only when you want to force one account/key for that s
 ## Cooldowns
 
 When a profile fails due to auth/rate-limit errors (or a timeout that looks like rate limiting), OpenClaw marks it in cooldown and moves to the next profile.
+
+CLI-backed runtimes settle profile health only after their resume, fork, and fresh-session recovery attempts finish. A terminal credential failure cools down the exact selected profile before model fallback; a successful run clears stale failure state. Transcript, format, context, pre-provider timeout, and ambient CLI failures without a selected profile do not change shared profile health.
 
 <AccordionGroup>
   <Accordion title="What lands in the rate-limit / timeout bucket">

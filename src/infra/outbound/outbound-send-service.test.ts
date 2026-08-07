@@ -1,5 +1,6 @@
 // Covers outbound send service plugin/core routing, media access scoping,
 // transcript mirroring, and poll fallback.
+import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
@@ -63,7 +64,10 @@ const resolveAgentScopedOutboundMediaAccessMock = vi.hoisted(() =>
   })),
 );
 const appendAssistantMessageToSessionTranscriptMock = vi.hoisted(() =>
-  vi.fn(async () => ({ ok: true, sessionFile: "x" })),
+  vi.fn(async () => ({
+    ok: true,
+    target: { sessionId: "x", sessionKey: "x", storePath: "/tmp/sessions.json" },
+  })),
 );
 
 const mocks = {
@@ -117,12 +121,7 @@ type MockCalls = {
   mock: { calls: unknown[][] };
 };
 
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object") {
-    throw new Error(`expected ${label}`);
-  }
-  return value as Record<string, unknown>;
-}
+const requireRecord = createRequireRecord("object", "expected-label");
 
 function requireArray(value: unknown, label: string): unknown[] {
   expect(Array.isArray(value), label).toBe(true);

@@ -8,6 +8,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -41,8 +42,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 private const val TEST_TIMEOUT_MS = 8_000L
+private const val CONNECT_CHALLENGE_TS = 1_700_000_000_123L
 private const val CONNECT_CHALLENGE_FRAME =
-  """{"type":"event","event":"connect.challenge","payload":{"nonce":"android-test-nonce"}}"""
+  """{"type":"event","event":"connect.challenge","payload":{"nonce":"android-test-nonce","ts":$CONNECT_CHALLENGE_TS}}"""
 
 private class InMemoryDeviceAuthStore : DeviceAuthTokenStore {
   private val tokens = mutableMapOf<String, DeviceAuthEntry>()
@@ -89,9 +91,85 @@ private data class InvokeScenarioResult(
   val resultParams: JsonObject,
 )
 
+private enum class ProtocolFeaturesResponse {
+  Supported,
+  Unsupported,
+  Failed,
+}
+
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class GatewaySessionInvokeTest {
+  @Test
+  fun connect_usesGatewayChallengeTimestamp() =
+    runBlocking {
+      val json = testJson()
+      val connected = CompletableDeferred<Unit>()
+      val lastDisconnect = AtomicReference("")
+      val server =
+        startGatewayServer(json) { webSocket, id, method, frame ->
+          if (method == "connect") {
+            assertEquals(
+              CONNECT_CHALLENGE_TS,
+              frame["params"]
+                ?.jsonObject
+                ?.get("device")
+                ?.jsonObject
+                ?.get("signedAt")
+                ?.jsonPrimitive
+                ?.content
+                ?.toLong(),
+            )
+            webSocket.send(connectResponseFrame(id))
+          }
+        }
+      val harness =
+        createNodeHarness(
+          connected = connected,
+          lastDisconnect = lastDisconnect,
+        ) { GatewaySession.InvokeResult.ok("""{"handled":true}""") }
+
+      try {
+        connectNodeSession(harness.session, server.port)
+        awaitConnectedOrThrow(connected, lastDisconnect, server)
+      } finally {
+        shutdownHarness(harness, server)
+      }
+    }
+
+  @Test
+  fun connect_rejectsChallengeWithoutTimestamp() =
+    runBlocking {
+      val json = testJson()
+      val connected = CompletableDeferred<Unit>()
+      val lastDisconnect = AtomicReference("")
+      val connectRequests = AtomicInteger()
+      val server =
+        startGatewayServer(
+          json = json,
+          challengeFrame =
+            """{"type":"event","event":"connect.challenge","payload":{"nonce":"android-test-nonce"}}""",
+        ) { _, _, method, _ ->
+          if (method == "connect") connectRequests.incrementAndGet()
+        }
+      val harness =
+        createNodeHarness(
+          connected = connected,
+          lastDisconnect = lastDisconnect,
+        ) { GatewaySession.InvokeResult.ok("""{"handled":true}""") }
+
+      try {
+        connectNodeSession(harness.session, server.port)
+        withTimeout(TEST_TIMEOUT_MS) {
+          while (lastDisconnect.get().isEmpty()) delay(10)
+        }
+        assertFalse(connected.isCompleted)
+        assertEquals(0, connectRequests.get())
+      } finally {
+        shutdownHarness(harness, server)
+      }
+    }
+
   @Test
   fun canvasRoutePinsOnlyTheConnectedTlsEndpoint() {
     val fingerprint = "ab".repeat(32)
@@ -884,11 +962,13 @@ class GatewaySessionInvokeTest {
   fun nodeInvokeRequest_roundTripsInvokeResult() =
     runBlocking {
       val handshakeOrigin = AtomicReference<String?>(null)
+      val protocolFeatures = AtomicReference<JsonObject?>(null)
       val result =
         runInvokeScenario(
           invokeEventFrame =
             """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-1","nodeId":"node-1","command":"debug.ping","params":{"ping":"pong"},"timeoutMs":5000}}""",
           onHandshake = { request -> handshakeOrigin.compareAndSet(null, request.getHeader("Origin")) },
+          onProtocolFeaturesUpdate = protocolFeatures::set,
         ) {
           GatewaySession.InvokeResult.ok("""{"handled":true}""")
         }
@@ -897,6 +977,18 @@ class GatewaySessionInvokeTest {
       assertEquals("node-1", result.request.nodeId)
       assertEquals("debug.ping", result.request.command)
       assertEquals("""{"ping":"pong"}""", result.request.paramsJson)
+      assertTrue(result.request.hasSessionKeyEnvelope)
+      assertNull(result.request.sessionKey)
+      assertEquals(
+        "node-invoke-session-key-envelope-v1",
+        protocolFeatures
+          .get()
+          ?.get("features")
+          ?.let { it as? JsonArray }
+          ?.single()
+          ?.jsonPrimitive
+          ?.content,
+      )
       assertNull(handshakeOrigin.get())
       assertEquals("invoke-1", result.resultParams["id"]?.jsonPrimitive?.content)
       assertEquals("node-1", result.resultParams["nodeId"]?.jsonPrimitive?.content)
@@ -916,6 +1008,266 @@ class GatewaySessionInvokeTest {
           ?.content
           ?.toBooleanStrict(),
       )
+    }
+
+  @Test
+  fun nodeInvokeRequest_preservesSessionKeyEnvelopeValue() =
+    runBlocking {
+      val result =
+        runInvokeScenario(
+          invokeEventFrame =
+            """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-session","nodeId":"node-1","command":"debug.ping","sessionKey":"agent:main:main"}}""",
+        ) {
+          GatewaySession.InvokeResult.ok(null)
+        }
+
+      assertTrue(result.request.hasSessionKeyEnvelope)
+      assertEquals("agent:main:main", result.request.sessionKey)
+    }
+
+  @Test
+  fun nodeInvokeRequest_preservesExplicitSessionKeyClear() =
+    runBlocking {
+      val result =
+        runInvokeScenario(
+          invokeEventFrame =
+            """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-clear","nodeId":"node-1","command":"debug.ping","sessionKey":null}}""",
+        ) {
+          GatewaySession.InvokeResult.ok(null)
+        }
+
+      assertTrue(result.request.hasSessionKeyEnvelope)
+      assertNull(result.request.sessionKey)
+    }
+
+  @Test
+  fun nodeInvokeRequest_omitsSessionKeyEnvelopeOnlyForConfirmedLegacyGateway() =
+    runBlocking {
+      val result =
+        runInvokeScenario(
+          invokeEventFrame =
+            """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-legacy","nodeId":"node-1","command":"debug.ping"}}""",
+          protocolFeaturesResponse = ProtocolFeaturesResponse.Unsupported,
+        ) {
+          GatewaySession.InvokeResult.ok(null)
+        }
+
+      assertFalse(result.request.hasSessionKeyEnvelope)
+      assertNull(result.request.sessionKey)
+    }
+
+  @Test
+  fun nodeInvokeRequest_failsClosedWhenProtocolFeaturePublishFails() =
+    runBlocking {
+      val result =
+        runInvokeScenario(
+          invokeEventFrame =
+            """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-failed","nodeId":"node-1","command":"debug.ping"}}""",
+          protocolFeaturesResponse = ProtocolFeaturesResponse.Failed,
+        ) {
+          GatewaySession.InvokeResult.ok(null)
+        }
+
+      assertTrue(result.request.hasSessionKeyEnvelope)
+      assertNull(result.request.sessionKey)
+    }
+
+  @Test
+  fun nodeInvokeRequest_preservesLegacyEnvelopeForFrameReceivedBeforeNegotiationCompletes() =
+    runBlocking {
+      val json = testJson()
+      val connected = CompletableDeferred<Unit>()
+      val invokeRequest = CompletableDeferred<GatewaySession.InvokeRequest>()
+      val invokeResultParams = CompletableDeferred<JsonObject>()
+      val lastDisconnect = AtomicReference("")
+      val invokeSentAtNanos = AtomicReference<Long>()
+      val server =
+        startGatewayServer(json) { webSocket, id, method, frame ->
+          when (method) {
+            "connect" -> {
+              webSocket.send(connectResponseFrame(id))
+              invokeSentAtNanos.set(System.nanoTime())
+              webSocket.send(
+                """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-pre-negotiation","nodeId":"node-1","command":"debug.ping","timeoutMs":500}}""",
+              )
+            }
+            "node.protocolFeatures.update" -> {
+              Thread {
+                Thread.sleep(2_000)
+                webSocket.send("""{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}""")
+              }.apply {
+                isDaemon = true
+                start()
+              }
+            }
+            "node.invoke.result" -> {
+              invokeResultParams.complete(frame["params"]?.jsonObject ?: JsonObject(emptyMap()))
+              webSocket.send("""{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}""")
+            }
+          }
+        }
+      val harness =
+        createNodeHarness(connected = connected, lastDisconnect = lastDisconnect) { request ->
+          invokeRequest.complete(request)
+          GatewaySession.InvokeResult.ok(null)
+        }
+
+      try {
+        connectNodeSession(harness.session, server.port)
+        awaitConnectedOrThrow(connected, lastDisconnect, server)
+        val request = withTimeout(1_000) { invokeRequest.await() }
+        val result = withTimeout(1_000) { invokeResultParams.await() }
+
+        assertFalse(request.hasSessionKeyEnvelope)
+        assertNull(request.sessionKey)
+        assertTrue(
+          TimeUnit.NANOSECONDS.toMillis(
+            System.nanoTime() - checkNotNull(invokeSentAtNanos.get()),
+          ) < 1_000,
+        )
+        assertEquals(true, result["ok"]?.jsonPrimitive?.content?.toBooleanStrict())
+      } finally {
+        shutdownHarness(harness, server)
+      }
+    }
+
+  @Test
+  fun nodeInvokeRequest_usesAuthoritativeEnvelopeImmediatelyAfterNegotiationResponse() =
+    runBlocking {
+      val json = testJson()
+      val connected = CompletableDeferred<Unit>()
+      val invokeRequest = CompletableDeferred<GatewaySession.InvokeRequest>()
+      val lastDisconnect = AtomicReference("")
+      val server =
+        startGatewayServer(json) { webSocket, id, method, _ ->
+          when (method) {
+            "connect" -> webSocket.send(connectResponseFrame(id))
+            "node.protocolFeatures.update" -> {
+              webSocket.send("""{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}""")
+              webSocket.send(
+                """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-post-negotiation","nodeId":"node-1","command":"debug.ping"}}""",
+              )
+            }
+            "node.invoke.result" ->
+              webSocket.send("""{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}""")
+          }
+        }
+      val harness =
+        createNodeHarness(connected = connected, lastDisconnect = lastDisconnect) { request ->
+          invokeRequest.complete(request)
+          GatewaySession.InvokeResult.ok(null)
+        }
+
+      try {
+        connectNodeSession(harness.session, server.port)
+        awaitConnectedOrThrow(connected, lastDisconnect, server)
+        val request = withTimeout(TEST_TIMEOUT_MS) { invokeRequest.await() }
+
+        assertTrue(request.hasSessionKeyEnvelope)
+        assertNull(request.sessionKey)
+      } finally {
+        shutdownHarness(harness, server)
+      }
+    }
+
+  @Test
+  fun nodeInvokeRequest_explicitEnvelopeBypassesProtocolNegotiation() =
+    runBlocking {
+      val json = testJson()
+      val connected = CompletableDeferred<Unit>()
+      val invokeRequest = CompletableDeferred<GatewaySession.InvokeRequest>()
+      val lastDisconnect = AtomicReference("")
+      val server =
+        startGatewayServer(json) { webSocket, id, method, _ ->
+          when (method) {
+            "connect" -> {
+              webSocket.send(connectResponseFrame(id))
+              webSocket.send(
+                """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-explicit","nodeId":"node-1","command":"debug.ping","timeoutMs":50,"sessionKey":"agent:main:main"}}""",
+              )
+            }
+            "node.protocolFeatures.update" -> {
+              Thread.sleep(150)
+              webSocket.send("""{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}""")
+            }
+            "node.invoke.result" ->
+              webSocket.send("""{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}""")
+          }
+        }
+      val harness =
+        createNodeHarness(connected = connected, lastDisconnect = lastDisconnect) { request ->
+          invokeRequest.complete(request)
+          GatewaySession.InvokeResult.ok(null)
+        }
+
+      try {
+        connectNodeSession(harness.session, server.port)
+        awaitConnectedOrThrow(connected, lastDisconnect, server)
+        val request = withTimeout(TEST_TIMEOUT_MS) { invokeRequest.await() }
+
+        assertTrue(request.hasSessionKeyEnvelope)
+        assertEquals("agent:main:main", request.sessionKey)
+      } finally {
+        shutdownHarness(harness, server)
+      }
+    }
+
+  @Test
+  fun nodeInvokeRequest_resetsLegacyNegotiationAfterReconnect() =
+    runBlocking {
+      val json = testJson()
+      val connected = CompletableDeferred<Unit>()
+      val requests = Channel<GatewaySession.InvokeRequest>(capacity = 2)
+      val lastDisconnect = AtomicReference("")
+
+      fun startServer(protocolFeaturesResponse: ProtocolFeaturesResponse): MockWebServer =
+        startGatewayServer(json) { webSocket, id, method, _ ->
+          when (method) {
+            "connect" -> webSocket.send(connectResponseFrame(id))
+            "node.protocolFeatures.update" -> {
+              val response =
+                when (protocolFeaturesResponse) {
+                  ProtocolFeaturesResponse.Supported ->
+                    """{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}"""
+                  ProtocolFeaturesResponse.Unsupported ->
+                    """{"type":"res","id":"$id","ok":false,"error":{"code":"INVALID_REQUEST","message":"unknown method: node.protocolFeatures.update"}}"""
+                  ProtocolFeaturesResponse.Failed ->
+                    """{"type":"res","id":"$id","ok":false,"error":{"code":"UNAVAILABLE","message":"temporary failure"}}"""
+                }
+              webSocket.send(response)
+              webSocket.send(
+                """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-$protocolFeaturesResponse","nodeId":"node-1","command":"debug.ping"}}""",
+              )
+            }
+            "node.invoke.result" ->
+              webSocket.send("""{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}""")
+          }
+        }
+      val legacyServer = startServer(ProtocolFeaturesResponse.Unsupported)
+      val currentServer = startServer(ProtocolFeaturesResponse.Supported)
+      val harness =
+        createNodeHarness(connected = connected, lastDisconnect = lastDisconnect) { request ->
+          requests.send(request)
+          GatewaySession.InvokeResult.ok(null)
+        }
+
+      try {
+        connectNodeSession(harness.session, legacyServer.port)
+        awaitConnectedOrThrow(connected, lastDisconnect, legacyServer)
+        val legacy = withTimeout(TEST_TIMEOUT_MS) { requests.receive() }
+        assertFalse(legacy.hasSessionKeyEnvelope)
+
+        harness.session.disconnectAndJoin()
+        connectNodeSession(harness.session, currentServer.port)
+        val current = withTimeout(TEST_TIMEOUT_MS) { requests.receive() }
+        assertTrue(current.hasSessionKeyEnvelope)
+        assertNull(current.sessionKey)
+      } finally {
+        harness.session.disconnect()
+        harness.sessionJob.cancelAndJoin()
+        legacyServer.shutdown()
+        currentServer.shutdown()
+      }
     }
 
   @Test
@@ -1111,6 +1463,8 @@ class GatewaySessionInvokeTest {
                 """{"type":"event","event":"node.invoke.request","payload":{"id":"invoke-cancelled","nodeId":"node-1","command":"camera.snap","timeoutMs":5000}}""",
               )
             }
+            "node.protocolFeatures.update" ->
+              webSocket.send("""{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}""")
             "node.invoke.result" -> invokeResult.complete(Unit)
           }
         }
@@ -1417,6 +1771,8 @@ class GatewaySessionInvokeTest {
   private suspend fun runInvokeScenario(
     invokeEventFrame: String,
     onHandshake: ((RecordedRequest) -> Unit)? = null,
+    protocolFeaturesResponse: ProtocolFeaturesResponse = ProtocolFeaturesResponse.Supported,
+    onProtocolFeaturesUpdate: ((JsonObject) -> Unit)? = null,
     afterResult: suspend (InvokeScenarioResult) -> Unit = {},
     onInvoke: suspend (GatewaySession.InvokeRequest) -> GatewaySession.InvokeResult,
   ): InvokeScenarioResult {
@@ -1431,8 +1787,19 @@ class GatewaySessionInvokeTest {
         onHandshake = onHandshake,
       ) { webSocket, id, method, frame ->
         when (method) {
-          "connect" -> {
-            webSocket.send(connectResponseFrame(id))
+          "connect" -> webSocket.send(connectResponseFrame(id))
+          "node.protocolFeatures.update" -> {
+            onProtocolFeaturesUpdate?.invoke(frame["params"]?.jsonObject ?: JsonObject(emptyMap()))
+            val response =
+              when (protocolFeaturesResponse) {
+                ProtocolFeaturesResponse.Supported ->
+                  """{"type":"res","id":"$id","ok":true,"payload":{"ok":true}}"""
+                ProtocolFeaturesResponse.Unsupported ->
+                  """{"type":"res","id":"$id","ok":false,"error":{"code":"INVALID_REQUEST","message":"unknown method: node.protocolFeatures.update"}}"""
+                ProtocolFeaturesResponse.Failed ->
+                  """{"type":"res","id":"$id","ok":false,"error":{"code":"UNAVAILABLE","message":"temporary failure"}}"""
+              }
+            webSocket.send(response)
             webSocket.send(invokeEventFrame)
           }
           "node.invoke.result" -> {
@@ -1484,6 +1851,7 @@ class GatewaySessionInvokeTest {
 
   private fun startGatewayServer(
     json: Json,
+    challengeFrame: String = CONNECT_CHALLENGE_FRAME,
     onHandshake: ((RecordedRequest) -> Unit)? = null,
     onRequestFrame: (webSocket: WebSocket, id: String, method: String, frame: JsonObject) -> Unit,
   ): MockWebServer =
@@ -1498,7 +1866,7 @@ class GatewaySessionInvokeTest {
                   webSocket: WebSocket,
                   response: Response,
                 ) {
-                  webSocket.send(CONNECT_CHALLENGE_FRAME)
+                  webSocket.send(challengeFrame)
                 }
 
                 override fun onMessage(

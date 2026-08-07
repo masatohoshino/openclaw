@@ -1,5 +1,6 @@
 // Telegram reply-chain cache and prompt-context projection.
 import type { Message } from "grammy/types";
+import { resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawConfig, TelegramAccountConfig } from "openclaw/plugin-sdk/config-contracts";
 import { DEFAULT_GROUP_HISTORY_LIMIT } from "openclaw/plugin-sdk/reply-history";
 import { stripInlineDirectiveTagsForDelivery } from "openclaw/plugin-sdk/text-chunking";
@@ -10,17 +11,19 @@ import type {
 } from "./bot-message-context.types.js";
 import type { RegisterTelegramHandlerParams } from "./bot-native-commands.js";
 import type { TelegramContext } from "./bot/types.js";
+import { resolveTelegramDmHistoryLimit } from "./dm-history.js";
 import {
   buildTelegramSelfSenderName,
   isTelegramHistoryEntryAfterAmbientWatermark,
   isTelegramSelfSenderName,
 } from "./group-history-window.js";
+import { resolveTelegramMessageCacheScope } from "./message-cache-persistence.js";
 import {
   buildTelegramConversationContext,
   buildTelegramReplyChain,
   createTelegramMessageCache,
   isTelegramMessageFromCurrentBot,
-  resolveTelegramMessageCacheScope,
+  resolveProviderObservedTelegramThreadId,
   type TelegramCachedMessageNode,
   type TelegramReplyChainEntry,
 } from "./message-cache.js";
@@ -55,7 +58,11 @@ export function createTelegramMessageContextRuntime({
   "cfg" | "accountId" | "opts" | "telegramCfg" | "telegramDeps"
 >) {
   const messageCache = createTelegramMessageCache({
-    scope: resolveTelegramMessageCacheScope(telegramDeps.resolveStorePath(cfg.session?.store)),
+    scope: resolveTelegramMessageCacheScope(
+      telegramDeps.resolveStorePath(cfg.session?.store, {
+        agentId: cfg.agents ? resolveDefaultAgentId(cfg) : "main",
+      }),
+    ),
   });
   const resolvePromptSender = (
     node: TelegramCachedMessageNode,
@@ -85,6 +92,22 @@ export function createTelegramMessageContextRuntime({
       ...(threadId != null ? { providerObservedThreadId: threadId } : {}),
       ...(threadId != null ? { threadId } : {}),
     });
+
+  // `MessageReactionUpdated` carries no `message_thread_id`, so the reaction handler
+  // recovers the originating topic from the same bounded cache that records inbound
+  // and outbound messages. `undefined` means "thread unknown", never "General": the
+  // caller must not substitute a topic id.
+  const resolveCachedMessageThreadId = async (params: {
+    chatId: number | string;
+    messageId: number | string;
+  }): Promise<number | undefined> => {
+    const node = await messageCache.get({
+      accountId,
+      chatId: params.chatId,
+      messageId: String(params.messageId),
+    });
+    return resolveProviderObservedTelegramThreadId(node);
+  };
 
   const buildReplyChainForMessage = (msg: Message) =>
     buildTelegramReplyChain({ cache: messageCache, accountId, chatId: msg.chat.id, msg });
@@ -150,6 +173,10 @@ export function createTelegramMessageContextRuntime({
         runtimeCfg.messages?.groupChat?.historyLimit ??
         DEFAULT_GROUP_HISTORY_LIMIT,
     );
+    const dmHistoryLimit = resolveTelegramDmHistoryLimit({
+      config: runtimeTelegramCfg,
+      senderId: msg.from?.id,
+    });
     const messageId = typeof msg.message_id === "number" ? String(msg.message_id) : undefined;
     const currentNode = await messageCache.get({ accountId, chatId: msg.chat.id, messageId });
     const threadId = currentNode?.threadId ? Number(currentNode.threadId) : undefined;
@@ -163,8 +190,8 @@ export function createTelegramMessageContextRuntime({
             chatId: msg.chat.id,
             ...(Number.isFinite(threadId) ? { threadId } : {}),
             replyChainNodes,
-            recentLimit: isGroup ? groupHistoryLimit : 10,
-            replyTargetWindowSize: 2,
+            recentLimit: isGroup ? groupHistoryLimit : dmHistoryLimit,
+            replyTargetWindowSize: isGroup || dmHistoryLimit > 0 ? 2 : 0,
             ...(options?.promptContextMinTimestampMs !== undefined
               ? { minTimestampMs: options.promptContextMinTimestampMs }
               : {}),
@@ -245,6 +272,7 @@ export function createTelegramMessageContextRuntime({
 
   return {
     recordMessageForReplyChain,
+    resolveCachedMessageThreadId,
     buildReplyChainForMessage,
     toReplyChainEntry,
     buildPromptContextForMessage,

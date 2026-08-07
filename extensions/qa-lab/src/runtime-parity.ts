@@ -1,5 +1,4 @@
 import {
-  listSessionEntries,
   loadTranscriptEventsSync,
   resolveStorePath,
 } from "openclaw/plugin-sdk/session-store-runtime";
@@ -21,22 +20,28 @@ import {
 } from "./gateway-log-sentinel.js";
 import { discardIgnoredResponseBody } from "./ignored-response-body.js";
 import * as parity from "./parity-shared.js";
+import {
+  buildRuntimeParityCacheDiagnostics,
+  type RuntimeParityCacheDiagnostics,
+} from "./runtime-parity-cache-diagnostics.js";
+import type { RuntimeParityUsage } from "./runtime-parity-usage.js";
+import { readRawQaSessionStore } from "./suite-runtime-agent-session.js";
 
+export type { RuntimeParityUsage } from "./runtime-parity-usage.js";
+
+// These are the canonical QA comparison cells, not the extensible product
+// AgentHarness registry. Broader harness coverage needs its own explicit lane.
 export type RuntimeId = "openclaw" | "codex";
+
+type RuntimeParityStatus = "pass" | "fail" | "skip";
+
+const CANONICAL_RUNTIME_IDS = ["openclaw", "codex"] as const satisfies readonly RuntimeId[];
 
 export type RuntimeParityToolCall = {
   tool: string;
   argsHash: string;
   resultHash: string;
   errorClass?: string;
-};
-
-export type RuntimeParityUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cacheRead?: number;
-  cacheWrite?: number;
 };
 
 export type RuntimeParityUsagePolicy =
@@ -50,12 +55,32 @@ export type RuntimeParityCell = {
   providerPlanToolCalls?: RuntimeParityToolCall[];
   finalText: string;
   usage: RuntimeParityUsage;
+  cacheDiagnostics?: RuntimeParityCacheDiagnostics;
   wallClockMs: number;
+  bootstrapWallClockMs?: number;
   transportErrorClass?: string;
   runtimeErrorClass?: string;
   bootStateLines: string[];
   sentinelFindings?: GatewayLogSentinelFinding[];
 };
+
+type RuntimeParityResultCell = RuntimeParityCell & {
+  status: RuntimeParityStatus;
+  details?: string;
+};
+
+// Runtime-tool fixtures reserve this prefix for tracked harness limitations.
+// Matching only that explicit skip keeps unexpected coverage loss blocking.
+const KNOWN_HARNESS_GAP_DETAILS_PREFIX = "known-harness-gap ";
+
+function isKnownHarnessGapSkip(
+  cell: Pick<RuntimeParityResultCell, "details" | "status"> | undefined,
+) {
+  return (
+    cell?.status === "skip" &&
+    cell.details?.trimStart().startsWith(KNOWN_HARNESS_GAP_DETAILS_PREFIX) === true
+  );
+}
 
 export type RuntimeParityDrift =
   | "none"
@@ -68,10 +93,7 @@ export type RuntimeParityDrift =
 export type RuntimeParityResult = {
   scenarioId: string;
   runtimeParityUsage?: RuntimeParityUsagePolicy;
-  cells: {
-    openclaw: RuntimeParityCell;
-    codex: RuntimeParityCell;
-  };
+  cells: Record<RuntimeId, RuntimeParityResultCell>;
   drift: RuntimeParityDrift;
   driftDetails?: string;
 };
@@ -93,8 +115,8 @@ export function resolveRuntimeParityUsagePolicy(value: unknown): RuntimeParityUs
 }
 
 export type RuntimeParityScenarioExecution = {
-  scenarioStatus: "pass" | "fail";
-  scenarioDetails?: string;
+  status: RuntimeParityStatus;
+  details?: string;
   cell: RuntimeParityCell;
 };
 
@@ -108,10 +130,18 @@ export function runtimeParityCellStatus(
 }
 
 export function isRuntimeParityResultPass(result: RuntimeParityResult) {
+  if (result.drift === "failure-mode") {
+    return false;
+  }
+  const cells = CANONICAL_RUNTIME_IDS.map((runtime) => result.cells[runtime]);
+  const knownHarnessGapSkips = cells.filter((cell) => isKnownHarnessGapSkip(cell));
   return (
-    result.drift !== "failure-mode" &&
-    isRuntimeParityCellPassable(result.cells.openclaw) &&
-    isRuntimeParityCellPassable(result.cells.codex)
+    knownHarnessGapSkips.length <= 1 &&
+    cells.every(
+      (cell) =>
+        isRuntimeParityCellPassable(cell) &&
+        (cell.status === "pass" || isKnownHarnessGapSkip(cell)),
+    )
   );
 }
 
@@ -131,11 +161,13 @@ type RuntimeParityCaptureParams = {
   gateway: QaGatewayLike;
   scenarioResult: QaSuiteScenarioLike;
   wallClockMs: number;
+  bootstrapWallClockMs?: number;
   agentId?: string;
   mockBaseUrl?: string;
 };
 
 type RuntimeParitySessionEntry = {
+  createdAt?: number;
   sessionId?: string;
   sessionFile?: string;
   updatedAt?: number;
@@ -175,8 +207,11 @@ type RuntimeParityPendingToolCall = RuntimeParityObservedToolCall & {
 };
 
 type RuntimeParityCaptureSources = {
+  sessions: Array<{
+    transcriptBytes: string;
+    trajectoryToolCalls: RuntimeParityObservedToolCall[];
+  }>;
   transcriptBytes: string;
-  trajectoryToolCalls: RuntimeParityObservedToolCall[];
 };
 
 const DEFAULT_AGENT_ID = "qa";
@@ -185,6 +220,7 @@ const HEARTBEAT_TRANSCRIPT_PROMPT = "[OpenClaw heartbeat poll]";
 const HEARTBEAT_TASK_PROMPT_PREFIX =
   "Run the following periodic tasks (only those due based on their intervals):";
 const TOOL_RESULT_MISSING_ERROR_CLASS = "tool-result-missing";
+const RUNTIME_PARITY_SESSION_KEY_DETAIL_PREFIX = "RUNTIME_PARITY_SESSION_KEY=";
 const BOOT_STATE_LINE_RE =
   /\b(?:FailoverError|No API key found|Codex app-server|auth profile|runtime policy|restart mode:|plugin|doctor)\b/i;
 const TOOL_RESULT_ERROR_RE = /\b(?:error|failed|failure|timeout|denied|enoent|not found)\b/i;
@@ -205,9 +241,14 @@ function readUsageTotals(raw: unknown): RuntimeParityUsage {
     readFiniteNumber(usage.outputTokens) ??
     readFiniteNumber(usage.output_tokens) ??
     0;
-  const cacheRead = readFiniteNumber(usage.cacheRead) ?? readFiniteNumber(usage.cache_read_tokens);
-  const cacheWrite =
-    readFiniteNumber(usage.cacheWrite) ?? readFiniteNumber(usage.cache_write_tokens);
+  const cacheTelemetryUnavailable =
+    isMessageRecord(usage.cacheTelemetry) && usage.cacheTelemetry.state === "unavailable";
+  const cacheRead = cacheTelemetryUnavailable
+    ? undefined
+    : (readFiniteNumber(usage.cacheRead) ?? readFiniteNumber(usage.cache_read_tokens));
+  const cacheWrite = cacheTelemetryUnavailable
+    ? undefined
+    : (readFiniteNumber(usage.cacheWrite) ?? readFiniteNumber(usage.cache_write_tokens));
   const componentTotal = inputTokens + outputTokens + (cacheRead ?? 0) + (cacheWrite ?? 0);
   const totalTokens =
     readFiniteNumber(usage.total) ??
@@ -221,6 +262,26 @@ function readUsageTotals(raw: unknown): RuntimeParityUsage {
     ...(cacheRead !== undefined ? { cacheRead } : {}),
     ...(cacheWrite !== undefined ? { cacheWrite } : {}),
   };
+}
+
+function readAssistantUsage(message: Record<string, unknown>): RuntimeParityUsage {
+  const usage = readUsageTotals(message.usage ?? null);
+  if (!isMessageRecord(message.usage) || isMessageRecord(message.usage.cacheTelemetry)) {
+    return usage;
+  }
+  const provider = readNonEmptyString(message.provider)?.toLowerCase();
+  const api = readNonEmptyString(message.api)?.toLowerCase();
+  if (
+    (provider === "ollama" || api === "ollama") &&
+    usage.cacheRead === 0 &&
+    usage.cacheWrite === 0
+  ) {
+    // Transcripts written before cacheTelemetry was added contain Ollama's
+    // required placeholder zeros. Explicit current provenance always wins.
+    delete usage.cacheRead;
+    delete usage.cacheWrite;
+  }
+  return usage;
 }
 
 function addUsage(target: RuntimeParityUsage, next: RuntimeParityUsage) {
@@ -966,7 +1027,7 @@ function aggregateUsage(records: RuntimeParityTranscriptRecord[]): RuntimeParity
     if (record.role !== "assistant") {
       continue;
     }
-    const usage = readUsageTotals(record.message.usage ?? null);
+    const usage = readAssistantUsage(record.message);
     addUsage(totals, usage);
   }
   return totals;
@@ -1094,8 +1155,10 @@ function summarizeSentinelErrorClass(findings: readonly GatewayLogSentinelFindin
 function classifyRuntimeParityCells(params: {
   openclaw: RuntimeParityCell;
   codex: RuntimeParityCell;
-  openclawScenarioStatus: "pass" | "fail";
-  codexScenarioStatus: "pass" | "fail";
+  openclawStatus: RuntimeParityStatus;
+  codexStatus: RuntimeParityStatus;
+  openclawDetails?: string;
+  codexDetails?: string;
 }): Pick<RuntimeParityResult, "drift" | "driftDetails"> {
   if (
     isHardFailureRuntimeError(params.openclaw.runtimeErrorClass) ||
@@ -1122,18 +1185,43 @@ function classifyRuntimeParityCells(params: {
     };
   }
 
+  const openclawKnownHarnessGap = isKnownHarnessGapSkip({
+    status: params.openclawStatus,
+    details: params.openclawDetails,
+  });
+  const codexKnownHarnessGap = isKnownHarnessGapSkip({
+    status: params.codexStatus,
+    details: params.codexDetails,
+  });
   if (
-    params.openclawScenarioStatus === "fail" ||
-    params.codexScenarioStatus === "fail" ||
+    openclawKnownHarnessGap !== codexKnownHarnessGap &&
+    (openclawKnownHarnessGap ? params.codexStatus : params.openclawStatus) === "pass" &&
+    isRuntimeParityCellPassable(params.openclaw) &&
+    isRuntimeParityCellPassable(params.codex)
+  ) {
+    const skippedRuntime = openclawKnownHarnessGap ? "openclaw" : "codex";
+    return {
+      drift: "structural",
+      driftDetails: `known harness gap in ${skippedRuntime} runtime; paired runtime passed`,
+    };
+  }
+
+  if (
+    params.openclawStatus !== "pass" ||
+    params.codexStatus !== "pass" ||
     !isRuntimeParityCellPassable(params.openclaw) ||
     !isRuntimeParityCellPassable(params.codex)
   ) {
     return {
       drift: "failure-mode",
       driftDetails:
-        params.openclawScenarioStatus === params.codexScenarioStatus
-          ? "at least one runtime failed"
-          : `scenario status differs (${params.openclawScenarioStatus} vs ${params.codexScenarioStatus})`,
+        params.openclawStatus === params.codexStatus
+          ? params.openclawStatus === "skip"
+            ? "both canonical runtime-pair cells skipped"
+            : params.openclawStatus === "fail"
+              ? "both canonical runtime-pair cells failed"
+              : "at least one runtime failed"
+          : `runtime-pair cell status differs (${params.openclawStatus} vs ${params.codexStatus})`,
     };
   }
 
@@ -1197,43 +1285,52 @@ function runtimeParitySessionEnv(stateDir: string): NodeJS.ProcessEnv {
   return { ...process.env, OPENCLAW_STATE_DIR: stateDir };
 }
 
-function readRuntimeParitySessionEntries(params: {
-  stateDir: string;
+async function readRuntimeParitySessionEntries(params: {
+  gateway: QaGatewayLike;
   agentId: string;
-}): RuntimeParitySessionCandidate[] {
-  try {
-    const entries = listSessionEntries({
-      agentId: params.agentId,
-      env: runtimeParitySessionEnv(params.stateDir),
-      readOnly: true,
-    })
-      .filter(({ entry }) => readNonEmptyString(entry.sessionId))
-      .map(({ entry, sessionKey }) => ({
-        entry: entry as RuntimeParitySessionEntry,
-        sessionKey,
-      }))
-      .filter(({ entry }) => !readNonEmptyString(entry.heartbeatIsolatedBaseSessionKey));
-    const rootEntries = entries.filter(({ entry }) => isRuntimeParityRootSession(entry));
-    const candidates = rootEntries.length > 0 ? rootEntries : entries;
-    return candidates.toSorted(
-      (left, right) => (right.entry.updatedAt ?? 0) - (left.entry.updatedAt ?? 0),
-    );
-  } catch {
-    return [];
-  }
+  preferredSessionKeys?: ReadonlySet<string>;
+}): Promise<RuntimeParitySessionCandidate[]> {
+  // This feeds release evidence: after bounded FTS-settle retries, a persistent
+  // store failure must fail capture instead of becoming an empty false green.
+  const store = await readRawQaSessionStore(
+    { gateway: params.gateway },
+    { agentId: params.agentId },
+  );
+  const entries = Object.entries(store)
+    .filter(([, entry]) => readNonEmptyString(entry.sessionId))
+    .map(([sessionKey, entry]) => ({
+      entry: entry as RuntimeParitySessionEntry,
+      sessionKey,
+    }))
+    .filter(({ entry }) => !readNonEmptyString(entry.heartbeatIsolatedBaseSessionKey));
+  const selectedEntries = params.preferredSessionKeys
+    ? entries.filter(({ sessionKey }) => params.preferredSessionKeys?.has(sessionKey))
+    : entries;
+  const rootEntries = selectedEntries.filter(({ entry }) => isRuntimeParityRootSession(entry));
+  const candidates = rootEntries.length > 0 ? rootEntries : selectedEntries;
+  return candidates.toSorted((left, right) => {
+    const leftCreatedAt = left.entry.createdAt ?? left.entry.updatedAt ?? 0;
+    const rightCreatedAt = right.entry.createdAt ?? right.entry.updatedAt ?? 0;
+    return leftCreatedAt - rightCreatedAt || left.sessionKey.localeCompare(right.sessionKey);
+  });
 }
 
 async function loadRuntimeParityCaptureSources(params: {
   gateway: QaGatewayLike;
   agentId: string;
+  preferredSessionKeys?: readonly string[];
 }): Promise<RuntimeParityCaptureSources> {
   const stateDir = `${params.gateway.tempRoot}/state`;
   const env = runtimeParitySessionEnv(stateDir);
   const storePath = resolveStorePath(undefined, { agentId: params.agentId, env });
-  const sessionEntries = readRuntimeParitySessionEntries({
-    stateDir,
+  const sessionEntries = await readRuntimeParitySessionEntries({
+    gateway: params.gateway,
     agentId: params.agentId,
+    ...(params.preferredSessionKeys?.length
+      ? { preferredSessionKeys: new Set(params.preferredSessionKeys) }
+      : {}),
   });
+  const sessions: RuntimeParityCaptureSources["sessions"] = [];
   for (const { entry, sessionKey } of sessionEntries) {
     const sessionId = readNonEmptyString(entry.sessionId);
     if (!sessionId) {
@@ -1270,10 +1367,35 @@ async function loadRuntimeParityCaptureSources(params: {
       // Transcript evidence remains authoritative when diagnostics are unavailable.
     }
     if (transcriptBytes || trajectoryToolCalls.length > 0) {
-      return { transcriptBytes, trajectoryToolCalls };
+      sessions.push({ transcriptBytes, trajectoryToolCalls });
     }
   }
-  return { transcriptBytes: "", trajectoryToolCalls: [] };
+  return {
+    sessions,
+    transcriptBytes: sessions
+      .map((session) => session.transcriptBytes)
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
+function runtimeParitySessionKeysFromScenarioResult(result: QaSuiteScenarioLike) {
+  const sessionKeys = new Set<string>();
+  const detailBlocks = [result.details, ...(result.steps ?? []).map((step) => step.details)];
+  for (const detailBlock of detailBlocks) {
+    for (const line of detailBlock?.split(/\r?\n/u) ?? []) {
+      if (!line.startsWith(RUNTIME_PARITY_SESSION_KEY_DETAIL_PREFIX)) {
+        continue;
+      }
+      const sessionKey = readNonEmptyString(
+        line.slice(RUNTIME_PARITY_SESSION_KEY_DETAIL_PREFIX.length),
+      );
+      if (sessionKey) {
+        sessionKeys.add(sessionKey);
+      }
+    }
+  }
+  return [...sessionKeys];
 }
 
 async function loadRuntimeParityMockToolCalls(
@@ -1325,17 +1447,21 @@ export async function captureRuntimeParityCell(
   params: RuntimeParityCaptureParams,
 ): Promise<RuntimeParityCell> {
   const agentId = params.agentId ?? DEFAULT_AGENT_ID;
-  const { transcriptBytes, trajectoryToolCalls } = await loadRuntimeParityCaptureSources({
+  const { sessions, transcriptBytes } = await loadRuntimeParityCaptureSources({
     gateway: params.gateway,
     agentId,
+    preferredSessionKeys: runtimeParitySessionKeysFromScenarioResult(params.scenarioResult),
   });
   const transcriptRecords = buildTranscriptRecords(transcriptBytes);
-  const transcriptToolCalls = resolveToolCallOrder(transcriptRecords);
+  // Runtime-tool fixtures split happy and failure paths across root sessions.
+  // Resolve each session separately so repeated tool-call ids cannot cross-link.
   const runtimeToolCalls = removeRuntimeParityToolCallIdentity(
-    mergeRuntimeParityToolCalls({
-      transcriptToolCalls,
-      trajectoryToolCalls,
-    }),
+    sessions.flatMap((session) =>
+      mergeRuntimeParityToolCalls({
+        transcriptToolCalls: resolveToolCallOrder(buildTranscriptRecords(session.transcriptBytes)),
+        trajectoryToolCalls: session.trajectoryToolCalls,
+      }),
+    ),
   );
   const parentPrompts = transcriptRecords
     .filter((record) => record.role === "user")
@@ -1355,9 +1481,9 @@ export async function captureRuntimeParityCell(
   // Retry passes retain first-attempt diagnostics; only terminal failures may
   // classify that historical text as the cell's runtime error.
   const scenarioErrorClass =
-    params.scenarioResult.status === "pass"
-      ? undefined
-      : classifyScenarioError(params.scenarioResult.details);
+    params.scenarioResult.status === "fail"
+      ? classifyScenarioError(params.scenarioResult.details)
+      : undefined;
   const sentinelErrorClass = summarizeSentinelErrorClass(sentinelFindings);
   const terminalImageResultProven = hasProvenTerminalImageResult(params.scenarioResult);
   return {
@@ -1370,7 +1496,15 @@ export async function captureRuntimeParityCell(
     ...(mockToolCalls ? { providerPlanToolCalls: mockToolCalls } : {}),
     finalText: extractFinalAssistantText(transcriptRecords),
     usage: aggregateUsage(transcriptRecords),
+    cacheDiagnostics: buildRuntimeParityCacheDiagnostics(
+      transcriptRecords
+        .filter((record) => record.role === "assistant")
+        .map((record) => readAssistantUsage(record.message)),
+    ),
     wallClockMs: params.wallClockMs,
+    ...(params.bootstrapWallClockMs === undefined
+      ? {}
+      : { bootstrapWallClockMs: params.bootstrapWallClockMs }),
     ...(scenarioErrorClass || sentinelErrorClass
       ? { runtimeErrorClass: scenarioErrorClass ?? sentinelErrorClass }
       : {}),
@@ -1382,22 +1516,38 @@ export async function captureRuntimeParityCell(
 export async function runRuntimeParityScenario(params: {
   scenarioId: string;
   runtimeParityUsage?: RuntimeParityUsagePolicy;
+  runtimePair?: readonly [RuntimeId, RuntimeId];
   runCell: (runtime: RuntimeId) => Promise<RuntimeParityScenarioExecution>;
 }): Promise<RuntimeParityResult> {
-  const openclaw = await params.runCell("openclaw");
-  const codex = await params.runCell("codex");
+  const [firstRuntime, secondRuntime] = params.runtimePair ?? CANONICAL_RUNTIME_IDS;
+  if (firstRuntime === secondRuntime) {
+    throw new Error("Runtime parity must compare two different runtimes.");
+  }
+  const first = await params.runCell(firstRuntime);
+  const second = await params.runCell(secondRuntime);
+  const [openclaw, codex] = firstRuntime === "openclaw" ? [first, second] : [second, first];
   const drift = classifyRuntimeParityCells({
     openclaw: openclaw.cell,
     codex: codex.cell,
-    openclawScenarioStatus: openclaw.scenarioStatus,
-    codexScenarioStatus: codex.scenarioStatus,
+    openclawStatus: openclaw.status,
+    codexStatus: codex.status,
+    openclawDetails: openclaw.details,
+    codexDetails: codex.details,
   });
   return {
     scenarioId: params.scenarioId,
     runtimeParityUsage: resolveRuntimeParityUsagePolicy(params.runtimeParityUsage),
     cells: {
-      openclaw: openclaw.cell,
-      codex: codex.cell,
+      openclaw: {
+        ...openclaw.cell,
+        status: openclaw.status,
+        ...(openclaw.details ? { details: openclaw.details } : {}),
+      },
+      codex: {
+        ...codex.cell,
+        status: codex.status,
+        ...(codex.details ? { details: codex.details } : {}),
+      },
     },
     drift: drift.drift,
     ...(drift.driftDetails ? { driftDetails: drift.driftDetails } : {}),

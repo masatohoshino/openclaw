@@ -26,6 +26,7 @@ import {
 } from "./io.read-helpers.js";
 import { autoOwnerDisplaySecretByPath } from "./io.state.js";
 import type { ConfigIoFactoryOptions, NormalizedConfigIoDeps } from "./io.types.js";
+import { migratePersistedImplicitMainRoster } from "./legacy.roster.js";
 import { materializeRuntimeConfig } from "./materialize.js";
 import { applyConfigOverrides } from "./runtime-overrides.js";
 import { resolveShellEnvExpectedKeys } from "./shell-env-expected-keys.js";
@@ -46,6 +47,7 @@ export type ConfigIoContext = {
   createValidationPluginMetadataSnapshotLoader: (params: {
     effectiveConfigRaw: unknown;
     env: NodeJS.ProcessEnv;
+    allowCurrentPluginMetadata?: boolean;
   }) => ValidationPluginMetadataSnapshotLoader;
   resolveRuntimePreflightSourceConfig: (candidate: OpenClawConfig) => OpenClawConfig;
   resolveSuspiciousRecoveryBackupCandidate: (parsed: unknown) => OpenClawConfig | null;
@@ -96,6 +98,7 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
   function createValidationPluginMetadataSnapshotLoader(params: {
     effectiveConfigRaw: unknown;
     env: NodeJS.ProcessEnv;
+    allowCurrentPluginMetadata?: boolean;
   }): ValidationPluginMetadataSnapshotLoader {
     let snapshot: PluginMetadataSnapshot | undefined;
     return {
@@ -109,6 +112,7 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
           config: metadataConfig,
           workspaceDir: resolveAgentWorkspaceDir(metadataConfig, defaultAgentId, params.env),
           env: params.env,
+          allowCurrent: params.allowCurrentPluginMetadata,
           allowWorkspaceScopedCurrent: true,
           pluginIdScope: createConfigValidationMetadataPluginIdScope({
             config: metadataConfig,
@@ -125,7 +129,7 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
     const env = { ...deps.env } as NodeJS.ProcessEnv;
     const resolvedIncludes = resolveConfigIncludesForRead(candidate, configPath, { ...deps, env });
     const resolution = resolveConfigForRead(resolvedIncludes, env, deps.lowerPrecedenceEnv);
-    return coerceConfig(resolution.resolvedConfigRaw);
+    return coerceConfig(migratePersistedImplicitMainRoster(resolution.resolvedConfigRaw).config);
   }
 
   function resolveSuspiciousRecoveryBackupCandidate(parsed: unknown): OpenClawConfig | null {

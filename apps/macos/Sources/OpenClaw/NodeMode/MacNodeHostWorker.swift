@@ -1,10 +1,12 @@
 import Darwin
 import Foundation
-import OpenClawKit
+@_spi(AgentExecutionAttribution) import OpenClawKit
 import OSLog
 
 extension Notification.Name {
     static let openclawNodeHostWorkerFailed = Notification.Name("openclaw.node-host-worker.failed")
+    static let openclawNodeHostWorkerRetryExhausted = Notification.Name(
+        "openclaw.node-host-worker.retry-exhausted")
 }
 
 struct MacNodeHostManifest: Equatable, Sendable {
@@ -116,7 +118,8 @@ final class MacNodeHostWorker: MacNodeHostWorking, @unchecked Sendable {
     }
 
     func invoke(_ request: BridgeInvokeRequest) async -> BridgeInvokeResponse {
-        await withCheckedContinuation { continuation in
+        let sessionKeyEnvelope = GatewayNodeInvokeContext.sessionKeyEnvelope
+        return await withCheckedContinuation { continuation in
             self.queue.async {
                 guard self.process?.isRunning == true, self.manifest != nil else {
                     continuation.resume(returning: Self.unavailableResponse(
@@ -132,12 +135,18 @@ final class MacNodeHostWorker: MacNodeHostWorking, @unchecked Sendable {
                 }
                 self.invokeContinuations[request.id] = continuation
                 do {
-                    let workerRequest: [String: Any] = [
+                    var workerRequest: [String: Any] = [
                         "id": request.id,
                         "nodeId": request.nodeId ?? "",
                         "command": request.command,
                         "paramsJSON": request.paramsJSON ?? NSNull(),
                     ]
+                    switch sessionKeyEnvelope {
+                    case .legacy:
+                        break
+                    case let .authoritative(sessionKey):
+                        workerRequest["sessionKey"] = sessionKey ?? NSNull()
+                    }
                     try self.enqueueWriteLocked([
                         "type": "invoke",
                         "request": workerRequest,
@@ -295,6 +304,10 @@ final class MacNodeHostWorker: MacNodeHostWorking, @unchecked Sendable {
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
+        guard fcntl(stdinPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
+            self.finishStartLocked(.failure(WorkerError.unavailable("could not protect worker input pipe")))
+            return
+        }
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = Array(command.dropFirst())
         var environment = ProcessInfo.processInfo.environment
@@ -387,14 +400,16 @@ final class MacNodeHostWorker: MacNodeHostWorking, @unchecked Sendable {
     }
 
     private func consumeStdoutLocked(_ data: Data) {
+        var searchStart = self.stdoutBuffer.count
         self.stdoutBuffer.append(data)
         guard self.stdoutBuffer.count <= 25 * 1024 * 1024 else {
             self.stopLocked(reason: "worker response exceeded limit", notifyUnexpectedExit: true)
             return
         }
-        while let newline = self.stdoutBuffer.firstIndex(of: 0x0A) {
+        while let newline = self.stdoutBuffer[searchStart...].firstIndex(of: 0x0A) {
             let line = self.stdoutBuffer.prefix(upTo: newline)
             self.stdoutBuffer.removeSubrange(...newline)
+            searchStart = 0
             guard !line.isEmpty,
                   let message = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
             else { continue }

@@ -1,4 +1,3 @@
-// Discord tests cover thread bindings.lifecycle plugin behavior.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +14,8 @@ import {
   setRuntimeConfigSnapshot,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/runtime-config-snapshot";
+// Discord tests cover thread bindings.lifecycle plugin behavior.
+import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setDiscordRuntime } from "../runtime.js";
 import { EMPTY_DISCORD_TEST_CONFIG } from "../test-support/config.js";
@@ -92,12 +93,7 @@ function createTestThreadBindingManager(
   });
 }
 
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`Expected ${label}`);
-  }
-  return value as Record<string, unknown>;
-}
+const requireRecord = createRequireRecord("record", "expected-label-capitalized");
 
 function expectFields(
   value: unknown,
@@ -1249,6 +1245,9 @@ describe("thread binding lifecycle", () => {
   it("binds current Discord DMs as direct conversation bindings", async () => {
     createTestThreadBindingManager({
       accountId: "default",
+      cfg: {
+        agents: { list: [{ id: "codex", default: true }] },
+      },
       persist: false,
       enableSweeper: false,
       idleTimeoutMs: 24 * 60 * 60 * 1000,
@@ -1283,6 +1282,9 @@ describe("thread binding lifecycle", () => {
       accountId: "default",
       conversationId: "user:1177378744822943744",
       parentConversationId: "user:1177378744822943744",
+    });
+    expectFields(requireRecord(bound, "bound session").metadata, "bound metadata", {
+      agentId: "codex",
     });
     const resolved = requireRecord(
       getSessionBindingService().resolveByConversation({

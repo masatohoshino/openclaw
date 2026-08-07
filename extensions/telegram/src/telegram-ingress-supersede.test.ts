@@ -1,29 +1,18 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 // Telegram supersede policy for durable ingress (authorization-gated).
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   addChannelAllowFromStoreEntry,
   closeOpenClawStateDatabaseForTest,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import { createOpenClawTestState, type OpenClawTestState } from "openclaw/plugin-sdk/test-state";
 import { afterEach, describe, expect, it } from "vitest";
 
-let previousStateDir: string | undefined;
-let stateDirTouched = false;
+let openClawState: OpenClawTestState | undefined;
 
-afterEach(() => {
+afterEach(async () => {
   closeOpenClawStateDatabaseForTest();
-  if (!stateDirTouched) {
-    return;
-  }
-  if (previousStateDir === undefined) {
-    delete process.env.OPENCLAW_STATE_DIR;
-  } else {
-    process.env.OPENCLAW_STATE_DIR = previousStateDir;
-  }
-  previousStateDir = undefined;
-  stateDirTouched = false;
+  await openClawState?.cleanup();
+  openClawState = undefined;
 });
 import type { TelegramSpooledUpdatePayload } from "./telegram-ingress-spool.payload.js";
 import {
@@ -244,6 +233,52 @@ describe("telegram ingress supersede policy", () => {
     ).toBe(true);
   });
 
+  it("does not supersede when a bot_command entity appears inside ordinary text", async () => {
+    const ourBotAuth = {
+      ...auth,
+      botUsername: "mybot",
+    };
+    const shouldSupersedeOurBot = createShouldSupersedeTelegramSpooledPending(ourBotAuth);
+    const commandText = "/deploy@mybot";
+    const ordinaryText = `Please run ${commandText} after this finishes`;
+    const ordinaryMessage = messageUpdate({
+      updateId: 2,
+      text: ordinaryText,
+      senderId: OWNER_ID,
+      entities: [
+        {
+          type: "bot_command",
+          offset: ordinaryText.indexOf(commandText),
+          length: commandText.length,
+        },
+      ],
+    });
+    const ordinaryCaption = {
+      update_id: 3,
+      message: {
+        caption: ordinaryText,
+        caption_entities: [
+          {
+            type: "bot_command",
+            offset: ordinaryText.indexOf(commandText),
+            length: commandText.length,
+          },
+        ],
+        from: { id: Number(OWNER_ID) },
+        chat: { id: Number(OWNER_ID), type: "private" },
+      },
+    };
+
+    for (const update of [ordinaryMessage, ordinaryCaption]) {
+      expect(
+        await shouldSupersedeOurBot(
+          record(String(update.update_id), update),
+          claim("1", messageUpdate({ updateId: 1, text: "prior", senderId: OWNER_ID })),
+        ),
+      ).toBe(false);
+    }
+  });
+
   it("does not supersede bot_command entities addressed to another bot", async () => {
     const ourBotAuth = {
       ...auth,
@@ -353,11 +388,10 @@ describe("telegram ingress supersede policy", () => {
 
   it("authorizes paired DM senders via the pairing store under dmPolicy pairing", async () => {
     const pairedId = "424242";
-    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-supersede-store-"));
-    // The shared pairing-store loader reads process.env; scoped set + afterEach restore.
-    previousStateDir = process.env.OPENCLAW_STATE_DIR;
-    stateDirTouched = true;
-    process.env.OPENCLAW_STATE_DIR = stateDir;
+    openClawState = await createOpenClawTestState({
+      layout: "state-only",
+      prefix: "openclaw-supersede-store-",
+    });
     await addChannelAllowFromStoreEntry({
       channel: "telegram",
       entry: pairedId,

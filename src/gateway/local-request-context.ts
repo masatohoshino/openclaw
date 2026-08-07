@@ -2,7 +2,10 @@ import { isAgentDeletionBlocked } from "../agents/agent-lifecycle-registry.js";
 import { listAgentIds, resolveDefaultAgentId } from "../agents/agent-scope.js";
 // Local embedded Gateway request context.
 // Lets local agent paths reuse Gateway server methods without starting a server.
-import { loadPublishedPreparedModelCatalogOwnerSnapshot } from "../agents/prepared-model-catalog.js";
+import {
+  getPreparedModelCatalogSnapshot,
+  loadResolvedPublishedModelCatalogOwner,
+} from "../agents/prepared-model-catalog.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { CronService } from "../cron/service.js";
@@ -46,6 +49,7 @@ const unavailableCron: GatewayCronServiceContract = {
   update: async () => cronUnavailable(),
   updateWithPrecondition: async () => cronUnavailable(),
   remove: async () => cronUnavailable(),
+  removeStaleJobFamily: async () => cronUnavailable(),
   removeAgentJobsTransactional: async () => cronUnavailable(),
   run: async () => cronUnavailable(),
   enqueueRun: async () => cronUnavailable(),
@@ -100,7 +104,7 @@ function createLocalGatewayRequestContext(
     readOnly,
     workspaceDir,
   }: NonNullable<Parameters<GatewayRequestContext["loadGatewayModelCatalogSnapshot"]>[0]> = {}) =>
-    loadPublishedPreparedModelCatalogOwnerSnapshot({
+    loadResolvedPublishedModelCatalogOwner({
       ...(agentId ? { agentId } : {}),
       ...(agentDir ? { agentDir } : {}),
       config: params.getRuntimeConfig(),
@@ -121,11 +125,20 @@ function createLocalGatewayRequestContext(
       const owner = await loadModelCatalogOwner(loadParams);
       return {
         ...owner.modelCatalog,
-        ...(owner.agentId ? { agentId: owner.agentId } : {}),
+        agentId: owner.agentId,
         agentDir: owner.agentDir,
-        ...(owner.workspaceDir ? { workspaceDir: owner.workspaceDir } : {}),
+        workspaceDir: owner.workspaceDir,
         config: owner.config,
       };
+    },
+    readPreparedGatewayModelCatalog: async (loadParams) =>
+      getPreparedModelCatalogSnapshot({
+        ...loadParams,
+        config: params.getRuntimeConfig(),
+        readOnly: true,
+      })?.entries,
+    readChatMetadata: async () => {
+      throw new Error("Chat metadata is unavailable in local embedded agent gateway context.");
     },
     getHealthCache: () => null,
     refreshHealthSnapshot: async () =>

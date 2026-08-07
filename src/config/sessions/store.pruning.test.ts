@@ -2,8 +2,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { saveLegacySessionStore as saveSessionStore } from "../../infra/state-migrations.legacy-session-store.js";
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
+import { withTempDir } from "../../test-helpers/temp-dir.js";
 import { createFixtureSuite } from "../../test-utils/fixture-suite.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import { enforceSessionDiskBudget } from "./disk-budget.js";
@@ -212,15 +214,11 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
   it("preserves the active session and cleans artifacts using the final referenced session set", async () => {
     const now = Date.now();
     const store = makeStore([
-      [
-        "stale",
-        { sessionId: "stale-session", sessionFile: "stale.jsonl", updatedAt: now - 30 * DAY_MS },
-      ],
+      ["stale", { sessionId: "stale-session", updatedAt: now - 30 * DAY_MS }],
       [
         "stale-shared",
         {
           sessionId: "shared-session",
-          sessionFile: "shared-old.jsonl",
           updatedAt: now - 30 * DAY_MS,
         },
       ],
@@ -270,13 +268,55 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
     expect(archiveCalls).toEqual([
       {
         removedSessionFiles: [
-          ["stale-session", "stale.jsonl"],
-          ["shared-session", "shared-old.jsonl"],
+          ["stale-session", undefined],
+          ["shared-session", undefined],
         ],
         referencedSessionIds: new Set(["shared-session", "active-session"]),
       },
     ]);
     expect(trajectoryCleanupReferencedIds).toEqual(new Set(["shared-session", "active-session"]));
+  });
+
+  it("reports archive retention failure without aborting file-backed maintenance", async () => {
+    const now = Date.now();
+    const store = makeStore([
+      ["stale", { sessionId: "stale-session", updatedAt: now - 30 * DAY_MS }],
+      ["fresh", { sessionId: "fresh-session", updatedAt: now }],
+    ]);
+    const cleanupError = new Error("archive cleanup denied");
+    const warn = vi.fn();
+    const onMaintenanceApplied = vi.fn();
+
+    const result = await applyFileBackedSessionStoreMaintenance({
+      storePath: "/tmp/openclaw-sessions/sessions.json",
+      store,
+      maintenanceConfig: {
+        mode: "enforce",
+        pruneAfterMs: 7 * DAY_MS,
+        maxEntries: 500,
+        modelRunPruneAfterMs: DAY_MS,
+        resetArchiveRetentionMs: 0,
+        maxDiskBytes: null,
+        highWaterBytes: null,
+      },
+      onMaintenanceApplied,
+      log: { warn, info: () => {} },
+      artifacts: {
+        archiveRemovedSessionTranscripts: async () => new Set(),
+        removeRemovedSessionTrajectoryArtifacts: async () => {},
+        cleanupArchivedSessionTranscripts: async () => {
+          throw cleanupError;
+        },
+      },
+    });
+
+    expect(result.changedStore).toBe(true);
+    expect(store.stale).toBeUndefined();
+    expect(store).toHaveProperty("fresh");
+    expect(onMaintenanceApplied).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith("session transcript archive retention cleanup failed", {
+      error: String(cleanupError),
+    });
   });
 
   it("forced cleanup prunes stale model-run probes before the cap evicts real sessions", async () => {
@@ -675,6 +715,26 @@ describe("capEntryCount", () => {
     expect(store.old).toBeUndefined();
   });
 
+  it("never evicts the agent primary main session even when protected entries fill the cap (#112637)", () => {
+    const now = Date.now();
+    const mainKey = "agent:main:main";
+    // `main` is the oldest entry, so pre-fix it was the first unprotected eviction target once
+    // protected thread entries (>= maxEntries) left zero removable budget.
+    const store = makeStore([
+      [mainKey, makeEntry(now - 10 * DAY_MS)],
+      ["agent:main:slack:channel:C1:thread:1", makeEntry(now - 3 * DAY_MS)],
+      ["agent:main:slack:channel:C2:thread:2", makeEntry(now - 2 * DAY_MS)],
+      ["agent:main:slack:channel:C3:thread:3", makeEntry(now - DAY_MS)],
+    ]);
+
+    const evicted = capEntryCount(store, 2);
+
+    // Every entry is now protected (main + threads), so nothing is evicted and `main` survives.
+    expect(store).toHaveProperty(mainKey);
+    expect(evicted).toBe(0);
+    expect(Object.keys(store)).toHaveLength(4);
+  });
+
   it("preserves model-locked harness sessions when capping", () => {
     const now = Date.now();
     const lockedKey = "agent:main:harness-owned:locked";
@@ -822,6 +882,15 @@ describe("enforceSessionDiskBudget", () => {
 });
 
 describe("isProtectedSessionMaintenanceEntry", () => {
+  it.each([
+    ["agent:main:main", true],
+    ["agent:worker:main", true],
+    ["global", true],
+    ["agent:main:opaque", false],
+  ])("classifies primary session key %s as protected=%s", (key, expected) => {
+    expect(isProtectedSessionMaintenanceEntry(key, makeEntry(Date.now()))).toBe(expected);
+  });
+
   it("treats generated ACP bridge sessions as disposable", () => {
     expect(
       isProtectedSessionMaintenanceEntry("agent:main:acp-bridge:session-1", {
@@ -918,6 +987,52 @@ describe("resolveMaintenanceConfigFromInput", () => {
 
     expect(maintenance.maxDiskBytes).toBeNull();
     expect(maintenance.highWaterBytes).toBeNull();
+  });
+
+  it("disables the disk budget when maxDiskBytes is 0", () => {
+    const maintenance = resolveMaintenanceConfigFromInput({ maxDiskBytes: 0 });
+
+    expect(maintenance.maxDiskBytes).toBeNull();
+    expect(maintenance.highWaterBytes).toBeNull();
+  });
+
+  it("disables the disk budget when maxDiskBytes is the string '0'", () => {
+    const maintenance = resolveMaintenanceConfigFromInput({ maxDiskBytes: "0" });
+
+    expect(maintenance.maxDiskBytes).toBeNull();
+    expect(maintenance.highWaterBytes).toBeNull();
+  });
+
+  it("retains session history when a zero maxDiskBytes disables the budget", async () => {
+    await withTempDir({ prefix: "openclaw-zero-disk-budget-" }, async (dir) => {
+      const storePath = path.join(dir, "sessions.json");
+      const transcriptPath = path.join(dir, "old-session.jsonl");
+      await fs.writeFile(transcriptPath, JSON.stringify({ role: "user", content: "hello" }));
+      const store: Record<string, SessionEntry> = {
+        "agent:main:subagent:old-worker": {
+          sessionId: "old-session",
+          updatedAt: 1,
+          transcriptPath,
+        },
+      };
+      await saveSessionStore(storePath, store, { skipMaintenance: true });
+
+      const maintenance = resolveMaintenanceConfigFromInput({ maxDiskBytes: 0 });
+      const result = await enforceSessionDiskBudget({
+        store,
+        storePath,
+        maintenance: {
+          maxDiskBytes: maintenance.maxDiskBytes,
+          highWaterBytes: maintenance.highWaterBytes,
+        },
+        warnOnly: false,
+      });
+
+      expect(maintenance.maxDiskBytes).toBeNull();
+      expect(maintenance.highWaterBytes).toBeNull();
+      expect(result).toBeNull();
+      await expect(fs.access(transcriptPath)).resolves.toBeUndefined();
+    });
   });
 
   it("force-gates the unset model-run prune default to the cap-eviction threshold", () => {

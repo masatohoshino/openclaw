@@ -12,7 +12,13 @@ const mocks = vi.hoisted(() => ({
   external: false,
   upstreamFork: vi.fn(),
   queueClear: vi.fn(),
+  readMediaBuffer: vi.fn(),
 }));
+
+vi.mock("../../media/store.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../media/store.js")>();
+  return { ...actual, readMediaBuffer: mocks.readMediaBuffer };
+});
 
 vi.mock("../../agents/harness/registry.js", () => ({
   listRegisteredAgentHarnesses: () =>
@@ -62,11 +68,14 @@ import {
   upsertSessionEntry,
 } from "../../config/sessions/session-accessor.js";
 import { listSessionStateEventsSince } from "../../sessions/session-state-events.js";
-import { sessionsHandlers } from "./sessions.js";
+import { sessionRewindHandlers } from "./sessions-rewind.js";
 import type { GatewayClient } from "./types.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const sessionKey = "agent:main:rewind-handler";
+const storedImageId = "stored-image.png";
+const storedImagePath = `/state/media/inbound/${storedImageId}`;
+const storedImageData = Buffer.from("stored-image");
 
 beforeEach(async () => {
   mocks.active = false;
@@ -74,6 +83,17 @@ beforeEach(async () => {
   mocks.external = false;
   mocks.upstreamFork.mockReset();
   mocks.queueClear.mockReset();
+  mocks.readMediaBuffer.mockReset().mockImplementation(async (id: string) => {
+    if (id !== storedImageId) {
+      throw new Error(`missing media: ${id}`);
+    }
+    return {
+      id,
+      path: storedImagePath,
+      buffer: storedImageData,
+      size: storedImageData.byteLength,
+    };
+  });
   vi.stubEnv("OPENCLAW_STATE_DIR", tempDirs.make("openclaw-rewind-handler-"));
   await upsertSessionEntry(
     { agentId: "main", sessionKey },
@@ -88,7 +108,21 @@ beforeEach(async () => {
       type: "message",
       id: "user-entry",
       parentId: null,
-      message: { role: "user", content: "edit me" },
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "edit me" },
+          { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+        ],
+        __openclaw: {
+          media: [
+            { path: storedImagePath, contentType: "image/png" },
+            // Duplicate ref proves dedupe: the response must carry this image once.
+            { path: storedImagePath, contentType: "image/png" },
+            { path: `${storedImagePath}.missing`, contentType: "image/png" },
+          ],
+        },
+      },
     },
     {
       type: "message",
@@ -150,7 +184,7 @@ async function invoke(
 ) {
   const respond = vi.fn();
   await expectDefined(
-    sessionsHandlers[method],
+    sessionRewindHandlers[method],
     `${method} handler`,
   )({
     req: { id: `${method}-request` } as never,
@@ -174,7 +208,7 @@ describe("session message-cut methods", () => {
   it("returns an empty branch list for a not-yet-materialized session", async () => {
     const respond = vi.fn() as unknown as RespondFn;
     await expectDefined(
-      sessionsHandlers["sessions.branches.list"],
+      sessionRewindHandlers["sessions.branches.list"],
       "sessions.branches.list handler",
     )({
       req: { id: "fresh-branches-list" } as never,
@@ -244,9 +278,17 @@ describe("session message-cut methods", () => {
     } as GatewayClient);
     expect(fork).toHaveBeenCalledWith(
       true,
-      expect.objectContaining({ editorText: "edit me", sessionKey: expect.any(String) }),
+      expect.objectContaining({
+        editorText: "edit me",
+        editorAttachments: [
+          { mimeType: "image/png", data: "aW1hZ2U=" },
+          { mimeType: "image/png", data: storedImageData.toString("base64") },
+        ],
+        sessionKey: expect.any(String),
+      }),
       undefined,
     );
+    expect(mocks.readMediaBuffer).toHaveBeenCalledTimes(2);
     const forkKey = (fork.mock.calls[0]?.[1] as { sessionKey?: string } | undefined)?.sessionKey;
     expect(forkKey).toBeTruthy();
     const forkEntry = loadSessionEntry({ agentId: "main", sessionKey: forkKey ?? "" });
@@ -264,7 +306,18 @@ describe("session message-cut methods", () => {
     );
 
     const rewind = await invoke("sessions.rewind", "user-entry");
-    expect(rewind).toHaveBeenCalledWith(true, { editorText: "edit me" }, undefined);
+    expect(rewind).toHaveBeenCalledWith(
+      true,
+      {
+        editorText: "edit me",
+        editorAttachments: [
+          { mimeType: "image/png", data: "aW1hZ2U=" },
+          { mimeType: "image/png", data: storedImageData.toString("base64") },
+        ],
+      },
+      undefined,
+    );
+    expect(mocks.readMediaBuffer).toHaveBeenCalledTimes(4);
     expect(mocks.queueClear).toHaveBeenCalledTimes(1);
   });
 
@@ -397,34 +450,6 @@ describe("session message-cut methods", () => {
       );
     },
   );
-
-  it("returns a typed error for unsupported transcript storage", async () => {
-    await upsertSessionEntry(
-      { agentId: "main", sessionKey },
-      {
-        sessionFile: "/tmp/legacy-session.jsonl",
-      },
-    );
-    const respond = await invoke("sessions.rewind", "user-entry");
-    const listed = await invoke("sessions.branches.list");
-
-    expect(respond).toHaveBeenCalledWith(
-      false,
-      undefined,
-      expect.objectContaining({
-        code: ErrorCodes.INVALID_REQUEST,
-        message: expect.stringContaining("storage does not support rewind"),
-      }),
-    );
-    expect(listed).toHaveBeenCalledWith(
-      false,
-      undefined,
-      expect.objectContaining({
-        code: ErrorCodes.INVALID_REQUEST,
-        message: expect.stringContaining("storage does not support branch listing"),
-      }),
-    );
-  });
 
   it.each([
     ["sessions.fork", "Fork"],

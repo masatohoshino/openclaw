@@ -7,6 +7,7 @@ import {
   resolveExpiresAtMsFromDurationMs,
   resolveTimerTimeoutMs,
 } from "@openclaw/normalization-core/number-coercion";
+import { GATEWAY_CLIENT_IDS } from "../../packages/gateway-protocol/src/client-info.js";
 // NodeSession is plugin-SDK-reachable; importing these types from the
 // gateway-protocol index would retain the whole ProtocolSchemas registry in
 // the public plugin-sdk dts (check-plugin-sdk-exports guards this).
@@ -14,6 +15,7 @@ import type {
   NodePluginToolDescriptor,
   NodeSkillDescriptor,
 } from "../../packages/gateway-protocol/src/schema/nodes.js";
+import { NODE_INVOKE_SESSION_KEY_ENVELOPE_PROTOCOL_FEATURE } from "../../packages/gateway-protocol/src/schema/nodes.js";
 import { setActiveNodeContext } from "../infra/active-node-context.js";
 import { NODE_MCP_TOOLS_CALL_COMMAND } from "../infra/node-commands.js";
 import type { NodePairingBinding } from "../infra/node-pairing-state.js";
@@ -142,6 +144,30 @@ function normalizeSystemRunInvokeParams(params: { command: string; params?: unkn
   return normalized;
 }
 
+/** Bind legacy nested attribution to the Gateway-owned session before dispatch. */
+function bindNodeInvokeSessionKey(params: unknown, sessionKey: string | undefined): unknown {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return params;
+  }
+  const bound = { ...(params as Record<string, unknown>) };
+  if (sessionKey) {
+    bound.sessionKey = sessionKey;
+  } else {
+    delete bound.sessionKey;
+  }
+  if (
+    bound.systemRunPlan &&
+    typeof bound.systemRunPlan === "object" &&
+    !Array.isArray(bound.systemRunPlan)
+  ) {
+    bound.systemRunPlan = {
+      ...(bound.systemRunPlan as Record<string, unknown>),
+      sessionKey: sessionKey ?? null,
+    };
+  }
+  return bound;
+}
+
 /** Result payload returned from node.invoke. */
 export type NodeInvokeResult = {
   ok: boolean;
@@ -157,7 +183,6 @@ export type NodeConnectivityResult =
 
 /** Minimal websocket ping/pong surface used by connectivity checks. */
 type PingableSocket = {
-  readyState?: number;
   ping?: (data?: Buffer, mask?: boolean, cb?: (err?: Error) => void) => void;
   once?: (event: "pong" | "close" | "error", listener: (...args: unknown[]) => void) => unknown;
   off?: (event: "pong" | "close" | "error", listener: (...args: unknown[]) => void) => unknown;
@@ -252,12 +277,19 @@ export class NodeRegistry {
   private nodesById = new Map<string, PairingBoundNodeSession>();
   private nodesByConn = new Map<string, string>();
   private eventTransportsByConn = new Map<string, NodeEventTransport>();
+  private protocolFeaturesByConn = new Map<string, ReadonlySet<string>>();
   private pendingInvokes = new Map<string, PendingInvoke>();
   private invokeStreams = new NodeInvokeStreamController({
     pendingInvokes: this.pendingInvokes,
     sendCancel: (requestId, pending) => {
       const node = this.nodesById.get(pending.nodeId);
-      if (!node || node.connId !== pending.connId) {
+      // Older nodes only negotiated streamed cancellation. The authenticated
+      // first-party host also aborts ordinary shell, MCP, and inference calls.
+      if (
+        !node ||
+        node.connId !== pending.connId ||
+        (!pending.onProgress && node.clientId !== GATEWAY_CLIENT_IDS.NODE_HOST)
+      ) {
         return;
       }
       this.sendEventToSession(node, "node.invoke.cancel", {
@@ -296,7 +328,13 @@ export class NodeRegistry {
           },
         });
       } else {
-        pending.reject(new Error(`node disconnected (${pending.command})`));
+        pending.resolve({
+          ok: false,
+          error: {
+            code: "DISCONNECTED",
+            message: `node disconnected (${pending.command})`,
+          },
+        });
       }
     },
   });
@@ -433,7 +471,8 @@ export class NodeRegistry {
     }
     const connect = client.connect;
     const nodeId = connect.device?.id ?? connect.client.id;
-    const previousPairingGeneration = this.nodesById.get(nodeId)?.pairingGeneration;
+    const previousSession = this.nodesById.get(nodeId);
+    const previousPairingGeneration = previousSession?.pairingGeneration;
     const caps = Array.isArray(connect.caps) ? connect.caps : [];
     const declaredCaps = Array.isArray((connect as { declaredCaps?: string[] }).declaredCaps)
       ? ((connect as { declaredCaps?: string[] }).declaredCaps ?? [])
@@ -505,9 +544,15 @@ export class NodeRegistry {
       pathEnv,
       connectedAtMs: Date.now(),
     };
-    const replacesPresence = this.nodesById.get(nodeId)?.lastActiveAtMs !== undefined;
+    const replacesPresence = previousSession?.lastActiveAtMs !== undefined;
     this.nodesById.set(nodeId, session);
     this.nodesByConn.set(client.connId, nodeId);
+    this.protocolFeaturesByConn.set(client.connId, new Set());
+    if (previousSession && previousSession.connId !== client.connId) {
+      // Install the replacement first so retiring its old invokes cannot
+      // remove the new session or publish a false offline transition.
+      this.unregister(previousSession.connId);
+    }
     if (
       previousPairingGeneration &&
       session.pairingGeneration &&
@@ -546,6 +591,7 @@ export class NodeRegistry {
     }
     this.nodesByConn.delete(connId);
     this.eventTransportsByConn.delete(connId);
+    this.protocolFeaturesByConn.delete(connId);
     const unregistersCurrentNode = this.nodesById.get(nodeId)?.connId === connId;
     if (unregistersCurrentNode) {
       const hadPresence = this.nodesById.get(nodeId)?.lastActiveAtMs !== undefined;
@@ -807,19 +853,33 @@ export class NodeRegistry {
 
   /** Probe websocket liveness with ping/pong when the socket supports it. */
   async checkConnectivity(nodeId: string, timeoutMs = 2_000): Promise<NodeConnectivityResult> {
-    const node = this.nodesById.get(nodeId);
+    const node = this.getRegisteredSession(nodeId);
     if (!node) {
       return {
         ok: false,
         error: { code: "NOT_CONNECTED", message: "node not connected" },
       };
     }
+    // A successful old transport must never certify a replacement node.
+    const currentConnectionResult = (result: NodeConnectivityResult): NodeConnectivityResult =>
+      this.nodesById.get(nodeId) === node && node.client.invalidated !== true
+        ? result
+        : {
+            ok: false,
+            error: {
+              code: "NOT_CONNECTED",
+              message: "node connection changed during connectivity probe",
+            },
+          };
     const eventTransport = this.eventTransportsByConn.get(node.connId);
     if (eventTransport) {
-      return eventTransport.checkConnectivity?.(timeoutMs) ?? { ok: true };
+      const result = eventTransport.checkConnectivity
+        ? await eventTransport.checkConnectivity(timeoutMs)
+        : { ok: true as const };
+      return currentConnectionResult(result);
     }
     const socket = node.client.socket as PingableSocket;
-    if (socket.readyState !== WEBSOCKET_OPEN_READY_STATE) {
+    if (!this.isNodeWebSocketOpen(node)) {
       return {
         ok: false,
         error: { code: "NOT_CONNECTED", message: "node socket not open" },
@@ -847,7 +907,7 @@ export class NodeRegistry {
         settled = true;
         clearTimeout(timer);
         cleanup();
-        resolve(result);
+        resolve(currentConnectionResult(result));
       };
       const onPong = () => finish({ ok: true });
       const onClose = () =>
@@ -925,6 +985,19 @@ export class NodeRegistry {
       skills,
       enabled: this.options.nodeSkillsEnabled,
     });
+    return node;
+  }
+
+  updateProtocolFeatures(
+    nodeId: string,
+    connId: string | undefined,
+    features: readonly string[],
+  ): NodeSession | null {
+    const node = this.nodesById.get(nodeId);
+    if (!node || node.connId !== connId) {
+      return null;
+    }
+    this.protocolFeaturesByConn.set(node.connId, new Set(features));
     return node;
   }
   updateSurface(
@@ -1041,8 +1114,8 @@ export class NodeRegistry {
     signal?: AbortSignal;
     idempotencyKey?: string;
     sessionKey?: string;
-    /** Receives the id synchronously after send; the terminal relay depends on this timing. */
-    onInvokeId?: (invokeId: string) => void;
+    /** Receives the id after pairing validation and a successful dispatch. */
+    onDispatchReady?: (invokeId: string) => void;
   }): Promise<NodeInvokeResult> {
     if (params.signal?.aborted) {
       return { ok: false, error: { code: "ABORTED", message: "node invoke cancelled" } };
@@ -1107,12 +1180,19 @@ export class NodeRegistry {
       }
     }
     const requestId = randomUUID();
-    const invokeParams = normalizeSystemRunInvokeParams({
-      command: params.command,
-      params: params.params,
-    });
+    const sessionKey = normalizeString(params.sessionKey) || undefined;
+    const invokeParams = bindNodeInvokeSessionKey(
+      normalizeSystemRunInvokeParams({
+        command: params.command,
+        params: params.params,
+      }),
+      sessionKey,
+    );
     // Keep node and Gateway on the same timer-safe value; zero disables both deadlines.
     const timeoutMs = resolveTimerTimeoutMs(params.timeoutMs, 30_000, 0);
+    const supportsSessionKeyEnvelope = this.protocolFeaturesByConn
+      .get(node.connId)
+      ?.has(NODE_INVOKE_SESSION_KEY_ENVELOPE_PROTOCOL_FEATURE);
     const payload = {
       id: requestId,
       nodeId: params.nodeId,
@@ -1121,7 +1201,13 @@ export class NodeRegistry {
         "params" in params && invokeParams !== undefined ? JSON.stringify(invokeParams) : null,
       timeoutMs,
       idempotencyKey: params.idempotencyKey,
-      sessionKey: normalizeString(params.sessionKey) || undefined,
+      // Object params carry a canonical nested binding for legacy nodes. Keep the
+      // additive non-empty envelope fallback for commands without an object carrier.
+      ...(supportsSessionKeyEnvelope
+        ? { sessionKey: sessionKey ?? null }
+        : sessionKey
+          ? { sessionKey }
+          : {}),
     };
     const systemRunEvent = resolvePendingSystemRunEvent({
       command: params.command,
@@ -1172,7 +1258,7 @@ export class NodeRegistry {
         ...systemRunEvent,
       });
     }
-    params.onInvokeId?.(requestId);
+    params.onDispatchReady?.(requestId);
     return await result;
   }
 
@@ -1446,6 +1532,9 @@ export class NodeRegistry {
     if (eventTransport) {
       return eventTransport.send(event, payload);
     }
+    if (!this.isNodeWebSocketOpen(node)) {
+      return false;
+    }
     if (this.rejectSlowNodeSocket(node)) {
       return false;
     }
@@ -1482,6 +1571,9 @@ export class NodeRegistry {
     if (eventTransport) {
       return eventTransport.sendRaw(event, payloadJSON);
     }
+    if (!this.isNodeWebSocketOpen(node)) {
+      return false;
+    }
     if (this.rejectSlowNodeSocket(node)) {
       return false;
     }
@@ -1498,6 +1590,12 @@ export class NodeRegistry {
 
   private sendEventToSession(node: NodeSession, event: string, payload: unknown): boolean {
     return this.sendEventInternal(node, event, payload);
+  }
+
+  private isNodeWebSocketOpen(node: NodeSession): boolean {
+    // ws.send() does not throw after entering CLOSING; it only accounts the
+    // unsent bytes. Keep the synchronous send-admission result truthful.
+    return node.client.socket.readyState === WEBSOCKET_OPEN_READY_STATE;
   }
 
   private rejectSlowNodeSocket(node: NodeSession): boolean {

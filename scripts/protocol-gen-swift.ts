@@ -2,13 +2,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ErrorCodes } from "../packages/gateway-protocol/src/schema/error-codes.js";
+import { ProtocolSchemas } from "../packages/gateway-protocol/src/schema/protocol-schemas.js";
 import {
-  ErrorCodes,
   MIN_CLIENT_PROTOCOL_VERSION,
   MIN_NODE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
-  ProtocolSchemas,
-} from "../packages/gateway-protocol/src/schema.js";
+} from "../packages/gateway-protocol/src/version.js";
 
 type JsonSchema = {
   type?: string | string[];
@@ -25,6 +25,7 @@ type JsonSchema = {
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
+const check = process.argv.includes("--check");
 const outPaths = [
   path.join(
     repoRoot,
@@ -36,6 +37,20 @@ const outPaths = [
     "GatewayModels.swift",
   ),
 ];
+const { writeGeneratedOutput } = (await import(
+  new URL("./lib/generated-output-utils.mjs", import.meta.url).href
+)) as {
+  writeGeneratedOutput: (params: {
+    repoRoot: string;
+    outputPath: string;
+    next: string;
+    check?: boolean;
+  }) => {
+    changed: boolean;
+    wrote: boolean;
+    outputPath: string;
+  };
+};
 
 const STRICT_LITERAL_STRUCTS = new Set([
   "PluginsSessionActionSuccessResult",
@@ -99,6 +114,9 @@ function safeName(name: string) {
 // Canonical initializer labels must match stored properties; compatibility initializers
 // declare legacy labels separately.
 function swiftStoredPropertyName(structName: string, key: string): string {
+  if (structName === "WizardStartParams" && key === "installDaemon") {
+    return "installDaemon";
+  }
   if (structName === "ChatSendParams" && key === "fastMode") {
     return "fastmodevalue";
   }
@@ -434,14 +452,17 @@ function emitStructCustomCodable(
   props: Record<string, JsonSchema>,
   required: Set<string>,
 ): string {
-  if (name !== "AgentsUpdateParams" || !props.model) {
+  const preservesExplicitNull = (key: string) =>
+    (name === "AgentsUpdateParams" && key === "model") ||
+    (name === "NodeInvokeRequestEvent" && key === "sessionKey");
+  if (!Object.keys(props).some(preservesExplicitNull)) {
     return "";
   }
   const decodedProperties = Object.entries(props).map(([key, propSchema]) => {
     const propName = swiftStoredPropertyName(name, key);
-    if (key === "model") {
+    if (preservesExplicitNull(key)) {
       // decodeIfPresent collapses an explicit JSON null into nil. Presence-aware decoding
-      // preserves the Gateway patch distinction between clearing and omitting the model.
+      // preserves Gateway distinctions between clearing and omitting nullable fields.
       return `        self.${propName} = container.contains(.${propName})\n            ? try container.decode(AnyCodable.self, forKey: .${propName})\n            : nil`;
     }
     if (required.has(key)) {
@@ -827,8 +848,25 @@ async function generate() {
   const content = parts.join("\n");
   for (const outPath of outPaths) {
     await fs.mkdir(path.dirname(outPath), { recursive: true });
-    await fs.writeFile(outPath, content);
-    console.log(`wrote ${outPath}`);
+    const result = writeGeneratedOutput({
+      repoRoot,
+      outputPath: path.relative(repoRoot, outPath),
+      next: content,
+      check,
+    });
+    const displayPath = path.relative(repoRoot, result.outputPath);
+    if (check && result.changed) {
+      console.error(
+        `[protocol-gen-swift] stale generated output at ${displayPath}; run "pnpm protocol:gen:swift" and commit the result`,
+      );
+      process.exitCode = 1;
+    } else if (!check) {
+      console.log(
+        result.wrote
+          ? `[protocol-gen-swift] wrote ${displayPath}`
+          : `[protocol-gen-swift] unchanged ${displayPath}`,
+      );
+    }
   }
 }
 

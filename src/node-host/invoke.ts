@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import { sliceUtf16Safe, truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
@@ -130,6 +131,29 @@ function resolveNodeSkillCwdParam<T extends { cwd?: unknown }>(params: T, nodeId
   // the same canonical node-local directory instead of trusting a URI at exec time.
   const resolved = resolveNodeHostedSkillDirectory(params.cwd, nodeId);
   return resolved ? { ...params, cwd: resolved } : params;
+}
+
+function bindNodeInvokeSessionKey<
+  T extends {
+    sessionKey?: unknown;
+    systemRunPlan?: SystemRunParams["systemRunPlan"];
+  },
+>(params: T, frame: NodeInvokeRequestPayload): T {
+  if (!Object.hasOwn(frame, "sessionKey")) {
+    return params;
+  }
+  const sessionKey = frame.sessionKey ?? null;
+  // The Gateway envelope owns run correlation. Nested command params are
+  // caller-controlled and must not mint or retain a different session binding.
+  const systemRunPlan =
+    params.systemRunPlan === undefined || params.systemRunPlan === null
+      ? params.systemRunPlan
+      : { ...params.systemRunPlan, sessionKey: sessionKey ?? null };
+  return {
+    ...params,
+    sessionKey,
+    ...(systemRunPlan !== undefined ? { systemRunPlan } : {}),
+  };
 }
 
 function buildEnvOverrideRejectionMessage(params: {
@@ -334,6 +358,7 @@ async function runCommand(
   cwd: string | undefined,
   env: Record<string, string> | undefined,
   timeoutMs: number | undefined,
+  signal?: AbortSignal,
 ): Promise<RunResult> {
   try {
     const result = await runCommandWithTimeout(argv, {
@@ -344,6 +369,7 @@ async function runCommand(
       maxOutputBytes: OUTPUT_CAP,
       outputCapture: "head",
       input: Buffer.alloc(0),
+      signal,
       timeoutMs: timeoutMs && timeoutMs > 0 ? timeoutMs : undefined,
     });
     const timedOut = result.termination === "timeout";
@@ -533,6 +559,36 @@ async function sendExecApprovalsStorageErrorResult(
   await sendErrorResult(client, frame, classifyExecApprovalsStorageError(err), String(err));
 }
 
+function createNodeHostInvocationClient(
+  client: NodeHostClient,
+  signal: AbortSignal | undefined,
+): NodeHostClient {
+  if (!signal) {
+    return client;
+  }
+  return {
+    async request<T = Record<string, unknown>>(
+      method: string,
+      params?: unknown,
+      opts?: Parameters<NodeHostClient["request"]>[2],
+    ): Promise<T> {
+      // Superseded invocations share their replacement's Gateway id, so late
+      // results, progress, and events must not outlive invocation ownership.
+      if (
+        signal.aborted &&
+        (method === "node.invoke.result" ||
+          method === "node.invoke.progress" ||
+          method === "node.event")
+      ) {
+        return {} as T;
+      }
+      return opts === undefined
+        ? await client.request<T>(method, params)
+        : await client.request<T>(method, params, opts);
+    },
+  };
+}
+
 /** Handles one node-host command invocation payload and returns serialized results. */
 export async function handleInvoke(
   frame: NodeInvokeRequestPayload,
@@ -541,8 +597,9 @@ export async function handleInvoke(
   mcpManager?: NodeHostMcpManager,
   runtime: NodeHostInvokeRuntime = {},
 ) {
+  const invocationClient = createNodeHostInvocationClient(client, runtime.signal);
   try {
-    await dispatchInvoke(frame, client, skillBins, mcpManager, runtime);
+    await dispatchInvoke(frame, invocationClient, skillBins, mcpManager, runtime);
   } catch (err) {
     // Gateway events launch this handler without awaiting it. Consume unexpected
     // failures here so one bad request cannot terminate the node-host process.
@@ -550,7 +607,7 @@ export async function handleInvoke(
       `node host invoke failed (command=${frame.command ?? "unknown"}, id=${frame.id}): ${String(err)}`,
     );
     try {
-      await sendErrorResult(client, frame, "UNAVAILABLE", "node invocation failed");
+      await sendErrorResult(invocationClient, frame, "UNAVAILABLE", "node invocation failed");
     } catch (sendErr) {
       // The caller intentionally detaches this promise. A failed result send is
       // terminal for this request and must not surface as an unhandled rejection.
@@ -686,7 +743,7 @@ async function dispatchInvoke(
   }
 
   if (command === NODE_MCP_TOOLS_CALL_COMMAND) {
-    await handleMcpToolsCall(frame, client, mcpManager);
+    await handleMcpToolsCall(frame, client, mcpManager, runtime.signal);
     return;
   }
 
@@ -712,8 +769,15 @@ async function dispatchInvoke(
   }
   try {
     const { pluginCommandIo: io, pluginCommandContext: context } = runtime;
+    const hasSessionKeyEnvelope = Object.hasOwn(frame, "sessionKey");
     const invokeContext =
-      context && frame.sessionKey ? { ...context, sessionKey: frame.sessionKey } : context;
+      context && (hasSessionKeyEnvelope || runtime.signal)
+        ? {
+            ...context,
+            ...(hasSessionKeyEnvelope ? { sessionKey: frame.sessionKey ?? undefined } : {}),
+            ...(runtime.signal ? { signal: runtime.signal } : {}),
+          }
+        : context;
     const pluginResult = await invokePlugin(command, frame.paramsJSON, io, invokeContext);
     if (pluginResult !== null) {
       await sendRawPayloadResult(client, frame, pluginResult);
@@ -726,9 +790,12 @@ async function dispatchInvoke(
 
   if (command === "system.run.prepare") {
     try {
-      const params = resolveNodeSkillCwdParam(
-        decodeParams<SystemRunPrepareParams>(frame.paramsJSON),
-        frame.nodeId,
+      const params = bindNodeInvokeSessionKey(
+        resolveNodeSkillCwdParam(
+          decodeParams<SystemRunPrepareParams>(frame.paramsJSON),
+          frame.nodeId,
+        ),
+        frame,
       );
       const prepared = buildSystemRunApprovalPlan(params);
       if (!prepared.ok) {
@@ -785,9 +852,9 @@ async function dispatchInvoke(
 
   let params: SystemRunParams;
   try {
-    params = resolveNodeSkillCwdParam(
-      decodeParams<SystemRunParams>(frame.paramsJSON),
-      frame.nodeId,
+    params = bindNodeInvokeSessionKey(
+      resolveNodeSkillCwdParam(decodeParams<SystemRunParams>(frame.paramsJSON), frame.nodeId),
+      frame,
     );
   } catch (err) {
     await sendInvalidRequestResult(client, frame, err);
@@ -803,6 +870,7 @@ async function dispatchInvoke(
     client,
     params,
     skillBins,
+    signal: runtime.signal,
     execHostEnforced,
     execHostFallbackAllowed,
     resolveExecSecurity,
@@ -834,10 +902,6 @@ async function dispatchInvoke(
     },
     preferMacAppExecHost,
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function decodeMcpToolsCallParams(raw?: string | null): McpToolsCallParams {
@@ -978,6 +1042,7 @@ async function handleMcpToolsCall(
   frame: NodeInvokeRequestPayload,
   client: NodeHostClient,
   mcpManager: NodeHostMcpManager | undefined,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!mcpManager) {
     await sendErrorResult(client, frame, "MCP_SERVER_UNAVAILABLE", "node host MCP is unavailable");
@@ -994,6 +1059,7 @@ async function handleMcpToolsCall(
     const result = await mcpManager.callMcpTool({
       ...params,
       timeoutMs: frame.timeoutMs ?? undefined,
+      ...(signal ? { signal } : {}),
     });
     if (result.isError) {
       await sendErrorResult(client, frame, "MCP_TOOL_ERROR", mcpToolErrorMessage(result));

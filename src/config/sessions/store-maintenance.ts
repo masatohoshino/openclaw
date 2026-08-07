@@ -102,7 +102,13 @@ function resolveMaxDiskBytes(maintenance?: SessionMaintenanceConfig): number | n
     return DEFAULT_SESSION_MAX_DISK_BYTES;
   }
   try {
-    return parseByteSize(normalized, { defaultUnit: "b" });
+    const bytes = parseByteSize(normalized, { defaultUnit: "b" });
+    // A zero or negative budget is not a usable cap; treat it the same as an
+    // explicit disable so maintenance does not delete every session artifact.
+    if (bytes <= 0) {
+      return null;
+    }
+    return bytes;
   } catch {
     // A malformed explicit value must not opt the user into destructive
     // budget cleanup they never chose; disable the budget instead.
@@ -394,6 +400,13 @@ function isExternalGroupOrChannelSessionKey(sessionKey: string): boolean {
   return /^[^:]+:(?:group|channel):.+$/.test(rest);
 }
 
+function isPrimarySessionMaintenanceKey(sessionKey: string): boolean {
+  if (normalizeLowercaseStringOrEmpty(sessionKey) === "global") {
+    return true;
+  }
+  return parseAgentSessionKey(sessionKey)?.rest === "main";
+}
+
 function isProtectedSessionMaintenanceEntry(
   sessionKey: string,
   entry: SessionEntry | undefined,
@@ -401,6 +414,11 @@ function isProtectedSessionMaintenanceEntry(
   // Human conversation surfaces are protected; synthetic automation sessions are disposable.
   if (isSyntheticSessionMaintenanceKey(sessionKey)) {
     return false;
+  }
+  // Primary sessions are operator-facing and must survive maintenance even without an active
+  // admission. Global scope uses the literal `global` key instead of `agent:<id>:main`.
+  if (isPrimarySessionMaintenanceKey(sessionKey)) {
+    return true;
   }
   if (parseSessionThreadInfoFast(sessionKey).threadId) {
     return true;
