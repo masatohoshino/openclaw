@@ -69,6 +69,12 @@ describe("file-transfer plugin entry", () => {
       "dir_fetch",
       "file_write",
     ]);
+    expect(registerTool.mock.calls.map(([tool]) => tool.resultContentSource)).toEqual([
+      "network",
+      undefined,
+      "network",
+      undefined,
+    ]);
   });
 
   it("fails closed if the lazy policy module cannot load", async () => {

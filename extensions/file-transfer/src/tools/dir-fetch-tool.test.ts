@@ -82,6 +82,18 @@ async function executeDirFetch(module: typeof import("./dir-fetch-tool.js")) {
 }
 
 describe("dir.fetch archive extraction", () => {
+  it("marks results as network content", async () => {
+    const tarBuffer = await createTarBuffer({
+      entries: ["ok.txt"],
+      setup: async (sourceDir) => {
+        await fs.writeFile(path.join(sourceDir, "ok.txt"), "ok");
+      },
+    });
+    const { module } = await importTool(tarBuffer);
+
+    expect(module.createDirFetchTool().resultContentSource).toBe("network");
+  });
+
   it("extracts a bounded tar and returns the plugin-side manifest", async () => {
     const tarBuffer = await createTarBuffer({
       entries: ["ok.txt", "nested"],

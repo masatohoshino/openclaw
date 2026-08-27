@@ -14,7 +14,7 @@ import {
 
 type FileTransferToolDescriptor = Pick<
   AnyAgentTool,
-  "label" | "name" | "description" | "parameters"
+  "label" | "name" | "description" | "parameters" | "resultContentSource"
 >;
 
 function readNodeCommandParams(paramsJSON: string | null | undefined): unknown {
@@ -109,10 +109,13 @@ export default definePluginEntry({
     );
     api.registerNodeInvokePolicy(createLazyFileTransferNodeInvokePolicy());
     api.registerTool(
-      createLazyTool(FILE_FETCH_TOOL_DESCRIPTOR, async () => {
-        const { createFileFetchTool } = await import("./src/tools/file-fetch-tool.js");
-        return createFileFetchTool();
-      }),
+      createLazyTool(
+        { ...FILE_FETCH_TOOL_DESCRIPTOR, resultContentSource: "network" },
+        async () => {
+          const { createFileFetchTool } = await import("./src/tools/file-fetch-tool.js");
+          return createFileFetchTool();
+        },
+      ),
     );
     api.registerTool(
       createLazyTool(DIR_LIST_TOOL_DESCRIPTOR, async () => {
@@ -121,7 +124,7 @@ export default definePluginEntry({
       }),
     );
     api.registerTool(
-      createLazyTool(DIR_FETCH_TOOL_DESCRIPTOR, async () => {
+      createLazyTool({ ...DIR_FETCH_TOOL_DESCRIPTOR, resultContentSource: "network" }, async () => {
         const { createDirFetchTool } = await import("./src/tools/dir-fetch-tool.js");
         return createDirFetchTool();
       }),

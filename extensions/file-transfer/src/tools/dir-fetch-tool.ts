@@ -124,6 +124,7 @@ async function walkDir(
 export function createDirFetchTool(): AnyAgentTool {
   return {
     ...DIR_FETCH_TOOL_DESCRIPTOR,
+    resultContentSource: "network",
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const { node, requestedPath: dirPath } = readRequiredNodePath(params);

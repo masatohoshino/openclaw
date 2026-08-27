@@ -85,6 +85,10 @@ afterEach(() => {
 });
 
 describe("file_fetch tool", () => {
+  it("marks results as network content", () => {
+    expect(createFileFetchTool().resultContentSource).toBe("network");
+  });
+
   it.each([
     {
       fileName: "config.yaml",

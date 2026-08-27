@@ -18,6 +18,7 @@ import { invokeNodeToolPayload, readRequiredNodePath } from "./node-tool-invoke.
 export function createFileFetchTool(): AnyAgentTool {
   return {
     ...FILE_FETCH_TOOL_DESCRIPTOR,
+    resultContentSource: "network",
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const { node, requestedPath: filePath } = readRequiredNodePath(params);
