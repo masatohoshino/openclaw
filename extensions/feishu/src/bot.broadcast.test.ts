@@ -438,20 +438,26 @@ describe("broadcast dispatch", () => {
     expect(activeDeliver).not.toHaveBeenCalled();
   });
 
-  it("applies the group's configured skill scope to observer turns", async () => {
+  it("applies the group's configured skill scope to both the active dispatcher call and observer turns", async () => {
     const cfg = createBroadcastConfig();
     cfg.channels!.feishu!.groups!["oc-broadcast-group"]!.skills = ["search", "memory"];
 
     await handleFeishuMessage({
       cfg,
       event: createBroadcastEvent({
-        messageId: "msg-broadcast-observer-skill-scope",
+        messageId: "msg-broadcast-skill-scope",
         text: "hello @bot",
         botMentioned: true,
       }),
       botOpenId: "bot-open-id",
       runtime: createRuntimeEnv(),
     });
+
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledTimes(1);
+    const dispatcherParams = mockCreateFeishuReplyDispatcher.mock.calls.at(0)?.[0] as
+      | { skillFilter?: string[] }
+      | undefined;
+    expect(dispatcherParams?.skillFilter).toEqual(["search", "memory"]);
 
     const observerTurn = resolvedTurnCalls.find(
       (turn) => (turn["admission"] as { kind?: string } | undefined)?.kind === "observeOnly",
