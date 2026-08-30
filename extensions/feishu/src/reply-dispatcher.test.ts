@@ -875,6 +875,31 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(sendMediaFeishuMock).not.toHaveBeenCalled();
   });
 
+  it("threads a configured group skill scope into replyOptions.skillFilter", () => {
+    const result = createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+      sendTarget: "oc_chat",
+      skillFilter: ["search", "memory"],
+    });
+
+    expect(result.replyOptions.skillFilter).toEqual(["search", "memory"]);
+  });
+
+  it("leaves replyOptions.skillFilter undefined without a configured group skill scope", () => {
+    const result = createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+      sendTarget: "oc_chat",
+    });
+
+    expect(result.replyOptions.skillFilter).toBeUndefined();
+  });
+
   it("disables block streaming by default to prevent silent reply drops", () => {
     const result = createFeishuReplyDispatcher({
       cfg: {} as never,

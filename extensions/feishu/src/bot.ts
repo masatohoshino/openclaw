@@ -1635,7 +1635,10 @@ export async function handleFeishuMessage(params: {
             ? {
                 admission: { kind: "observeOnly" as const, reason: "broadcast-observer" },
                 delivery: { deliver: async () => ({ visibleReplySent: false }) },
-                replyOptions: bindIngressLifecycleToReplyOptions(paramsLocal.lifecycle),
+                replyOptions: {
+                  skillFilter: groupConfig?.skills,
+                  ...bindIngressLifecycleToReplyOptions(paramsLocal.lifecycle),
+                },
               }
             : {
                 dispatcherOptions: paramsLocal.variant.dispatcher.dispatcherOptions,
@@ -1742,6 +1745,7 @@ export async function handleFeishuMessage(params: {
                 requiredMentionTargets,
                 messageCreateTimeMs,
                 sessionKey: agentSessionKey,
+                skillFilter: groupConfig?.skills,
               }),
             };
 
@@ -1872,6 +1876,7 @@ export async function handleFeishuMessage(params: {
           requiredMentionTargets,
           messageCreateTimeMs,
           sessionKey: route.sessionKey,
+          skillFilter: groupConfig?.skills,
         });
 
       log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);

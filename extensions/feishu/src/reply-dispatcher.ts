@@ -170,6 +170,8 @@ type CreateFeishuReplyDispatcherParams = {
    *  indicators on old/replayed messages after context compaction (#30418). */
   messageCreateTimeMs?: number;
   sessionKey?: string;
+  /** A group's configured skill scope (`groupConfig.skills`), if any. */
+  skillFilter?: string[];
 };
 
 export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherParams) {
@@ -189,6 +191,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     identity,
     mentionTargets,
     requiredMentionTargets,
+    skillFilter,
   } = params;
   const sendReplyToMessageId = skipReplyToInMessages ? undefined : replyToMessageId;
   const typingTargetMessageId = explicitTypingTargetMessageId?.trim() || replyToMessageId;
@@ -1530,6 +1533,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     dispatcherOptions,
     delivery,
     replyOptions: {
+      skillFilter,
       onModelSelected,
       disableBlockStreaming:
         typeof blockStreamingEnabled === "boolean" ? !blockStreamingEnabled : true,

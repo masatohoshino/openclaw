@@ -1893,6 +1893,45 @@ describe("handleFeishuMessage command authorization", () => {
     expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
   });
 
+  it("threads a group's configured skill scope into the reply dispatcher", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+    const cfg = createFeishuTestConfig({
+      groups: { "oc-group": { requireMention: false, skills: ["search", "memory"] } },
+    });
+    const event = createFeishuTestEvent({
+      messageId: "msg-group-skill-scope",
+      senderOpenId: "ou-sender",
+      chatId: "oc-group",
+      chatType: "group",
+    });
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({ skillFilter: ["search", "memory"] }),
+    );
+  });
+
+  it("leaves the reply dispatcher's skill scope undefined for a DM turn", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+    await dispatchMessage({
+      cfg: createFeishuTestConfig({ dmPolicy: "open" }),
+      event: createFeishuTestEvent({
+        messageId: "msg-dm-no-skill-scope",
+        senderOpenId: "ou-sender",
+      }),
+    });
+
+    const dispatcherOptions = mockCallArg<{ skillFilter?: string[] }>(
+      mockCreateFeishuReplyDispatcher,
+      0,
+      0,
+    );
+    expect(dispatcherOptions.skillFilter).toBeUndefined();
+  });
+
   it.each([
     {
       name: "blocks group sender when global groupSenderAllowFrom excludes sender",

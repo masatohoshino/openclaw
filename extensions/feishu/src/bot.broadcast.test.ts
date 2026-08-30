@@ -438,6 +438,30 @@ describe("broadcast dispatch", () => {
     expect(activeDeliver).not.toHaveBeenCalled();
   });
 
+  it("applies the group's configured skill scope to observer turns", async () => {
+    const cfg = createBroadcastConfig();
+    cfg.channels!.feishu!.groups!["oc-broadcast-group"]!.skills = ["search", "memory"];
+
+    await handleFeishuMessage({
+      cfg,
+      event: createBroadcastEvent({
+        messageId: "msg-broadcast-observer-skill-scope",
+        text: "hello @bot",
+        botMentioned: true,
+      }),
+      botOpenId: "bot-open-id",
+      runtime: createRuntimeEnv(),
+    });
+
+    const observerTurn = resolvedTurnCalls.find(
+      (turn) => (turn["admission"] as { kind?: string } | undefined)?.kind === "observeOnly",
+    );
+    const observerReplyOptions = observerTurn?.["replyOptions"] as
+      | { skillFilter?: string[] }
+      | undefined;
+    expect(observerReplyOptions?.skillFilter).toEqual(["search", "memory"]);
+  });
+
   it("sends no-visible-reply fallback for active broadcast zero-final dispatch", async () => {
     mockDispatchReply
       .mockResolvedValueOnce({ queuedFinal: false, counts: { final: 1 } })
