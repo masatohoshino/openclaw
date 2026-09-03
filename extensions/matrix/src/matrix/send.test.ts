@@ -1301,6 +1301,19 @@ describe("sendMessageMatrix threads", () => {
     expect(onDeliveryResult.mock.calls.map((call) => call[0]?.content)).toEqual(["part1"]);
   });
 
+  it("keeps missing platform identity ambiguous when no event is accepted", async () => {
+    const { client, sendMessage } = makeClient();
+    sendMessage.mockReset().mockResolvedValueOnce("");
+
+    const result = await sendMessageMatrix("room:!room:example", "hello", {
+      client,
+      cfg: {} as never,
+    });
+
+    expect(result.messageId).toBe("");
+    expect(result.primaryMessageId).toBe("");
+  });
+
   it("merges extra content into only the first chunked text event", async () => {
     const { client, sendMessage } = makeClient();
     resolveTextChunkLimitMock.mockReturnValue(6);
@@ -1483,6 +1496,19 @@ describe("sendSingleTextMessageMatrix", () => {
     const content = sentContent(sendMessage);
     expect(content["m.mentions"]).toEqual({});
     expect((content as { formatted_body?: string }).formatted_body).not.toContain("matrix.to");
+  });
+
+  it("keeps missing platform identity ambiguous in single-event sends", async () => {
+    const { client, sendMessage } = makeClient();
+    sendMessage.mockReset().mockResolvedValueOnce(undefined);
+
+    const result = await sendSingleTextMessageMatrix("room:!room:example", "hello", {
+      client,
+      cfg: {} as never,
+    });
+
+    expect(result.messageId).toBe("");
+    expect(result.primaryMessageId).toBe("");
   });
 
   it("merges extra content fields into single-event sends", async () => {

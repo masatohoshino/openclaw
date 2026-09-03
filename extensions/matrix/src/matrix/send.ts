@@ -410,9 +410,9 @@ export async function sendMessageMatrix(
       }
 
       return {
-        messageId: lastMessageId || "unknown",
+        messageId: lastMessageId,
         roomId,
-        primaryMessageId: acceptedEvents[0]?.messageId ?? (lastMessageId || "unknown"),
+        primaryMessageId: acceptedEvents[0]?.messageId ?? lastMessageId,
         receipt: createMatrixSendReceipt({
           roomId,
           events: acceptedEvents,
@@ -579,9 +579,9 @@ export async function sendSingleTextMessageMatrix(
       const eventId = await client.sendMessage(resolvedRoom, content);
       const replyToId = content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
       return {
-        messageId: eventId ?? "unknown",
+        messageId: eventId ?? "",
         roomId: resolvedRoom,
-        primaryMessageId: eventId ?? "unknown",
+        primaryMessageId: eventId ?? "",
         receipt: createMatrixSendReceipt({
           roomId: resolvedRoom,
           events: eventId
