@@ -9,7 +9,10 @@ import {
   resolveRequestClientIp,
   requestBodyErrorToText,
 } from "openclaw/plugin-sdk/webhook-ingress";
-import { sendHttpRequestRejection } from "openclaw/plugin-sdk/webhook-request-guards";
+import {
+  createWebhookInFlightLimiter,
+  sendHttpRequestRejection,
+} from "openclaw/plugin-sdk/webhook-request-guards";
 import { extractNextcloudTalkHeaders, verifyNextcloudTalkSignature } from "./signature.js";
 import type { NextcloudTalkWebhookHeaders, NextcloudTalkWebhookServerOptions } from "./types.js";
 import { NextcloudTalkWebhookPayloadError } from "./webhook-spool-state.js";
@@ -19,6 +22,11 @@ const PREAUTH_WEBHOOK_MAX_BODY_BYTES = 64 * 1024;
 const NEXTCLOUD_TALK_WEBHOOK_ACCEPTED_HEADER = "x-openclaw-delivery-accepted";
 const NEXTCLOUD_TALK_WEBHOOK_ACCEPTED_VALUE = "durable";
 const PREAUTH_WEBHOOK_BODY_TIMEOUT_MS = 5_000;
+// One route, so a single fixed key: keying by client IP would hand a distributed caller a
+// fresh budget per source. 64 mirrors the sms channel, which bounds an identical 64 KB/5 s
+// pre-auth read; the shared default of 8 is sized for per-route keys, not one route-wide key.
+const PREAUTH_WEBHOOK_MAX_IN_FLIGHT = 64;
+const PREAUTH_WEBHOOK_IN_FLIGHT_KEY = "nextcloud-talk-webhook-preauth";
 const HEALTH_PATH = "/healthz";
 const WEBHOOK_AUTH_RATE_LIMIT_SCOPE = "nextcloud-talk-webhook-auth";
 const WEBHOOK_ERRORS = {
@@ -27,6 +35,7 @@ const WEBHOOK_ERRORS = {
   invalidSignature: "Invalid signature",
   invalidPayloadFormat: "Invalid payload format",
   payloadTooLarge: "Payload too large",
+  webhookCapacityExceeded: "Webhook capacity exceeded",
   internalServerError: "Internal server error",
 } as const;
 
@@ -116,6 +125,88 @@ async function rejectWebhookRequest(
   await sendHttpRequestRejection(req, res, status, JSON.stringify({ error }), "application/json");
 }
 
+/** Read the pre-authentication body, answering the bounded read's own rejections in place. */
+async function readPreAuthWebhookBodyOrReject(params: {
+  req: IncomingMessage;
+  res: ServerResponse;
+  maxBodyBytes: number;
+  readBody: (req: IncomingMessage, maxBodyBytes: number) => Promise<string>;
+}): Promise<string | null> {
+  try {
+    return await params.readBody(params.req, params.maxBodyBytes);
+  } catch (err) {
+    // These rejections are answered here, inside the caller's slot-owning scope:
+    // sendHttpRequestRejection keeps the socket in a close grace period, so releasing the
+    // slot first would hand capacity back while the connection is still winding down.
+    if (isRequestBodyLimitError(err, "PAYLOAD_TOO_LARGE")) {
+      await rejectWebhookRequest(params.req, params.res, 413, WEBHOOK_ERRORS.payloadTooLarge);
+      return null;
+    }
+    if (isRequestBodyLimitError(err, "REQUEST_BODY_TIMEOUT")) {
+      await rejectWebhookRequest(
+        params.req,
+        params.res,
+        408,
+        requestBodyErrorToText("REQUEST_BODY_TIMEOUT"),
+      );
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Read and authenticate one webhook request while holding a pre-authentication slot.
+ *
+ * The auth rate limiter guarding this route is failure-driven: it only counts an attempt once
+ * `recordFailure` runs, which happens after a body read has completed and the signature turned
+ * out invalid. A caller that never finishes its body therefore never registers, so nothing
+ * bounds how many unauthenticated reads run at once. Hold a slot across the read and the
+ * signature check, and release it before durable admission so a slow spool cannot pin it.
+ */
+async function readAuthenticatedWebhookBody(params: {
+  req: IncomingMessage;
+  res: ServerResponse;
+  headers: NextcloudTalkWebhookHeaders;
+  maxBodyBytes: number;
+  secret: string;
+  clientIp: string;
+  authRateLimiter: ReturnType<typeof createAuthRateLimiter>;
+  inFlightLimiter: ReturnType<typeof createWebhookInFlightLimiter>;
+  readBody: (req: IncomingMessage, maxBodyBytes: number) => Promise<string>;
+}): Promise<string | null> {
+  if (!params.inFlightLimiter.tryAcquire(PREAUTH_WEBHOOK_IN_FLIGHT_KEY)) {
+    // 503, not 429: a delivery refused for capacity must stay retryable. Nextcloud retries only
+    // a few times, and this route already answers retryable failures with 5xx, so a terminal
+    // 4xx here would turn transient overload into silently dropped messages. Going through the
+    // shared rejection helper also closes a connection that is still uploading.
+    await rejectWebhookRequest(params.req, params.res, 503, WEBHOOK_ERRORS.webhookCapacityExceeded);
+    return null;
+  }
+  try {
+    const body = await readPreAuthWebhookBodyOrReject({
+      req: params.req,
+      res: params.res,
+      maxBodyBytes: params.maxBodyBytes,
+      readBody: params.readBody,
+    });
+    if (body === null) {
+      return null;
+    }
+    const hasValidSignature = verifyWebhookSignature({
+      headers: params.headers,
+      body,
+      secret: params.secret,
+      res: params.res,
+      clientIp: params.clientIp,
+      authRateLimiter: params.authRateLimiter,
+    });
+    return hasValidSignature ? body : null;
+  } finally {
+    params.inFlightLimiter.release(PREAUTH_WEBHOOK_IN_FLIGHT_KEY);
+  }
+}
+
 export function createNextcloudTalkWebhookServer(opts: NextcloudTalkWebhookServerOptions): {
   server: Server;
   start: () => Promise<void>;
@@ -144,6 +235,10 @@ export function createNextcloudTalkWebhookServer(opts: NextcloudTalkWebhookServe
     lockoutMs: authRateLimitWindowMs,
     exemptLoopback: false,
     pruneIntervalMs: authRateLimitWindowMs,
+  });
+  const preAuthInFlightLimiter = createWebhookInFlightLimiter({
+    maxInFlightPerKey: PREAUTH_WEBHOOK_MAX_IN_FLIGHT,
+    maxTrackedKeys: 1,
   });
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -180,17 +275,18 @@ export function createNextcloudTalkWebhookServer(opts: NextcloudTalkWebhookServe
           return;
         }
 
-        const body = await readBody(req, maxBodyBytes);
-
-        const hasValidSignature = verifyWebhookSignature({
-          headers,
-          body,
-          secret,
+        const body = await readAuthenticatedWebhookBody({
+          req,
           res,
+          headers,
+          maxBodyBytes,
+          secret,
           clientIp,
           authRateLimiter: webhookAuthRateLimiter,
+          inFlightLimiter: preAuthInFlightLimiter,
+          readBody,
         });
-        if (!hasValidSignature) {
+        if (body === null) {
           return;
         }
 
@@ -207,14 +303,8 @@ export function createNextcloudTalkWebhookServer(opts: NextcloudTalkWebhookServe
         }
         writeJsonResponse(res, 200);
       } catch (err) {
-        if (isRequestBodyLimitError(err, "PAYLOAD_TOO_LARGE")) {
-          await rejectWebhookRequest(req, res, 413, WEBHOOK_ERRORS.payloadTooLarge);
-          return;
-        }
-        if (isRequestBodyLimitError(err, "REQUEST_BODY_TIMEOUT")) {
-          await rejectWebhookRequest(req, res, 408, requestBodyErrorToText("REQUEST_BODY_TIMEOUT"));
-          return;
-        }
+        // Body-read limits are answered inside readAuthenticatedWebhookBody so the rejection
+        // completes while its pre-authentication slot is still held.
         if (err instanceof NextcloudTalkWebhookPayloadError) {
           writeWebhookError(res, 400, WEBHOOK_ERRORS.invalidPayloadFormat);
           return;

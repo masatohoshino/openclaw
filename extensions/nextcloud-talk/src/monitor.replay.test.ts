@@ -1,5 +1,6 @@
 // Nextcloud Talk tests cover monitor.replay plugin behavior.
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { request, type ClientRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import { createConnection, type AddressInfo } from "node:net";
 import { createMockIncomingRequest, postRawWebhook } from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it, vi } from "vitest";
 import { createNextcloudTalkWebhookServer as createRawNextcloudTalkWebhookServer } from "./monitor.js";
@@ -439,5 +440,176 @@ describe("createNextcloudTalkWebhookServer auth rate limiting", () => {
     }
 
     expect(lastResponse?.status).toBe(200);
+  });
+});
+
+// The pre-authentication in-flight budget in monitor.ts. Mirrors the sms channel's bound for
+// the identical 64 KB / 5 s unauthenticated read.
+const PREAUTH_MAX_IN_FLIGHT = 64;
+
+type BoundaryHttpResult = {
+  statusCode: number;
+  body: string;
+};
+
+type HeldWebhookRequest = {
+  request: ClientRequest;
+  finish: () => void;
+  result: Promise<BoundaryHttpResult>;
+};
+
+function readBoundaryResponse(req: ClientRequest): Promise<BoundaryHttpResult> {
+  return new Promise((resolve, reject) => {
+    req.once("response", (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.once("end", () => {
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+      });
+    });
+    req.once("error", reject);
+  });
+}
+
+/** Open a POST that announces its full length but stops one byte in, holding the pre-auth read. */
+function holdIncompleteWebhookPost(params: {
+  port: number;
+  path: string;
+  headers: Record<string, string>;
+  body: string;
+}): HeldWebhookRequest {
+  const req = request({
+    host: "127.0.0.1",
+    port: params.port,
+    path: params.path,
+    method: "POST",
+    agent: false,
+    headers: {
+      ...params.headers,
+      "content-length": Buffer.byteLength(params.body),
+    },
+  });
+  const result = readBoundaryResponse(req);
+  void result.catch(() => {});
+  req.write(params.body.slice(0, 1));
+  return {
+    request: req,
+    finish: () => req.end(params.body.slice(1)),
+    result,
+  };
+}
+
+/** Send one more incomplete upload over a raw socket so the wire-level rejection is observable. */
+function sendIncompleteRawWebhookPost(params: {
+  port: number;
+  path: string;
+  headers: Record<string, string>;
+}): Promise<{ response: string; endedByServer: boolean }> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: "127.0.0.1", port: params.port, allowHalfOpen: true });
+    const chunks: Buffer[] = [];
+    let endedByServer = false;
+    socket.once("connect", () => {
+      const headerLines = Object.entries(params.headers)
+        .map(([name, value]) => `${name}: ${value}\r\n`)
+        .join("");
+      socket.write(
+        `POST ${params.path} HTTP/1.1\r\n` +
+          `Host: 127.0.0.1:${params.port}\r\n` +
+          headerLines +
+          "Content-Length: 1024\r\n" +
+          "Connection: keep-alive\r\n\r\n",
+      );
+    });
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.once("end", () => {
+      endedByServer = true;
+      socket.end();
+    });
+    socket.once("close", () => {
+      resolve({ response: Buffer.concat(chunks).toString("utf8"), endedByServer });
+    });
+    socket.once("error", reject);
+  });
+}
+
+describe("createNextcloudTalkWebhookServer pre-authentication concurrency", () => {
+  it("rejects overflow pre-authentication reads and restores capacity once they finish", async () => {
+    const path = "/nextcloud-preauth-in-flight";
+    const onWebhook = vi.fn(async () => "accepted" as const);
+    const { server, start, stop } = createRawNextcloudTalkWebhookServer({
+      port: 0,
+      host: "127.0.0.1",
+      path,
+      secret: "nextcloud-secret", // pragma: allowlist secret
+      // Raise the failure-driven auth limiter far above the held attempts. This test measures
+      // the in-flight bound; the two limiters answer different questions and the arrival gate
+      // must not be what rejects the overflow.
+      authRateLimit: { maxRequests: 10_000 },
+      onWebhook,
+    });
+    let startedBodyReads = 0;
+    server.on("request", (req: IncomingMessage) => {
+      req.once("data", () => {
+        startedBodyReads += 1;
+      });
+    });
+    await start();
+    const address = server.address() as AddressInfo | null;
+    if (!address) {
+      throw new Error("expected the pre-auth boundary server to have a TCP address");
+    }
+    const port = address.port;
+    const { body, headers } = createSignedCreateMessageRequest();
+    // Valid header set, wrong signature: these never authenticate, which is the point.
+    const unauthenticatedHeaders = {
+      ...headers,
+      "x-nextcloud-talk-signature": "invalid-signature",
+    };
+    const held: HeldWebhookRequest[] = [];
+
+    try {
+      for (let index = 0; index < PREAUTH_MAX_IN_FLIGHT; index += 1) {
+        held.push(holdIncompleteWebhookPost({ port, path, headers: unauthenticatedHeaders, body }));
+      }
+      await vi.waitFor(() => expect(startedBodyReads).toBe(PREAUTH_MAX_IN_FLIGHT), {
+        timeout: 10_000,
+      });
+
+      const overflow = await sendIncompleteRawWebhookPost({
+        port,
+        path,
+        headers: unauthenticatedHeaders,
+      });
+      // 503, not 429: a capacity refusal must stay retryable for a real Nextcloud delivery.
+      expect(overflow.response).toContain("HTTP/1.1 503 Service Unavailable\r\n");
+      expect(overflow.response).toMatch(/\r\nConnection: close\r\n/iu);
+      expect(overflow.response).toContain('{"error":"Webhook capacity exceeded"}');
+      expect(overflow.endedByServer).toBe(true);
+      expect(onWebhook).not.toHaveBeenCalled();
+
+      for (const pending of held) {
+        pending.finish();
+      }
+      const released = await Promise.all(held.map((pending) => pending.result));
+      expect(released.every((result) => result.statusCode === 401)).toBe(true);
+
+      const admitted = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: "POST",
+        headers,
+        body,
+      });
+      expect(admitted.status).toBe(200);
+      expect(onWebhook).toHaveBeenCalledOnce();
+    } finally {
+      for (const pending of held) {
+        pending.request.destroy();
+      }
+      await Promise.allSettled(held.map((pending) => pending.result));
+      await stop();
+    }
   });
 });
