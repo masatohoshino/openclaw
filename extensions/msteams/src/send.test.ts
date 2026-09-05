@@ -440,6 +440,25 @@ describe("sendMessageMSTeams", () => {
     expect(mockState.convertMarkdownTables).toHaveBeenCalledWith("hello", "off");
   });
 
+  it.each([
+    ["no platform ids at all", [] as string[]],
+    ["a platform id the SDK never returned", [""]],
+  ])("keeps a send with %s unconfirmed", async (_label, platformMessageIds) => {
+    mockState.sendMSTeamsMessages.mockResolvedValue(platformMessageIds);
+
+    const result = await sendMessageMSTeams({
+      cfg: {} as OpenClawConfig,
+      to: "conversation:19:conversation@thread.tacv2",
+      text: "hello",
+    });
+
+    expect(result.messageId).toBe("");
+    expect(result.conversationId).toBe("19:conversation@thread.tacv2");
+    expect(result.receipt?.platformMessageIds).toEqual([]);
+    expect(result.receipt?.parts).toEqual([]);
+    expect(result.receipt?.primaryPlatformMessageId).toBeUndefined();
+  });
+
   it("passes the resolved proactive replyStyle to text sends", async () => {
     mockState.resolveMSTeamsSendContext.mockResolvedValue({
       adapter: {},

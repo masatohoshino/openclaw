@@ -127,7 +127,7 @@ function createMSTeamsSendResult(params: {
     params.platformMessageIds?.length ? [...params.platformMessageIds] : [params.messageId]
   )
     .map((messageId) => messageId.trim())
-    .filter((messageId) => messageId && messageId !== "unknown");
+    .filter(Boolean);
   return {
     messageId: params.messageId,
     conversationId: params.conversationId,
@@ -256,8 +256,10 @@ export async function sendMessageMSTeams(
       // Store the activity ID so the accept handler can replace the consent
       // card in-place. Mirror it into the FS store too because the invoke
       // callback may be delivered to a different process than the CLI send.
-      setPendingUploadActivityId(uploadId, messageId);
-      await setPendingUploadActivityIdFs(uploadId, messageId);
+      if (messageId) {
+        setPendingUploadActivityId(uploadId, messageId);
+        await setPendingUploadActivityIdFs(uploadId, messageId);
+      }
 
       log.info("sent file consent card", { conversationId, messageId, uploadId });
 
@@ -394,7 +396,9 @@ async function sendTextWithMedia(
     throw createMSTeamsSendError("msteams send", err);
   }
 
-  const messageId = platformMessageIds[0] ?? "unknown";
+  // No platform ID means the send is unconfirmed, not acknowledged; keep it empty so
+  // shared delivery custody cannot mistake a placeholder for platform evidence.
+  const messageId = platformMessageIds[0] ?? "";
   log.info("sent proactive message", { conversationId, messageId });
 
   return {
@@ -426,7 +430,7 @@ async function sendProactiveActivityRaw({
     ...(ctx.threadActivityId ? { threadActivityId: ctx.threadActivityId } : {}),
     serviceUrlBoundary: ctx.sdkCloudOptions,
   });
-  return extractMessageId(response) ?? "unknown";
+  return extractMessageId(response) ?? "";
 }
 
 async function sendProactiveActivity({

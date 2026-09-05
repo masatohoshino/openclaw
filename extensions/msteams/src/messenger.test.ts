@@ -45,6 +45,18 @@ const chunkMarkdownText = (text: string, limit: number) => {
   return chunks;
 };
 
+const createChannelRef = (
+  overrides: { activityId?: string; threadId?: string } = {},
+): StoredConversationReference => ({
+  activityId: overrides.activityId ?? "current-msg",
+  user: { id: "user123", name: "User" },
+  agent: { id: "bot123", name: "Bot" },
+  conversation: { id: "19:abc@thread.tacv2", conversationType: "channel" },
+  channelId: "msteams",
+  serviceUrl: "https://smba.trafficmanager.net/amer/",
+  ...(overrides.threadId ? { threadId: overrides.threadId } : {}),
+});
+
 const runtimeStub = {
   config: {
     loadConfig: () => ({}),
@@ -354,6 +366,20 @@ describe("msteams messenger", () => {
       expect(texts).toEqual(["hello"]);
       expect(ids).toEqual(["id:hello"]);
       expect(capturedConversationId).toBe("19:abc@thread.tacv2");
+    });
+
+    it("keeps a send without a platform activity id unconfirmed", async () => {
+      const ids = await sendMSTeamsMessages({
+        replyStyle: "top-level",
+        app: createMockApp({
+          createFn: async () => ({}),
+        }),
+        appId: "app123",
+        conversationRef: baseRef,
+        messages: [{ text: "hello" }],
+      });
+
+      expect(ids).toEqual([""]);
     });
 
     it("requires SharePoint storage for channel files", async () => {
@@ -696,18 +722,7 @@ describe("msteams messenger", () => {
 
     it("sends no-context thread replies proactively with the channel thread root", async () => {
       const sent: string[] = [];
-      const channelRef: StoredConversationReference = {
-        activityId: "current-msg",
-        user: { id: "user123", name: "User" },
-        agent: { id: "bot123", name: "Bot" },
-        conversation: {
-          id: "19:abc@thread.tacv2",
-          conversationType: "channel",
-        },
-        channelId: "msteams",
-        serviceUrl: "https://smba.trafficmanager.net/amer/",
-        threadId: "thread-root-msg-id",
-      };
+      const channelRef = createChannelRef({ threadId: "thread-root-msg-id" });
 
       let capturedConversationId: string | undefined;
       const ids = await sendMSTeamsMessages({
@@ -729,17 +744,7 @@ describe("msteams messenger", () => {
 
     it("uses activityId for no-context thread replies when threadId is absent", async () => {
       const sent: string[] = [];
-      const channelRef: StoredConversationReference = {
-        activityId: "legacy-activity-id",
-        user: { id: "user123", name: "User" },
-        agent: { id: "bot123", name: "Bot" },
-        conversation: {
-          id: "19:abc@thread.tacv2",
-          conversationType: "channel",
-        },
-        channelId: "msteams",
-        serviceUrl: "https://smba.trafficmanager.net/amer/",
-      };
+      const channelRef = createChannelRef({ activityId: "legacy-activity-id" });
 
       let capturedConversationId: string | undefined;
       await sendMSTeamsMessages({
@@ -763,18 +768,7 @@ describe("msteams messenger", () => {
       const sent: string[] = [];
       let capturedConversationId: string | undefined;
 
-      const channelRef: StoredConversationReference = {
-        activityId: "current-msg",
-        user: { id: "user123", name: "User" },
-        agent: { id: "bot123", name: "Bot" },
-        conversation: {
-          id: "19:abc@thread.tacv2",
-          conversationType: "channel",
-        },
-        channelId: "msteams",
-        serviceUrl: "https://smba.trafficmanager.net/amer/",
-        threadId: "thread-root-msg-id",
-      };
+      const channelRef = createChannelRef({ threadId: "thread-root-msg-id" });
 
       await sendMSTeamsMessages({
         replyStyle: "top-level",

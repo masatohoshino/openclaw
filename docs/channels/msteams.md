@@ -118,6 +118,7 @@ Group chats are blocked by default (`channels.msteams.groupPolicy: "allowlist"`)
 - Talk to OpenClaw via Teams DMs, group chats, or channels.
 - Keep routing deterministic: replies always go back to the channel they arrived on.
 - Default to safe channel behavior (mentions required unless configured otherwise).
+- A send whose Bot Framework response carries no activity ID stays unconfirmed rather than reporting a placeholder ID; inspect delivery warnings with `openclaw health --verbose`.
 
 ## Config writes
 

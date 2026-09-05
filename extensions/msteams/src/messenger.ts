@@ -492,10 +492,12 @@ export async function sendMSTeamsMessages(params: {
       }
       throw error;
     }
-    const messageId = extractMessageId(response) ?? "unknown";
+    // A response without an activity ID is ambiguous, not an acknowledgement. Leave it
+    // empty so shared delivery custody cannot mistake a placeholder for platform evidence.
+    const messageId = extractMessageId(response) ?? "";
 
     // Store the activity ID so the accept handler can replace the consent card in-place
-    if (pendingUploadId && messageId !== "unknown") {
+    if (pendingUploadId && messageId) {
       setPendingUploadActivityId(pendingUploadId, messageId);
     }
 
