@@ -510,6 +510,53 @@ describe("exec-policy CLI", () => {
     expect(mocks.defaultRuntime.exit).toHaveBeenCalledTimes(1);
   });
 
+  it("emits the JSON failure envelope instead of stderr for show --json", async () => {
+    mocks.readConfigFileSnapshot.mockImplementationOnce(async () => {
+      throw new Error("config read failed");
+    });
+
+    await expect(runExecPolicyCommand(["exec-policy", "show", "--json"])).rejects.toThrow(
+      "__exit__:1",
+    );
+
+    expect(mocks.defaultRuntime.writeJson).toHaveBeenCalledTimes(1);
+    expect(readLastJsonWrite()).toEqual({
+      ok: false,
+      error: { type: "cli_error", message: "config read failed" },
+    });
+    expect(mocks.defaultRuntime.error).not.toHaveBeenCalled();
+    expect(mocks.defaultRuntime.exit).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits the JSON failure envelope instead of stderr for preset --json", async () => {
+    await expect(
+      runExecPolicyCommand(["exec-policy", "preset", "does-not-exist", "--json"]),
+    ).rejects.toThrow("__exit__:1");
+
+    expect(mocks.defaultRuntime.writeJson).toHaveBeenCalledTimes(1);
+    expect(readLastJsonWrite()).toEqual({
+      ok: false,
+      error: {
+        type: "cli_error",
+        message: "Unknown exec-policy preset: does-not-exist",
+      },
+    });
+    expect(mocks.defaultRuntime.error).not.toHaveBeenCalled();
+  });
+
+  it("emits the JSON failure envelope instead of stderr for set --json", async () => {
+    await expect(
+      runExecPolicyCommand(["exec-policy", "set", "--security", "nope", "--json"]),
+    ).rejects.toThrow("__exit__:1");
+
+    expect(mocks.defaultRuntime.writeJson).toHaveBeenCalledTimes(1);
+    expect(readLastJsonWrite()).toEqual({
+      ok: false,
+      error: { type: "cli_error", message: "Invalid exec security: nope" },
+    });
+    expect(mocks.defaultRuntime.error).not.toHaveBeenCalled();
+  });
+
   it("rejects host=node for the local-only sync path", async () => {
     await expect(runExecPolicyCommand(["exec-policy", "set", "--host", "node"])).rejects.toThrow(
       "__exit__:1",

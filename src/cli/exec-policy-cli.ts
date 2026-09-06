@@ -32,6 +32,7 @@ import {
   type ExecTarget,
 } from "../infra/exec-approvals.js";
 import { defaultRuntime } from "../runtime.js";
+import { formatCliJsonFailure } from "./failure-output.js";
 
 type ExecPolicyPresetName = "yolo" | "cautious" | "deny-all";
 
@@ -111,11 +112,16 @@ function formatExecPolicyError(err: unknown): string {
   return sanitizeExecPolicyMessage(err instanceof Error ? err.message : String(err));
 }
 
-async function runExecPolicyAction(action: () => Promise<void>): Promise<void> {
+async function runExecPolicyAction(action: () => Promise<void>, json?: boolean): Promise<void> {
   try {
     await action();
   } catch (err) {
-    defaultRuntime.error(formatExecPolicyError(err));
+    const message = formatExecPolicyError(err);
+    if (json) {
+      defaultRuntime.writeJson(formatCliJsonFailure(message), 0);
+    } else {
+      defaultRuntime.error(message);
+    }
     defaultRuntime.exit(1);
   }
 }
@@ -452,7 +458,7 @@ export function registerExecPolicyCli(program: Command) {
           return;
         }
         renderExecPolicyShow(payload);
-      });
+      }, opts.json);
     });
 
   execPolicy
@@ -473,7 +479,7 @@ export function registerExecPolicyCli(program: Command) {
         defaultRuntime.log(`Applied exec-policy preset: ${sanitizeExecPolicyMessage(name)}`);
         defaultRuntime.log("");
         renderExecPolicyShow(payload);
-      });
+      }, opts.json);
     });
 
   execPolicy
@@ -505,7 +511,7 @@ export function registerExecPolicyCli(program: Command) {
           defaultRuntime.log("Synchronized local exec policy.");
           defaultRuntime.log("");
           renderExecPolicyShow(payload);
-        });
+        }, opts.json);
       },
     );
 }
