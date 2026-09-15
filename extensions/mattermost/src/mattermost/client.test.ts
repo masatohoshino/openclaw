@@ -18,10 +18,12 @@ import {
   createMattermostClient,
   createMattermostDirectChannelWithRetry,
   createMattermostPost,
+  deleteMattermostPost,
   fetchMattermostChannel,
   fetchMattermostChannelPosts,
   normalizeMattermostBaseUrl,
   readMattermostError,
+  sendMattermostTyping,
   updateMattermostPost,
 } from "./client.js";
 
@@ -561,6 +563,53 @@ describe("createMattermostClient", () => {
         discardResponse: true,
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("no-result Mattermost mutations", () => {
+  // Mattermost answers typing and post deletion with 200 {"status":"OK"}; callers use no receipt.
+  function createUnreadableOkClient() {
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull() {
+          throw new TypeError("terminated");
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const client = createMattermostClient({
+      baseUrl: "https://chat.example.com",
+      botToken: "test-token",
+      fetchImpl,
+    });
+    return { client, fetchImpl };
+  }
+
+  it("reports an accepted typing indicator as sent when its body cannot be read", async () => {
+    const { client, fetchImpl } = createUnreadableOkClient();
+
+    await expect(
+      sendMattermostTyping(client, { channelId: "ch1", parentId: "root1" }),
+    ).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
+  it("reports an accepted post deletion as done when its body cannot be read", async () => {
+    const { client, fetchImpl } = createUnreadableOkClient();
+
+    await expect(deleteMattermostPost(client, "post1")).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(requestUrl(fetchImpl.mock.calls[0]?.[0] ?? "")).toBe(
+      "https://chat.example.com/api/v4/posts/post1",
+    );
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe("DELETE");
+  });
+
+  it("still fails a receipt-bearing request whose body cannot be read", async () => {
+    const { client } = createUnreadableOkClient();
+
+    await expect(fetchMattermostChannel(client, "ch1")).rejects.toThrow("terminated");
   });
 });
 
