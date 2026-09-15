@@ -482,7 +482,7 @@ describe("createMattermostClient", () => {
     expect(result).toBeUndefined();
   });
 
-  it("treats an accepted reaction add as success when its body read fails", async () => {
+  it("treats an accepted no-result mutation as success when its body read fails", async () => {
     const release = vi.fn(async () => {});
     const stream = new ReadableStream<Uint8Array>({
       pull() {
@@ -505,12 +505,13 @@ describe("createMattermostClient", () => {
       client.request("/reactions", {
         method: "POST",
         body: JSON.stringify({ user_id: "u1", post_id: "p1", emoji_name: "+1" }),
+        discardResponse: true,
       }),
     ).resolves.toBeUndefined();
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("treats an accepted reaction add as success when its body is undecodable", async () => {
+  it("treats an accepted no-result mutation as success when its body is undecodable", async () => {
     const release = vi.fn(async () => {});
     fetchWithSsrFGuardMock.mockResolvedValueOnce({
       response: new Response('{"partial":', {
@@ -528,12 +529,13 @@ describe("createMattermostClient", () => {
       client.request("/reactions", {
         method: "POST",
         body: JSON.stringify({ user_id: "u1", post_id: "p1", emoji_name: "+1" }),
+        discardResponse: true,
       }),
     ).resolves.toBeUndefined();
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores a rejecting body cancellation on an accepted reaction add", async () => {
+  it("ignores a rejecting body cancellation on an accepted no-result mutation", async () => {
     const release = vi.fn(async () => {});
     const stream = new ReadableStream<Uint8Array>({
       cancel() {
@@ -556,6 +558,7 @@ describe("createMattermostClient", () => {
       client.request("/reactions", {
         method: "POST",
         body: JSON.stringify({ user_id: "u1", post_id: "p1", emoji_name: "+1" }),
+        discardResponse: true,
       }),
     ).resolves.toBeUndefined();
   });
