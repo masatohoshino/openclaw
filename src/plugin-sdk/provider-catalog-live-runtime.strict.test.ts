@@ -44,11 +44,60 @@ const projectRows = (rows: readonly unknown[], fallback: ModelProviderConfig) =>
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   clearLiveCatalogCacheForTests();
   fetchGuard.mockReset();
 });
 
 describe("strict catalog acquisition", () => {
+  it.each([
+    ["forward", 2_000],
+    ["backward", -2_000],
+  ] as const)(
+    "keeps paginated discovery on its monotonic budget after a %s wall-clock step",
+    async (_direction, wallClockStep) => {
+      const wallClock = vi
+        .spyOn(Date, "now")
+        .mockReturnValueOnce(100_000)
+        .mockReturnValueOnce(100_000)
+        .mockReturnValueOnce(100_000 + wallClockStep);
+      const release = vi.fn(async () => {});
+      fetchGuard
+        .mockResolvedValueOnce({
+          response: Response.json({
+            data: [{ id: "known" }],
+            has_more: true,
+            next_cursor: "page-2",
+          }),
+          finalUrl: `${seed.baseUrl}/models`,
+          release,
+        })
+        .mockResolvedValueOnce({
+          response: Response.json({ data: [{ id: "known" }] }),
+          finalUrl: `${seed.baseUrl}/models?after=page-2`,
+          release,
+        });
+
+      await expect(
+        buildLiveModelProviderConfig({
+          ...catalogParams,
+          discoveryMode: "strict",
+          timeoutMs: 1_000,
+          ttlMs: 0,
+        }),
+      ).resolves.toMatchObject({ models: seed.models });
+
+      expect(fetchGuard).toHaveBeenCalledTimes(2);
+      for (const request of fetchGuard.mock.calls.map(([call]) => call)) {
+        expect(request.timeoutMs).toSatisfy(
+          (timeout: unknown) => typeof timeout === "number" && timeout > 0 && timeout <= 1_000,
+        );
+        expect(Number.isInteger(request.timeoutMs)).toBe(true);
+      }
+      expect(wallClock).toHaveBeenCalled();
+    },
+  );
+
   it.each(["ids", "projection", "openai-compatible"] as const)(
     "%s preserves failure, caches authoritative empty until expiry and supports bypass",
     async (projection) => {

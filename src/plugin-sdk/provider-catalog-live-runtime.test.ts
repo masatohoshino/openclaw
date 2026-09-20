@@ -79,9 +79,12 @@ describe("provider-catalog-live-runtime", () => {
       expect(request).toMatchObject({
         url: "https://provider.example.test/v1/models",
         auditContext: "provider-model-discovery",
-        timeoutMs: 1234,
         signal: controller.signal,
       });
+      expect(request?.timeoutMs).toSatisfy(
+        (timeout: unknown) => typeof timeout === "number" && timeout > 0 && timeout <= 1234,
+      );
+      expect(Number.isInteger(request?.timeoutMs)).toBe(true);
       const headers = request?.init?.headers;
       expect(headers).toBeInstanceOf(Headers);
       expect((headers as Headers).get("authorization")).toBe(`Bearer ${discoveryApiKey}`);
