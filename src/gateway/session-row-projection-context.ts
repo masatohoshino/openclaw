@@ -2,10 +2,15 @@ import { getSubagentRegistryPublicationRevision } from "../agents/subagents/regi
 import { buildSubagentSessionListReadIndex } from "../agents/subagents/registry/subagent-registry-read.js";
 import { buildProjectedAgentRunIndex } from "../infra/agent-run-registry.js";
 import type { SessionRowChange } from "../sessions/session-row-changes.js";
+import { createSessionIdentityProjection } from "./session-identity-projection.js";
 import * as records from "./session-row-projection-record.js";
 import { buildSessionSwarmSummary } from "./session-swarm-summary.js";
+import type { SessionListRowContext } from "./session-utils-contracts.js";
 import type { SessionChildLink } from "./session-utils-core.js";
-import { buildSessionListRowMetadataContext } from "./session-utils-projection.js";
+import {
+  buildProjectedSubagentActivity,
+  buildSessionListRowMetadataContext,
+} from "./session-utils-projection.js";
 import { refreshSessionRowProfiles } from "./session-utils-row.js";
 
 /** Registry and display facts have their own lifecycle, independent of stored row acquisition. */
@@ -15,9 +20,12 @@ export function createSessionRowProjectionContext() {
   let profileRevision = 0;
   let subagentRevision = 0;
   let parentRevision = 0;
-  let placementRevision = 0;
   let modelFactsDirty = false;
-  let current = buildSessionListRowMetadataContext({ now: Date.now() });
+  const identityProjection = createSessionIdentityProjection();
+  let current: SessionListRowContext = {
+    ...buildSessionListRowMetadataContext({ now: Date.now() }),
+    identityProjection,
+  };
   const subagentInputs = current.subagentRuns.inputs;
   function prepare(epoch: number) {
     if (preparedEpoch === epoch) {
@@ -25,23 +33,35 @@ export function createSessionRowProjectionContext() {
     }
     const now = Date.now(),
       revision = getSubagentRegistryPublicationRevision();
+    if (registryRevision !== revision) {
+      subagentRevision++;
+    }
     const subagentRuns =
       registryRevision === revision
         ? current.subagentRuns.atTime(now)
         : buildSubagentSessionListReadIndex(now);
+    const projectedAgentRuns = buildProjectedAgentRunIndex();
     current = modelFactsDirty
-      ? buildSessionListRowMetadataContext({
-          now,
-          subagentRuns,
-          userProfileIdentityById: current.userProfileIdentityById,
-        })
+      ? {
+          ...buildSessionListRowMetadataContext({
+            now,
+            subagentRuns,
+            projectedAgentRuns,
+            userProfileIdentityById: current.userProfileIdentityById,
+          }),
+          identityProjection,
+        }
       : {
           ...current,
           subagentRuns,
+          projectedAgentRuns,
+          projectedSubagentActivity: buildProjectedSubagentActivity(
+            subagentRuns,
+            projectedAgentRuns,
+          ),
           subagentRunsByChildSessionKey: subagentRuns.runsByChildSessionKey,
         };
     modelFactsDirty = false;
-    current.projectedAgentRuns = buildProjectedAgentRunIndex();
     Object.assign(subagentInputs, current.subagentRuns.inputs);
     registryRevision = revision;
     preparedEpoch = epoch;
@@ -51,7 +71,6 @@ export function createSessionRowProjectionContext() {
       return current;
     },
     subagentInputs,
-    placementRevision: () => placementRevision,
     get materializedRevisions() {
       return { profileRevision, subagentRevision };
     },
@@ -64,15 +83,14 @@ export function createSessionRowProjectionContext() {
       switch (change.scope) {
         case "profiles":
           current.userProfileIdentityById.clear();
+          identityProjection.invalidate();
           profileRevision++;
           return true;
         case "subagent-runs":
           registryRevision = undefined;
-          subagentRevision++;
           return true;
         case "worker-environments":
         case "worker-placements":
-          placementRevision++;
           return true;
         case "agent-runs":
         case "sessions":
@@ -80,6 +98,7 @@ export function createSessionRowProjectionContext() {
           return true;
         case "stores":
         case "config":
+          identityProjection.invalidate();
           registryRevision = undefined;
       }
       modelFactsDirty = true;

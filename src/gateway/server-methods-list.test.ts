@@ -226,6 +226,16 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
+      "controlUi.linkPreview",
+      "themes.list",
+      "themes.get",
+      "themes.set",
+      "themes.import",
+      "controlUi.githubDetail",
+      "progressCard.refresh",
+      "webSearch.status",
+      "webSearch.test",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -272,6 +282,16 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
+      "controlUi.linkPreview",
+      "themes.list",
+      "themes.get",
+      "themes.set",
+      "themes.import",
+      "controlUi.githubDetail",
+      "progressCard.refresh",
+      "webSearch.status",
+      "webSearch.test",
     ]);
   });
 
@@ -447,6 +467,16 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
+      "controlUi.linkPreview",
+      "themes.list",
+      "themes.get",
+      "themes.set",
+      "themes.import",
+      "controlUi.githubDetail",
+      "progressCard.refresh",
+      "webSearch.status",
+      "webSearch.test",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));

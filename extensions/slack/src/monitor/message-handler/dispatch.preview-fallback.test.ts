@@ -1,4 +1,7 @@
 // Slack tests cover dispatch.preview fallback plugin behavior.
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   projectAgentToolActivity,
   projectProgressCardChannelUpdate,
@@ -319,7 +322,7 @@ function createPreparedSlackMessage(params?: {
     threadTs?: string;
     status: string;
     title?: string;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
   sessionDisplayName?: string;
   typingReaction?: string;
   ackReactionMessageTs?: string;
@@ -356,10 +359,9 @@ function createPreparedSlackMessage(params?: {
       textLimit: 4000,
       typingReaction: params?.typingReaction ?? "",
       historyLimit: 0,
-      channelHistories: new Map(),
       allowFrom: [],
       dispatchReplyFromConfig: params?.dispatchReplyFromConfig,
-      setSlackSessionStatus: params?.setSlackSessionStatus ?? (async () => undefined),
+      setSlackSessionStatus: params?.setSlackSessionStatus ?? (async () => true),
     },
     account: {
       accountId: "default",
@@ -391,7 +393,6 @@ function createPreparedSlackMessage(params?: {
     replyToMode: params?.replyToMode ?? "all",
     isDirectMessage: params?.isDirectMessage ?? false,
     isRoomish: false,
-    historyKey: "history-key",
     preview: "",
     ackReactionValue: "eyes",
     ackReactionMessageTs: params?.ackReactionMessageTs,
@@ -1237,13 +1238,12 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
         await import("openclaw/plugin-sdk/channel-inbound");
       const { createMessageReceiptFromOutboundResults } =
         await import("openclaw/plugin-sdk/channel-outbound");
+      const workspaceRoot = realpathSync(tmpdir());
       const cfg = {
         agents: {
-          entries: {
-            root: { workspace: "/tmp/.openclaw/workspace-root" },
-            alice: { workspace: "/tmp/.openclaw/workspace-alice" },
-            bob: { workspace: "/tmp/.openclaw/workspace-bob" },
-          },
+          entries: Object.fromEntries(
+            ["root", "alice", "bob"].map((id) => [id, { workspace: path.join(workspaceRoot, id) }]),
+          ),
         },
         broadcast: { "slack:C123": agents },
       };
@@ -1273,7 +1273,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
           queuedFinal: dispatcher.sendFinalReply({
             text: `Reply from ${ctx.AgentId}`,
             ...(withMedia
-              ? { mediaUrl: `/tmp/.openclaw/workspace-${ctx.AgentId}/attachment.txt` }
+              ? { mediaUrl: path.join(workspaceRoot, ctx.AgentId, "attachment.txt") }
               : {}),
           }),
           counts: dispatcher.getQueuedCounts(),
@@ -1326,10 +1326,8 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
           "channel:C123",
           expect.stringContaining(`Reply from ${agentId}`),
           expect.objectContaining({
-            ...(withMedia
-              ? { mediaUrl: `/tmp/.openclaw/workspace-${agentId}/attachment.txt` }
-              : {}),
-            mediaLocalRoots: expect.arrayContaining([`/tmp/.openclaw/workspace-${agentId}`]),
+            ...(withMedia ? { mediaUrl: path.join(workspaceRoot, agentId, "attachment.txt") } : {}),
+            mediaLocalRoots: expect.arrayContaining([path.join(workspaceRoot, agentId)]),
           }),
         );
       }
@@ -2215,7 +2213,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       const draftStream = createDraftStreamStub();
       draftStream.messageId = () => undefined;
       createSlackDraftStreamMock.mockReturnValueOnce(draftStream);
-      const setSlackSessionStatus = vi.fn(async () => undefined);
+      const setSlackSessionStatus = vi.fn(async () => true);
       mockedReplyOptionEvents = [
         {
           kind: "checkpoint",
@@ -2250,7 +2248,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
   );
 
   it("does not restart Slack session status once the turn has visible output", async () => {
-    const setSlackSessionStatus = vi.fn(async () => undefined);
+    const setSlackSessionStatus = vi.fn(async () => true);
 
     await dispatchPreparedSlackMessage(createPreparedSlackMessage({ setSlackSessionStatus }));
 
@@ -2263,7 +2261,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
   });
 
   it("keeps Slack typing callbacks when channel replies are message-tool-only", async () => {
-    const setSlackSessionStatus = vi.fn(async () => undefined);
+    const setSlackSessionStatus = vi.fn(async () => true);
 
     await dispatchPreparedSlackMessage(
       createPreparedSlackMessage({

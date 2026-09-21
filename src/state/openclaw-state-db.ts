@@ -12,6 +12,7 @@ import { assertSqliteIntegrity } from "../infra/sqlite-integrity.js";
 import { prepareSqliteReadOnlyLocation } from "../infra/sqlite-snapshot-source.js";
 import type { SqliteTransactionOptions } from "../infra/sqlite-transaction.js";
 import { readSqliteUserVersion } from "../infra/sqlite-user-version.js";
+import { createSqliteWalReclamationResult } from "../infra/sqlite-wal-reclamation.js";
 import {
   StateSchemaMutationConflictError,
   withStateSchemaFence,
@@ -222,9 +223,10 @@ export async function openExistingOpenClawStateDatabaseReadOnly(
     path: pathname,
     walMaintenance: {
       checkpoint: () => false,
+      reclaimFreePages: createSqliteWalReclamationResult,
       // Cleanup can fail transiently after the database closes. Keep the
       // close contract retryable until one call finishes both responsibilities.
-      close: connection.close,
+      close: () => connection.close(),
     },
   };
 }
@@ -246,6 +248,7 @@ function openOpenClawStateDatabaseWithBusyTimeout(
       env,
     });
     observeOpenClawDatabaseMaintenanceResource(options.database.db);
+    stateDbCache.touchStateDatabase(options.database);
     return options.database;
   }
   const pathname = resolveDatabasePath(options);
@@ -408,6 +411,7 @@ export function runWithOpenClawStateBusyTimeout<T>(
       normalizedTimeoutMs,
       () => {
         observeOpenClawDatabaseMaintenanceResource(existing.db);
+        stateDbCache.touchStateDatabase(existing);
         return operation(existing);
       },
       { lockFailureReporting: "suppress" },

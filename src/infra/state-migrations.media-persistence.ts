@@ -17,6 +17,7 @@ import {
   hasMeaningfulRetiredMediaCarrier,
 } from "../media/media-facts.js";
 import { AGENT_MEDIA_SCHEMA_VERSION } from "../state/openclaw-agent-db-contract.js";
+import { invalidateOpenClawAgentDatabaseIntegrityBeforeMutation } from "../state/openclaw-agent-db-lease.js";
 import { assertOpenClawAgentDatabaseOwner } from "../state/openclaw-agent-db-maintenance.js";
 import {
   registerOpenClawAgentDatabase,
@@ -51,6 +52,7 @@ import {
   runSqliteImmediateTransactionSync,
 } from "./sqlite-transaction.js";
 import { readSqliteUserVersion } from "./sqlite-user-version.js";
+import { createSqliteWalReclamationResult } from "./sqlite-wal-reclamation.js";
 import { recoverMisplacedAgentDatabaseCopies } from "./state-migrations.agent-owner-recovery.js";
 import {
   listTranscriptArchives,
@@ -318,7 +320,11 @@ function createMigrationDatabaseHandle(
     agentId,
     db: database,
     path: pathname,
-    walMaintenance: { checkpoint: () => false, close: () => false },
+    walMaintenance: {
+      checkpoint: () => false,
+      close: () => false,
+      reclaimFreePages: createSqliteWalReclamationResult,
+    },
   };
 }
 
@@ -334,6 +340,7 @@ async function migrateAgentDatabase(params: {
   beforeTransaction?: () => void;
   pathname: string;
 }) {
+  invalidateOpenClawAgentDatabaseIntegrityBeforeMutation(params.pathname);
   const database = openNodeSqliteDatabase(params.pathname);
   const migrateArchives = () =>
     migrateCanonicalTranscriptArchives({

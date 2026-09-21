@@ -32,18 +32,18 @@ function recordedPullRequest(number: number) {
   return {
     context: "openclaw/ci-gate",
     description: `PR #${number}: Checking security review`,
-    state: "failure",
+    state: "pending",
     creator: { login: "github-actions[bot]", type: "Bot" },
   };
 }
 
-type Reply = { body: unknown; status?: number };
+type Reply = { body: unknown; status?: number; headers?: Record<string, string> };
 type Options = {
   eventName?: string;
   event?: Record<string, unknown>;
   run?: Record<string, unknown>;
   pullRequest?: Record<string, unknown>;
-  responses?: Record<string, Reply>;
+  responses?: Record<string, Reply | Reply[]>;
 };
 
 function evaluate(options: Options = {}) {
@@ -72,6 +72,8 @@ function evaluate(options: Options = {}) {
   writeFileSync(
     preload,
     `import { appendFileSync, existsSync } from "node:fs";
+import { installGuardClock } from ${JSON.stringify(resolve("test/fixtures/github-guard-clock.mjs"))};
+installGuardClock(${JSON.stringify(traceFile)});
 const responses = ${JSON.stringify(responses)};
 globalThis.fetch = async (url, options = {}) => {
   const parsed = new URL(url);
@@ -81,13 +83,14 @@ globalThis.fetch = async (url, options = {}) => {
     hadOutput: existsSync(${JSON.stringify(outputFile)}),
   }) + "\\n");
   if (parsed.origin !== "https://api.github.com") throw new Error("Unexpected API origin");
-  const reply = responses[path] ?? (
+  const route = responses[path] ?? (
     options.method === "POST" && path.startsWith(${JSON.stringify(`${prefix}/statuses/`)})
       ? { body: {} }
       : undefined
   );
+  const reply = Array.isArray(route) ? (route.length > 1 ? route.shift() : route[0]) : route;
   if (!reply) throw new Error("Unexpected API request: " + path);
-  return new Response(JSON.stringify(reply.body), {status: reply.status ?? 200});
+  return new Response(JSON.stringify(reply.body), {status: reply.status ?? 200, headers: reply.headers});
 };
 `,
   );
@@ -115,6 +118,7 @@ globalThis.fetch = async (url, options = {}) => {
           (line) =>
             JSON.parse(line) as {
               path: string;
+              delay?: number;
               method: string;
               body?: { context: string; state: string; description: string; target_url: string };
               hadOutput: boolean;
@@ -129,12 +133,36 @@ globalThis.fetch = async (url, options = {}) => {
         ? (JSON.parse(result.stdout) as { include: { pr: number; head: string }[] })
         : undefined,
     output: existsSync(outputFile) ? readFileSync(outputFile, "utf8") : "",
+    waits: trace.filter(({ method }) => method === "WAIT").map(({ delay }) => delay!),
     requests: trace.map(({ path, method }) => ({ path, method })),
     published: trace.filter(({ method }) => method === "POST"),
   };
 }
 
 describe("automatic security review event resolution", () => {
+  it("automatically resolves the current PR after a rate-limited lookup", () => {
+    const result = evaluate({
+      eventName: "pull_request_target",
+      event: { action: "opened", pull_request: { number: 42 } },
+      responses: {
+        [`${prefix}/pulls/42`]: [
+          {
+            body: { message: "API rate limit exceeded for installation" },
+            status: 403,
+            headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1767315600" },
+          },
+          { body: pullRequest },
+        ],
+      },
+    });
+    expect(result.status, result.error).toBe(0);
+    expect(result.waits).toHaveLength(1);
+    expect(result.waits[0]).toBeGreaterThanOrEqual(3_600_000);
+    expect(result.matrix).toEqual({ include: [{ pr: 42, head }] });
+    expect(result.published).toHaveLength(1);
+    expect(result.requests.map(({ method }) => method)).toEqual(["GET", "WAIT", "GET", "POST"]);
+  });
+
   it.each(["pull_request_target", "issue_comment"])(
     "resolves %s through current PR metadata",
     (eventName) => {
@@ -163,7 +191,7 @@ describe("automatic security review event resolution", () => {
           hadOutput: false,
           body: {
             context: "openclaw/ci-gate",
-            state: "failure",
+            state: "pending",
             description: "PR #42: Review scheduled; CI and security review have not completed",
             target_url: "https://github.com/openclaw/openclaw/actions/runs/789",
           },
@@ -172,7 +200,7 @@ describe("automatic security review event resolution", () => {
     },
   );
 
-  it("does not schedule a review job when its initial failure cannot be recorded", () => {
+  it("does not schedule a review job when its initial pending status cannot be recorded", () => {
     const result = evaluate({
       eventName: "pull_request_target",
       event: { action: "opened", pull_request: { number: 42 } },
@@ -246,13 +274,13 @@ describe("automatic security review event resolution", () => {
       {
         path: `${prefix}/statuses/${nextHead}`,
         description: "PR #42: Review scheduled; CI and security review have not completed",
-        state: "failure",
+        state: "pending",
         hadOutput: false,
       },
       {
         path: `${prefix}/statuses/${head}`,
         description: "PR #43: Review scheduled; CI and security review have not completed",
-        state: "failure",
+        state: "pending",
         hadOutput: false,
       },
     ]);
@@ -325,7 +353,7 @@ describe("automatic security review event resolution", () => {
     ).toMatchObject({
       status: 0,
       matrix: { include: [{ pr: 42, head }] },
-      published: [{ body: { context: "openclaw/ci-gate", state: "failure" } }],
+      published: [{ body: { context: "openclaw/ci-gate", state: "pending" } }],
     });
   });
 
@@ -380,7 +408,7 @@ describe("automatic security review event resolution", () => {
       ]);
       expect(result.requests.slice(0, -1).every((request) => request.method === "GET")).toBe(true);
       expect(result.published).toHaveLength(1);
-      expect(result.published[0]?.body?.state).toBe("failure");
+      expect(result.published[0]?.body?.state).toBe("pending");
     },
   );
 

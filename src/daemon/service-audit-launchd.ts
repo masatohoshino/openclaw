@@ -1,10 +1,17 @@
 import { resolveLaunchAgentLabel } from "./launchd-label.js";
 import { LAUNCH_AGENT_POLICY, decodeLaunchdPlistMetadata } from "./launchd-plist.js";
 import {
+  buildLaunchAgentEnvironmentWrapper,
   readExistingLaunchAgentPlist,
+  resolveLaunchAgentEnvWrapperPath,
   resolveLaunchAgentPlistPath,
 } from "./launchd-service-files.js";
 import { resolveGatewayLogPaths, resolveGatewaySupervisorLogPaths } from "./restart-logs.js";
+import {
+  isInstallerServiceDescription,
+  serviceDefinitionPreserved,
+  serviceDefinitionUnknown,
+} from "./service-audit-preservation.js";
 import type { ServiceConfigIssue, ServiceDefinitionDrift } from "./service-audit-types.js";
 import type { GatewayServiceEnv } from "./service-types.js";
 
@@ -14,6 +21,7 @@ export async function auditLaunchdDefinition(
   issues: ServiceConfigIssue[],
   findings: ServiceDefinitionDrift[],
   timeoutMs?: number,
+  inspectRewrite = false,
 ): Promise<void> {
   const sourcePath = resolveLaunchAgentPlistPath(env);
   const content = (await readExistingLaunchAgentPlist(sourcePath))?.contents ?? null;
@@ -39,6 +47,28 @@ export async function auditLaunchdDefinition(
   if (!installed) {
     throw new Error("LaunchAgent definition could not be decoded.");
   }
+  if (inspectRewrite) {
+    if (!isInstallerServiceDescription(installed.Comment, env)) {
+      findings.push(
+        serviceDefinitionUnknown(
+          "Comment",
+          "The installer would replace custom service metadata.",
+          sourcePath,
+        ),
+      );
+    }
+    const wrapperPath = resolveLaunchAgentEnvWrapperPath(env, resolveLaunchAgentLabel(env));
+    const wrapper = (await readExistingLaunchAgentPlist(wrapperPath))?.contents ?? null;
+    if (wrapper !== null && wrapper.toString("utf8") !== buildLaunchAgentEnvironmentWrapper()) {
+      findings.push(
+        serviceDefinitionUnknown(
+          "EnvironmentWrapper",
+          "The generated wrapper contains unrecognized behavior.",
+          wrapperPath,
+        ),
+      );
+    }
+  }
   const { stdoutPath } = resolveGatewaySupervisorLogPaths(env, { platform: "darwin" });
   const expected: Record<string, string | number | boolean> = {
     ...LAUNCH_AGENT_POLICY,
@@ -53,8 +83,10 @@ export async function auditLaunchdDefinition(
     "Comment",
   ]);
   const legacyLogs = resolveGatewayLogPaths(env);
-  // Stable releases used state-directory logs and, later, discarded stderr.
-  const released: Record<string, readonly string[]> = {
+  // Stable releases used 60s/1s throttles, state-directory logs, and discarded stderr.
+  // Installation age alone does not attribute arbitrary explicit values to the installer.
+  const released: Record<string, readonly (string | number)[]> = {
+    ThrottleInterval: [60, 1],
     StandardOutPath: [legacyLogs.stdoutPath],
     StandardErrorPath: [legacyLogs.stderrPath, "/dev/null"],
   };
@@ -67,7 +99,9 @@ export async function auditLaunchdDefinition(
     if (
       value !== undefined &&
       key !== "Label" &&
-      (current === undefined || (typeof current === "string" && released[key]?.includes(current)))
+      (current === undefined ||
+        ((typeof current === "string" || typeof current === "number") &&
+          released[key]?.includes(current)))
     ) {
       findings.push({
         kind: "outdated",
@@ -77,6 +111,8 @@ export async function auditLaunchdDefinition(
         sourcePath,
         message: `LaunchAgent ${key} differs from the installer value ${String(value)}.`,
       });
+    } else if (value !== undefined && key !== "Label") {
+      findings.push(serviceDefinitionPreserved(key, sourcePath));
     } else {
       findings.push({
         kind: "unknown-edit",

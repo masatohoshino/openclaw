@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/qa-lab",
-  "version": "2026.9.4",
+  "version": "2026.9.5",
   "private": true,
   "description": "OpenClaw QA lab plugin with private debugger UI and scenario runner",
   "type": "module",
@@ -12,13 +12,13 @@
     "semver": "7.8.5",
     "ws": "8.21.3",
     "yaml": "2.9.0",
-    "zod": "4.6.2"
+    "zod": "4.6.4"
   },
   "devDependencies": {
     "@openclaw/crabbox-provider": "workspace:*",
     "@openclaw/discord": "workspace:*",
-    "@openclaw/mattermost": "workspace:*",
     "@openclaw/matrix": "workspace:*",
+    "@openclaw/mattermost": "workspace:*",
     "@openclaw/plugin-sdk": "workspace:*",
     "@openclaw/slack": "workspace:*",
     "@openclaw/whatsapp": "workspace:*",
@@ -26,7 +26,7 @@
     "vite": "8.3.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.4"
+    "openclaw": ">=2026.9.5"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -43,7 +43,7 @@
       ]
     },
     "compat": {
-      "pluginApi": ">=2026.9.4"
+      "pluginApi": ">=2026.9.5"
     }
   }
 }

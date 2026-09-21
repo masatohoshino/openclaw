@@ -77,7 +77,11 @@ import {
   setSubagentRegistryDepsForTest,
   subagentRegistryDeps,
 } from "./subagent-registry-deps.js";
-import { mockBlockedCompletionDeliveryOwner } from "./subagent-registry-lifecycle-completion.test-support.js";
+import { registerDetachedCleanupAuthorityTest } from "./subagent-registry-lifecycle-cleanup.test-support.js";
+import {
+  mockBlockedCompletionDeliveryOwner,
+  registerPrivateCompletionSettlementTests,
+} from "./subagent-registry-lifecycle-completion.test-support.js";
 import { loadPendingFinalDeliveryPayload } from "./subagent-registry-lifecycle-delivery.js";
 import {
   SubagentLifecycleController,
@@ -849,50 +853,7 @@ describe("subagent registry lifecycle hardening", () => {
     expect(captureSubagentCompletionReply).not.toHaveBeenCalled();
   });
 
-  it("runs detached cleanup outside a disposed requester transcript owner", async () => {
-    const sessionKey = "agent:main:disposed-cleanup-owner";
-    const entry = createRunEntry({
-      requesterSessionKey: sessionKey,
-      endedAt: 4_000,
-      expectsCompletionMessage: true,
-      retainAttachmentsOnKeep: true,
-    });
-    let disposed = false;
-    let releaseCleanup!: () => void;
-    const cleanupReady = new Promise<void>((resolve) => {
-      releaseCleanup = resolve;
-    });
-    const requesterTranscriptWrite = vi.fn();
-    const withRequesterTranscriptWrite = async <T>(operation: () => Promise<T> | T): Promise<T> => {
-      requesterTranscriptWrite();
-      if (disposed) {
-        throw new Error("attempt disposed before transcript write");
-      }
-      return await operation();
-    };
-    const freshTranscriptWrite = vi.fn(async () => {});
-    const runSubagentAnnounceFlow = vi.fn(async () => {
-      await cleanupReady;
-      await runWithOwnedSessionTranscriptWrite({ sessionKey }, freshTranscriptWrite);
-      return "delivered" as const;
-    });
-    const controller = createLifecycleController({ entry, runSubagentAnnounceFlow });
-
-    await withOwnedSessionTranscriptWrites(
-      { sessionKey, withTranscriptWrite: withRequesterTranscriptWrite },
-      async () => {
-        expect(controller.startSubagentAnnounceCleanupFlow(entry.runId, entry)).toBe(true);
-      },
-    );
-
-    disposed = true;
-    releaseCleanup();
-
-    await waitForLifecycleState(() => expect(freshTranscriptWrite).toHaveBeenCalledOnce());
-    await waitForLifecycleState(() => expect(entry.delivery?.status).toBe("delivered"));
-    expect(requesterTranscriptWrite).not.toHaveBeenCalled();
-    expect(runSubagentAnnounceFlow).toHaveBeenCalledOnce();
-  });
+  registerDetachedCleanupAuthorityTest({ createRunEntry, createLifecycleController });
 
   it("emits one progress end event at the canonical terminal transition", async () => {
     const entry = createRunEntry({ expectsCompletionMessage: false });
@@ -4719,81 +4680,12 @@ describe("subagent registry lifecycle hardening", () => {
     expect(persist).toHaveBeenCalled();
   });
 
-  it.each([false, true])(
-    "holds private completion until requester settlement (yielded: %s)",
-    async (requesterYielded) => {
-      const entry = createRunEntry({
-        endedAt: Date.now(),
-        outcome: { status: "ok" },
-        requesterTurnRunId: "run-requester",
-        completionTarget: "parent",
-        expectsCompletionMessage: true,
-        retainAttachmentsOnKeep: true,
-        completion: { required: true, resultText: "private child result" },
-        delivery: { status: "pending" },
-      });
-      const sibling = createRunEntry({
-        runId: "slow-sibling",
-        childSessionKey: "agent:main:subagent:slow-sibling",
-        requesterSessionKey: entry.requesterSessionKey,
-        requesterTurnRunId: "run-requester",
-        expectsCompletionMessage: true,
-      });
-      const runSubagentAnnounceFlow = vi.fn<LifecycleControllerParams["runSubagentAnnounceFlow"]>(
-        async (params) =>
-          params.isCompletionOwnedByRequesterYield?.() ? "intentional_non_delivery" : "delivered",
-      );
-      const runs = new Map([
-        [entry.runId, entry],
-        [sibling.runId, sibling],
-      ]);
-      const controller = createLifecycleController({
-        entry,
-        runs,
-        runSubagentAnnounceFlow,
-        resumeSubagentRun: (runId) => {
-          controller.startSubagentAnnounceCleanupFlow(runId, runs.get(runId)!);
-        },
-        maybeWakeRequesterAfterAllChildrenSettled: async () => false,
-      });
-      try {
-        expect(controller.startSubagentAnnounceCleanupFlow(entry.runId, entry)).toBe(false);
-        expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
-        expect(entry.cleanupHandled).not.toBe(true);
-        expect(entry.completion?.resultText).toBe("private child result");
-        if (requesterYielded) {
-          markRequesterTurnYieldedInRuns({
-            requesterSessionKey: entry.requesterSessionKey,
-            requesterTurnRunId: "run-requester",
-            runs,
-            persistOrThrow: () => undefined,
-          });
-        }
-        expect(
-          controller.settleRequesterTurnAfterSessionSpawns({
-            requesterSessionKey: entry.requesterSessionKey,
-            requesterTurnRunId: "run-requester",
-            requesterYielded,
-            acceptedSessionSpawns: [entry, sibling].map((child) => ({
-              runId: child.runId,
-              childSessionKey: child.childSessionKey,
-              expectsCompletionMessage: true,
-            })),
-          }),
-        ).toBe(true);
-        await waitForLifecycleState(() => expect(entry.cleanupCompletedAt).toBeTypeOf("number"));
-        expect(entry.requesterTurnRunId).toBeUndefined();
-        expect(entry.delivery?.status).toBe(requesterYielded ? "pending" : "delivered");
-        expect(entry.requesterSettleWake?.requesterYieldBatch).toBe(
-          requesterYielded ? true : undefined,
-        );
-        expect(sibling.execution.endedAt).toBeUndefined();
-        expect(runSubagentAnnounceFlow).toHaveBeenCalledOnce();
-      } finally {
-        controller.clearScheduledResumeTimers();
-      }
-    },
-  );
+  registerPrivateCompletionSettlementTests({
+    createRunEntry,
+    createLifecycleController,
+    waitForLifecycleState,
+    completionDeliveryMocks,
+  });
 
   it("does not let a late announce failure reclaim a pending yielded batch", async () => {
     const entry = createRunEntry({
@@ -5391,8 +5283,8 @@ describe("requester settle wake trigger", () => {
           return;
         }
         expect(suspension?.release()).toBe(true);
-        await waitForLifecycleState(() => expect(factory).toHaveBeenCalledOnce());
         await factoryStarted.promise;
+        expect(factory).toHaveBeenCalledOnce();
         if (mode === "stale-after-resolution") {
           runs.set(entry.runId, createRunEntry({ generation: 2 }));
         }

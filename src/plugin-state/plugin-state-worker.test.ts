@@ -24,6 +24,7 @@ import {
   createPluginStateSyncKeyedStore,
   pluginStateEntriesInKeyRange,
   registerPluginStateSequencedJournalEntry,
+  sweepExpiredPluginStateEntries,
 } from "./plugin-state-store.js";
 import { seedPluginStateEntriesForTests } from "./plugin-state-store.test-helpers.js";
 import { PluginStateStoreError } from "./plugin-state-store.types.js";
@@ -34,15 +35,71 @@ afterEach(async () => {
 });
 
 describe("worker plugin state", () => {
+  it("opens cold state and sweeps reopened state without host data SQL", async () => {
+    await withOpenClawTestState({ label: "plugin-state-worker-sweep" }, async (state) => {
+      const databasePath = resolveOpenClawStateSqlitePath(state.env);
+      const observation = observeHostDataSql(state.env);
+      try {
+        expect(existsSync(databasePath)).toBe(false);
+        expect(await sweepExpiredPluginStateEntries({ env: state.env })).toBe(0);
+        expect(existsSync(databasePath)).toBe(true);
+        for (const method of observation.calls) {
+          expect(method).not.toHaveBeenCalled();
+        }
+
+        const now = Date.now();
+        seedPluginStateEntriesForTests([
+          {
+            pluginId: "fixture-plugin",
+            namespace: "sweep",
+            key: "expired",
+            value: { expired: true },
+            expiresAt: now - 1,
+          },
+          {
+            pluginId: "fixture-plugin",
+            namespace: "sweep",
+            key: "live",
+            value: { live: true },
+            expiresAt: now + 86_400_000,
+          },
+        ]);
+        await closeOpenClawStateDatabaseAsync();
+        for (const method of observation.calls) {
+          method.mockClear();
+        }
+        expect(await sweepExpiredPluginStateEntries({ env: state.env })).toBe(1);
+        expect(await sweepExpiredPluginStateEntries({ env: state.env })).toBe(0);
+        for (const method of observation.calls) {
+          expect(method).not.toHaveBeenCalled();
+        }
+      } finally {
+        observation.restore();
+      }
+      const persisted = createPluginStateSyncKeyedStore("fixture-plugin", {
+        namespace: "sweep",
+        maxEntries: 10,
+        env: state.env,
+      });
+      expect(persisted.lookup("expired")).toBeUndefined();
+      expect(persisted.lookup("live")).toEqual({ live: true });
+    });
+  });
+
   it.each(["observe", "compareDelete"] as const)(
-    "shares lifecycle custody with an overlapping host owner during %s",
+    "waits for an overlapping host owner before worker lifecycle acquisition during %s",
     async (operation) => {
       await withOpenClawTestState({ label: "plugin-state-lock-custody" }, async (state) => {
-        const store = createPluginStateKeyedStore<string>("memory-core", {
-          namespace: "lock-custody",
-          maxEntries: 10,
-          env: state.env,
-        });
+        const assertActive = vi.fn();
+        const store = createPluginStateKeyedStore<string>(
+          "memory-core",
+          {
+            namespace: "lock-custody",
+            retention: "retained",
+            env: state.env,
+          },
+          assertActive,
+        );
         const messages = vi.spyOn(Worker.prototype, "postMessage");
         await store.register("workspace", "owner");
         const worker = messages.mock.contexts[0];
@@ -62,30 +119,49 @@ describe("worker plugin state", () => {
               request.input instanceof Uint8Array &&
               asOptionalRecord(deserialize(request.input))?.type === "pluginState." + operation
             ) {
-              // A sibling native owner starts after broker preparation but before
-              // dispatch. Its live custody must be shared with this worker command.
+              // This owner arrives too late to be delegated. Fresh worker acquisition
+              // must wait for its release while the host keeps servicing authority checks.
               held = acquireStateDatabaseCoordinator({
                 databasePath: resolveOpenClawStateSqlitePath(state.env),
                 busyTimeoutMs: 0,
               });
+              assertActive.mockClear();
             }
             return nativePost(message, transferList);
           });
-        try {
-          if (operation === "observe") {
-            await expect(store.observe("workspace")).resolves.toMatchObject({ value: "owner" });
-          } else {
-            await expect(
-              store.compareAndApply("workspace", observation.comparison, {
+        let completed = false;
+        const pending = (
+          operation === "observe"
+            ? store.observe("workspace")
+            : store.compareAndApply("workspace", observation.comparison, {
                 operation: "delete",
                 action: "delete",
-              }),
-            ).resolves.toEqual({ status: "applied" });
+              })
+        ).then(
+          (value) => {
+            completed = true;
+            return { ok: true, value } as const;
+          },
+          (error: unknown) => {
+            completed = true;
+            return { ok: false, error } as const;
+          },
+        );
+        try {
+          await vi.waitFor(() => expect(held).toBeDefined());
+          await vi.waitFor(() => expect(assertActive.mock.calls.length).toBeGreaterThan(4));
+          expect(completed).toBe(false);
+          held?.release();
+          held = undefined;
+          if (operation === "observe") {
+            await expect(pending).resolves.toMatchObject({ ok: true, value: { value: "owner" } });
+          } else {
+            await expect(pending).resolves.toEqual({ ok: true, value: { status: "applied" } });
           }
-          expect(held).toBeDefined();
         } finally {
           dispatch.mockRestore();
           held?.release();
+          await pending;
         }
         expect(await store.lookup("workspace")).toBe(operation === "observe" ? "owner" : undefined);
       });

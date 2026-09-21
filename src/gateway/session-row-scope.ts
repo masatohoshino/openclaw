@@ -62,10 +62,12 @@ export function selectMatchingSessionRows<T extends SessionRowScopeTarget>(
       : query.agentId
         ? byAgent.get(query.agentId)
         : rows.keys();
+  if (!candidates) {
+    return [];
+  }
   const matches = createSessionRowScopeMatcher(query, scope);
-  const ids = Array.from(candidates ?? []);
   const selected: T[] = [];
-  for (const id of ids) {
+  for (const id of candidates) {
     const row = rows.get(id);
     if (row !== undefined && matches(row)) {
       selected.push(row);
@@ -145,7 +147,8 @@ export function prepareSessionRowScopes(
   return {
     select,
     physicalPaths(locator: string, agentId?: string) {
-      const normalized = residentPath(path.resolve(locator));
+      // Resident physical locators were normalized when the topology was prepared.
+      const normalized = filenames.has(locator) ? locator : residentPath(path.resolve(locator));
       const owners = aliases.get(normalized);
       return agentId
         ? [owners?.get(normalizeAgentId(agentId)) ?? normalized]

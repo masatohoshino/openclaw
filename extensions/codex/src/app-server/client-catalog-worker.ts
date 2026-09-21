@@ -1,11 +1,16 @@
 import type { WorkerTaskPool } from "openclaw/plugin-sdk/process-runtime";
-import type {
-  CodexCatalogDecodeInput,
-  CodexCatalogDecodeResult,
+import { codexCatalogPageWorkerEntrypoint } from "../../catalog-page-worker-entrypoint.js";
+import type { CodexCatalogPreviewCache } from "../session-catalog-native-projection.js";
+import {
+  projectCodexCatalogMessage,
+  type CodexCatalogDecodeInput,
+  type CodexCatalogDecodeResult,
 } from "./client-catalog-response.js";
 import type { CodexCatalogDecodeRoute } from "./client-message-frames.js";
 import { isJsonObject } from "./protocol.js";
 import type { CodexRequestAttempt } from "./request-attempt.js";
+
+const INLINE_CATALOG_MAX_BYTES = 64 * 1024;
 
 /** Late responses retain their decode route after cancellation removes the waiter. */
 export function codexCatalogRequestId(
@@ -29,14 +34,51 @@ export function codexCatalogRequestId(
 /** Each physical client owns one decoder, including incomplete-line recovery state. */
 export class CodexCatalogWorker {
   private pool: WorkerTaskPool<CodexCatalogDecodeInput, CodexCatalogDecodeResult> | undefined;
+  private continuationRoute: CodexCatalogDecodeRoute | undefined;
   private closed = false;
+
+  get continuation(): CodexCatalogDecodeRoute | undefined {
+    return this.continuationRoute;
+  }
 
   async decode(
     line: Buffer,
     route: CodexCatalogDecodeRoute,
     attempts: ReadonlyMap<number | string, CodexRequestAttempt>,
-    projections: Pick<WeakMap<CodexRequestAttempt, { remainingRows?: number }>, "get">,
+    projections: Pick<
+      WeakMap<CodexRequestAttempt, { preview?: CodexCatalogPreviewCache; remainingRows?: number }>,
+      "get"
+    >,
   ) {
+    if (this.closed) {
+      return undefined;
+    }
+    if (
+      !this.continuationRoute &&
+      route !== "unresolved" &&
+      line.byteLength <= INLINE_CATALOG_MAX_BYTES
+    ) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line.toString("utf8"));
+      } catch {
+        // Incomplete or malformed frames retain the worker's recovery state.
+      }
+      if (parsed !== undefined) {
+        // Cache callbacks observe closure and cancellation before asynchronous delivery.
+        await Promise.resolve();
+        if (this.closed) {
+          return undefined;
+        }
+        const attempt = attempts.get(route.id);
+        const projection = attempt ? projections.get(attempt) : undefined;
+        return projectCodexCatalogMessage(
+          parsed,
+          { route, remainingRows: attempt ? projection?.remainingRows : 0 },
+          projection?.preview,
+        );
+      }
+    }
     if (!this.pool) {
       const { resolveRuntimeWorkerUrl, WorkerTaskPool } =
         await import("openclaw/plugin-sdk/process-runtime");
@@ -44,12 +86,7 @@ export class CodexCatalogWorker {
         return undefined;
       }
       this.pool = new WorkerTaskPool<CodexCatalogDecodeInput, CodexCatalogDecodeResult>({
-        workerUrl: resolveRuntimeWorkerUrl({
-          currentModuleUrl: import.meta.url,
-          sourceWorkerName: "../../catalog-page.worker",
-          distWorkerPath: "extensions/codex/catalog-page.worker.js",
-          package: { name: "@openclaw/codex", distWorkerPath: "catalog-page.worker.js" },
-        }),
+        workerUrl: resolveRuntimeWorkerUrl(codexCatalogPageWorkerEntrypoint),
         maxWorkers: 1,
         maxPendingTasks: 1,
         // Framing admits one line at a time. Completed native messages have no size cap;
@@ -79,17 +116,23 @@ export class CodexCatalogWorker {
       line.buffer instanceof ArrayBuffer
         ? new Uint8Array(line.buffer)
         : Uint8Array.from(line);
-    return this.pool.run(
+    const decoded = await this.pool.run(
       { bytes, route, remainingRows, catalogRows },
       {
         inputBytes: bytes.byteLength,
         transferList: (input) => [input.bytes.buffer],
       },
     );
+    if (this.closed) {
+      return undefined;
+    }
+    this.continuationRoute = decoded.pending ? route : undefined;
+    return decoded;
   }
 
   close(error: Error): Promise<void> {
     this.closed = true;
+    this.continuationRoute = undefined;
     return this.pool?.close(error) ?? Promise.resolve();
   }
 }

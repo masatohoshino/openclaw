@@ -95,6 +95,7 @@ export {
   loadExactSessionEntry,
   loadExactSessionEntryCandidates,
   loadExactSessionEntryCandidatesReadOnlyBatch,
+  loadExactSessionEntryFromStoreReadOnly,
   loadExactSessionEntryReadOnly,
   loadSessionEntryByIdReadOnly,
 } from "./session-accessor.sqlite-exact-read.js";
@@ -145,11 +146,12 @@ export function loadSessionEntryReadOnly(scope: SessionEntryReadScope): SessionE
 
 /** Private prepared reads must reject a different physical owner at the captured path. */
 export function loadSessionEntryReadOnlyInScope(
-  scope: SessionAccessScope & { databaseAgentId: string },
+  scope: SessionEntryReadScope & { databaseAgentId: string },
 ): SessionEntry | undefined {
   return resolveSessionEntry(scope, {
     readOnly: true,
     databaseAgentId: scope.databaseAgentId,
+    projection: scope.projection,
   }).existing;
 }
 

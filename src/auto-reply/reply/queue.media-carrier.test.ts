@@ -19,7 +19,7 @@ import { createQueueTestRun } from "./queue.test-helpers.js";
 import {
   createOverflowSummaryRetrySource,
   resolveFollowupDeliveryContextKey,
-} from "./queue/drain.js";
+} from "./queue/delivery-context.js";
 import { clearFollowupQueue } from "./queue/state.js";
 import { createReplyOperation } from "./reply-run-registry.js";
 import { createMockTypingController } from "./test-helpers.js";

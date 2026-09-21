@@ -52,7 +52,10 @@ function resolveSkillsWatchPath(raw: string): string {
     index += 1;
   }
   try {
-    return path.join(fs.realpathSync.native(cursor), ...parts.slice(index));
+    const resolved = fs.realpathSync.native(cursor);
+    // NTFS can return a delete-pending name if removal races the prefix scan.
+    // Keep discovery on the configured path instead of watching that namespace.
+    return fs.existsSync(resolved) ? path.join(resolved, ...parts.slice(index)) : raw;
   } catch {
     return raw;
   }
@@ -188,8 +191,10 @@ export function resolveSkillsWatcherUsePolling(): boolean {
 export function makeSkillsWatchTarget(
   raw: string,
   depth: number,
+  previousWatchRoot?: string,
 ): { path: string; watchRoot: string; depth: number } {
-  const watchPath = toWatchRoot(resolveSkillsWatchPath(raw));
+  // Reconciliation receives an admitted path: only its observation root moves.
+  const watchPath = toWatchRoot(previousWatchRoot ? raw : resolveSkillsWatchPath(raw));
   let watchRoot = watchPath;
   while (!fs.existsSync(watchRoot)) {
     const parent = path.dirname(watchRoot);
@@ -197,6 +202,32 @@ export function makeSkillsWatchTarget(
       break;
     }
     watchRoot = parent;
+  }
+  if (
+    previousWatchRoot &&
+    previousWatchRoot !== watchRoot &&
+    isPathInside(previousWatchRoot, watchRoot)
+  ) {
+    // Explicit descendant watches bypass Chokidar's followSymlinks:false for
+    // intermediate components. Promotion must stop where recursive observation
+    // would stop; trusted realpath targets are registered by target preparation.
+    let cursor = previousWatchRoot;
+    const parts = path.relative(previousWatchRoot, watchRoot).split(path.sep).filter(Boolean);
+    for (const part of ["", ...parts]) {
+      cursor = path.join(cursor, part);
+      try {
+        if (!fs.lstatSync(cursor).isSymbolicLink()) {
+          continue;
+        }
+      } catch {
+        // An ancestor disappeared between discovery and promotion.
+      }
+      watchRoot = path.dirname(cursor);
+      while (!fs.existsSync(watchRoot) && path.dirname(watchRoot) !== watchRoot) {
+        watchRoot = path.dirname(watchRoot);
+      }
+      break;
+    }
   }
   return { path: watchPath, watchRoot: toWatchRoot(watchRoot), depth };
 }

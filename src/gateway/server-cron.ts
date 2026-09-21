@@ -124,8 +124,8 @@ import {
   resolveStreamStopReason,
 } from "./cron-stream-watchers.js";
 import {
+  createScheduledGatewayRunner,
   fenceScheduledGatewayContextResolver,
-  runWithScheduledGatewayContext,
 } from "./scheduled-run-gateway-context.js";
 import type { GatewayCronServiceContract } from "./server-cron-contract.js";
 import {
@@ -404,8 +404,7 @@ export function buildGatewayCronService(params: {
   const scheduledGatewayContextResolver = fenceScheduledGatewayContextResolver(
     params.resolveGatewayContext,
   );
-  const runSchedulerOwned = <T>(run: () => Promise<T>) =>
-    runWithScheduledGatewayContext({ resolveGatewayContext: scheduledGatewayContextResolver, run });
+  const runSchedulerOwned = createScheduledGatewayRunner(scheduledGatewayContextResolver);
   const env = params.env ?? process.env;
   const storePath = resolveCronJobsStorePathFromConfig(params.cfg, env);
   const cronEnabled = env.OPENCLAW_SKIP_CRON !== "1" && params.cfg.cron?.enabled !== false;
@@ -828,15 +827,8 @@ export function buildGatewayCronService(params: {
       );
       return timeoutMs === 0 ? undefined : timeoutMs;
     },
-    runIsolatedAgentJob: async ({
-      job,
-      message,
-      abortSignal,
-      onExecutionStarted,
-      onExecutionPhase,
-      onLaneWait,
-      executionIdentity,
-    }) => {
+    runIsolatedAgentJob: async (request) => {
+      const { job } = request;
       const { agentId, cfg: runtimeConfig } = resolveCronAgent(job.agentId);
       const sessionKey = resolveCronSessionTargetSessionKey(job.sessionTarget) ?? `cron:${job.id}`;
       const reviewAgentId = skillCollectionReviewMonitorAgentId(job);
@@ -851,15 +843,9 @@ export function buildGatewayCronService(params: {
       }
       try {
         return await runCronIsolatedAgentTurn({
+          ...request,
           cfg: runtimeConfig,
           deps: params.deps,
-          job,
-          message,
-          abortSignal,
-          onExecutionStarted,
-          onExecutionPhase,
-          onLaneWait,
-          executionIdentity,
           agentId,
           sessionKey,
           lane: "cron",

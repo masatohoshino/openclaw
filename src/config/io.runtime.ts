@@ -41,7 +41,6 @@ import type {
 import { ConfigRuntimeRefreshError, configWritePostCommitRollback } from "./io.types.js";
 import { logConfigWarningsOnce } from "./io.warnings.js";
 import { ConfigWritePostCommitError, type ConfigWriteRollbackStatus } from "./io.write-errors.js";
-import { rollbackConfigFileWriteIfUnchanged } from "./io.write-safety.js";
 import { formatConfigIssueSummary } from "./issue-format.js";
 import { ConfigMutationConflictError } from "./mutation-conflict.js";
 import type { CapturedRuntimeConfigRead } from "./runtime-config-capture-state.js";
@@ -139,18 +138,20 @@ export function getRuntimeConfig(options?: {
   return loadConfig(options);
 }
 
+type RuntimeConfigAsyncReader<T> = (() => Promise<T>) & { assertCurrent: () => void };
+
 /** Capture the config source before a task read, and load only if its owner needs config facts. */
 export function captureRuntimeConfigAsyncReader(options: {
   assertCurrent?: () => void;
   capture: true;
-}): () => Promise<CapturedRuntimeConfigRead>;
+}): RuntimeConfigAsyncReader<CapturedRuntimeConfigRead>;
 export function captureRuntimeConfigAsyncReader(options?: {
   assertCurrent?: () => void;
   capture?: false;
-}): () => Promise<OpenClawConfig>;
+}): RuntimeConfigAsyncReader<OpenClawConfig>;
 export function captureRuntimeConfigAsyncReader(
   options: { assertCurrent?: () => void; capture?: boolean } = {},
-): () => Promise<OpenClawConfig | CapturedRuntimeConfigRead> {
+): RuntimeConfigAsyncReader<OpenClawConfig | CapturedRuntimeConfigRead> {
   const sourceEnv = process.env;
   const cwd = tryProcessCwd();
   const readSelectors = () =>
@@ -187,7 +188,7 @@ export function captureRuntimeConfigAsyncReader(
     },
   });
   let pending: Promise<OpenClawConfig | CapturedRuntimeConfigRead> | undefined;
-  return () => {
+  const read = () => {
     assertCurrent();
     const loadFresh = async (assertPinned: () => void) => {
       try {
@@ -212,6 +213,7 @@ export function captureRuntimeConfigAsyncReader(
       ? loadPinnedRuntimeConfigAsync(loadFresh, { assertCurrent, capture: true })
       : loadPinnedRuntimeConfigAsync(loadFresh, { assertCurrent }));
   };
+  return Object.assign(read, { assertCurrent });
 }
 
 function createCurrentConfigReader(params: {
@@ -538,9 +540,6 @@ export async function writeConfigFile(
         runtimePreflightResult,
         managedPreparedCandidates,
         assertPostCommitCurrent,
-        rollbackWriteEffects: writeResult[configWritePostCommitRollback]?.bind(undefined, () =>
-          assertPostCommitCurrent?.(),
-        ),
       });
     },
     processIo.env,
@@ -560,7 +559,6 @@ async function finalizeCommittedConfigWrite(params: {
   runtimePreflightResult: unknown;
   managedPreparedCandidates: Map<symbol, RuntimeConfigWritePreparedCandidate>;
   assertPostCommitCurrent?: () => void;
-  rollbackWriteEffects?: () => void;
 }): Promise<ConfigWriteResult> {
   const {
     io,
@@ -683,13 +681,10 @@ async function finalizeCommittedConfigWrite(params: {
   } catch (error) {
     let rollbackStatus: ConfigWriteRollbackStatus = "unknown";
     try {
-      const rolledBackConfig = await rollbackConfigFileWriteIfUnchanged({
-        configPath: io.configPath,
-        previousSnapshot: baseSnapshot,
-        committedHash: writeResult.persistedHash,
-        fsModule: fs,
-        assertCurrent: params.assertPostCommitCurrent,
-      });
+      const rollback = writeResult[configWritePostCommitRollback];
+      const rolledBackConfig = await rollback?.restoreFile(() =>
+        params.assertPostCommitCurrent?.(),
+      );
       rollbackStatus = rolledBackConfig ? "restored" : "not-restored";
       if (rolledBackConfig) {
         params.assertPostCommitCurrent?.();
@@ -705,7 +700,7 @@ async function finalizeCommittedConfigWrite(params: {
           before: envBeforeCanonicalRead,
           after: envAfterCanonicalRead,
         });
-        params.rollbackWriteEffects?.();
+        rollback?.restoreEffects(() => params.assertPostCommitCurrent?.());
       }
     } catch (rollbackError) {
       throw new ConfigWritePostCommitError({

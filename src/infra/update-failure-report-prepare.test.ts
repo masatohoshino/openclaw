@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { preparePublicUpdateFailureIdentifiers } from "./update-failure-public-identifiers.js";
 import { prepareUpdateFailureReport } from "./update-failure-report-prepare.js";
+
+// Prepare the real catalog/worker prerequisites before individual test deadlines.
+await preparePublicUpdateFailureIdentifiers();
 
 const context = { env: {}, stateDir: "/report-test-state" };
 
@@ -14,6 +18,45 @@ function prepareDiagnosticReport(reason: string) {
 }
 
 describe("update report diagnostic command boundary", () => {
+  it("includes every named lint finding using the existing public diagnostic redaction", async () => {
+    const findings = Array.from({ length: 40 }, (_, index) => ({
+      checkId: "core/doctor/security",
+      severity: index === 0 ? "error" : "warning",
+      message: "EACCES: permission denied",
+      requirement: `private-customer-requirement-${index}`,
+    }));
+    const report = await prepareUpdateFailureReport(
+      {
+        attemptId: "complete-lint-inventory",
+        result: {
+          status: "error",
+          mode: "npm",
+          reason: "doctor-failed",
+          durationMs: 1,
+          steps: [
+            {
+              name: "post-plugin-doctor-lint",
+              command: "doctor --lint --json",
+              cwd: "/candidate",
+              durationMs: 1,
+              exitCode: 1,
+              doctorLintFindings: findings,
+            },
+          ],
+        },
+      },
+      context,
+    );
+    expect(
+      report.body.match(/Doctor lint (?:error|warning) \[core\/doctor\/security\]/gu),
+    ).toHaveLength(40);
+    expect(report.body).toContain("EACCES");
+    expect(report.body).toContain("Permission denied");
+    expect(report.body).not.toContain("private-customer-requirement");
+    expect(report.body).toContain("- Failed phase: post-plugin-doctor-lint\n");
+    expect(report.title).toMatch(/^Update failure: post-plugin-doctor-lint \(/u);
+  });
+
   it.each([
     { source: "stderr", diagnostic: true },
     { source: "stderr", diagnostic: false },
@@ -84,8 +127,9 @@ describe("update report diagnostic command boundary", () => {
         context,
       );
       expect(report.body).toContain(
-        `- Failed phase [redacted-command]: exit 1${diagnostic ? " (EACCES; Permission denied)" : ""}\n`,
+        `- Failed phase package-install: exit 1${diagnostic ? " (EACCES; Permission denied)" : ""}\n`,
       );
+      expect(report.title).toMatch(/^Update failure: package-install \(/u);
       for (const privateText of [
         "private-package",
         "private-host.example",
@@ -200,12 +244,13 @@ describe("update report diagnostic command boundary", () => {
   });
 
   it.each(
-    (["check", "code", "pluginId", "affectedKey"] as const).flatMap((field) =>
+    (["check", "code", "pluginId", "affectedKey", "errorName"] as const).flatMap((field) =>
       [
         "private-host.example",
         "private-host.example:8123",
         "10.20.30.40",
         "mcp.servers.private-host.example",
+        "PrivateTenantError",
       ].map((host) => ({
         field,
         host,
@@ -226,7 +271,13 @@ describe("update report diagnostic command boundary", () => {
               cwd: "",
               durationMs: 0,
               exitCode: 1,
-              failureFacts: [{ check: "readyz", code: "readyz-unhealthy", [field]: host }],
+              failureFacts: [
+                {
+                  check: "readyz",
+                  code: field === "errorName" ? "private-code" : "readyz-unhealthy",
+                  [field]: host,
+                },
+              ],
             },
           ],
         },
@@ -318,6 +369,56 @@ describe("update report diagnostic command boundary", () => {
     expect(report.body).toContain("After version: 2026.9.3");
     expect(report.body).toContain("Recovery outcome: not verified (runtime-verification-failed)");
     expect(report.body.toLowerCase()).not.toContain("rollback");
+  });
+
+  it.each([
+    { healthy: true, code: undefined, expected: "verified serving 2026.9.5" },
+    { healthy: false, code: "stopped-free", expected: "not serving (stopped-free)" },
+    {
+      healthy: false,
+      code: "private-probe-identifier",
+      expected: "recovery probe failed (gateway-probe-failed)",
+    },
+  ])("reports observed recovery without inventing an outcome ($healthy, $code)", async (entry) => {
+    const report = await prepareUpdateFailureReport(
+      {
+        attemptId: "observed-recovery",
+        recordedRun: {
+          runId: "observed-recovery",
+          steps: [],
+          verification: {
+            runningVersion: "2026.9.4",
+            versionMatch: true,
+            readyz: true,
+            settled: true,
+          },
+        },
+        result: {
+          mode: "npm",
+          status: "error",
+          reason: "post-update-plugins",
+          after: { version: "2026.9.5" },
+          recovery: entry.healthy
+            ? { serviceRestartSafe: true, service: "healthy", version: "2026.9.5" }
+            : { serviceRestartSafe: false, reason: "runtime-verification-failed" },
+          steps: [
+            {
+              name: "gateway recovery verification",
+              command: "gateway verification",
+              cwd: "/fixture",
+              durationMs: 0,
+              exitCode: entry.healthy ? 0 : 1,
+              ...(entry.code ? { failureFacts: [{ check: "settled", code: entry.code }] } : {}),
+            },
+          ],
+          durationMs: 0,
+        },
+      },
+      context,
+    );
+    expect(report.body).toContain(`Recovery outcome: ${entry.expected}`);
+    expect(report.body).not.toContain("not verified");
+    expect(report.body).not.toContain("private-probe-identifier");
   });
 
   it("records the running Node version in the reviewed report", async () => {
@@ -494,7 +595,17 @@ describe("update report diagnostic command boundary", () => {
     expect(report.body).toContain("- Update target: [redacted-command]\n");
   });
 
-  it("uses the failure code when a phase label is executable text", async () => {
+  it.each([
+    ["openclaw doctor", "package-doctor"],
+    ["candidate doctor lint", "candidate-doctor-lint"],
+    ["Checking update health cleanup", "candidate-doctor-lint-cleanup"],
+    ["candidate snapshot", "candidate-state-snapshot"],
+    ["post-install verification", "post-install-verify"],
+    ["gateway recovery verification", "gateway-recovery-verification"],
+    ["finalize:targetConfigConvergence", "finalize-target-config-convergence"],
+    ["git checkout refs/private/tenant", "git-checkout"],
+    ["preflight deps install (ignore scripts) (abcdef01)", "preflight-deps-install-ignore-scripts"],
+  ])("projects the step %s without copying its command", async (name, id) => {
     const report = await prepareUpdateFailureReport(
       {
         attemptId: "structured-phase",
@@ -504,11 +615,14 @@ describe("update report diagnostic command boundary", () => {
           reason: "doctor-failed",
           steps: [
             {
-              name: "openclaw doctor",
+              name,
               command: "not copied",
               cwd: "/private",
               durationMs: 1,
               exitCode: 1,
+              ...(name.startsWith("git checkout ")
+                ? { failureFacts: [{ check: name, code: "command-failed" }] }
+                : {}),
             },
           ],
           durationMs: 1,
@@ -516,8 +630,11 @@ describe("update report diagnostic command boundary", () => {
       },
       context,
     );
-    expect(report.body).toContain("- Failed phase: doctor-failed\n");
-    expect(report.body).not.toContain("openclaw doctor");
+    expect(report.body).toContain(`- Failed phase: ${id}\n`);
+    expect(report.title).toContain(`Update failure: ${id} (`);
+    expect(report.body).toContain("- Reason code: doctor-failed\n");
+    expect(report.body).not.toContain(name);
+    expect(report.body).not.toContain("refs/private/tenant");
   });
 
   it("retains failed phases from the durable run when the handoff result is compact", async () => {
@@ -555,9 +672,13 @@ describe("update report diagnostic command boundary", () => {
     expect(report.body).not.toContain("Gateway service ownership");
   });
 
-  it.each([{ earlierFailures: [] }, { earlierFailures: ["activating"] }])(
-    "preserves ledger order and measured exits after $earlierFailures",
-    async ({ earlierFailures }) => {
+  it.each([
+    { earlierFailures: [], name: "verifying", recordedName: "verifying" },
+    { earlierFailures: ["activating"], name: "verifying", recordedName: "verifying" },
+    { earlierFailures: ["activating"], name: "git-fetch", recordedName: "git fetch" },
+  ])(
+    "preserves ledger order and measured exits for $name after $earlierFailures",
+    async ({ earlierFailures, name, recordedName }) => {
       const report = await prepareUpdateFailureReport(
         {
           attemptId: "measured-failure-history",
@@ -567,7 +688,7 @@ describe("update report diagnostic command boundary", () => {
             reason: "verification-failed",
             steps: [
               {
-                name: "verifying",
+                name,
                 command: "not copied",
                 cwd: "/private",
                 durationMs: 1,
@@ -578,19 +699,19 @@ describe("update report diagnostic command boundary", () => {
           },
           recordedRun: {
             runId: "measured-failure-history",
-            steps: [...earlierFailures, "verifying"].map((step) => ({ step, status: "failed" })),
+            steps: [...earlierFailures, recordedName].map((step) => ({ step, status: "failed" })),
           },
         },
         context,
       );
 
-      expect(report.body).toContain("- Failed phase: verifying\n");
-      expect(report.body).toContain("Failed phase verifying: exit 7");
-      expect(report.body.match(/Failed phase verifying:/gu)).toHaveLength(1);
+      expect(report.body).toContain(`- Failed phase: ${name}\n`);
+      expect(report.body).toContain(`Failed phase ${name}: exit 7`);
+      expect(report.body.split(`Failed phase ${name}:`)).toHaveLength(2);
       for (const earlier of earlierFailures) {
         expect(report.body.indexOf(`Failed phase ${earlier}: exit unknown`)).toBeGreaterThan(-1);
         expect(report.body.indexOf(`Failed phase ${earlier}: exit unknown`)).toBeLessThan(
-          report.body.indexOf("Failed phase verifying: exit 7"),
+          report.body.indexOf(`Failed phase ${name}: exit 7`),
         );
       }
     },

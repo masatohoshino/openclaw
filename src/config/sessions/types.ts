@@ -45,6 +45,7 @@ import type { AgentPatchedSessionModelFallback } from "./session-model-fallback.
 import type { SessionSkillSnapshot } from "./session-prompt-types.js";
 import type { SessionSystemPromptReport } from "./session-system-prompt-report.js";
 import type { SessionToolOverrides } from "./session-tool-overrides.js";
+import type { PendingSessionWorktree } from "./session-worktree-intent.js";
 
 export type { SessionToolOverrides } from "./session-tool-overrides.js";
 export type { SessionSystemPromptReport } from "./session-system-prompt-report.js";
@@ -153,34 +154,6 @@ type AcpSessionBinding = {
   acpBackendId: string;
   acpAgentId: string;
   agentSessionId: string;
-};
-
-export type SessionCompactionCheckpointReason =
-  | "manual"
-  | "auto-threshold"
-  | "overflow-retry"
-  | "timeout-retry";
-
-type SessionCompactionTranscriptReference = {
-  sessionId: string;
-  sessionFile?: string;
-  leafId?: string;
-  entryId?: string;
-};
-
-export type SessionCompactionCheckpoint = {
-  checkpointId: string;
-  sessionKey: string;
-  sessionId: string;
-  createdAt: number;
-  reason: SessionCompactionCheckpointReason;
-  tokensBefore?: number;
-  tokensAfter?: number;
-  tokensVersion?: typeof SESSION_TOTAL_TOKENS_VERSION;
-  summary?: string;
-  firstKeptEntryId?: string;
-  preCompaction: SessionCompactionTranscriptReference;
-  postCompaction: SessionCompactionTranscriptReference;
 };
 
 type SessionContextBudgetStatusRoute =
@@ -296,7 +269,7 @@ export type RestartRecoveryRun = {
 
 type SessionEntryCore = SessionRestartRecoveryState &
   SessionEntryProvenance &
-  Pick<SessionRow, "permissionMode" | "sessionRoot"> & {
+  Pick<SessionRow, "permissionMode" | "sandboxMode" | "nativeRuntimeConsent" | "sessionRoot"> & {
     /** Collaboration mode. Missing legacy values are equivalent to "shared". */
     visibility?: SessionVisibility;
     /**
@@ -584,7 +557,6 @@ type SessionEntryCore = SessionRestartRecoveryState &
     contextTokensSource?: "runtime" | "runtime-configured" | "resolved" | "resolved-v1";
     contextBudgetStatus?: SessionContextBudgetStatus;
     compactionCount?: number;
-    compactionCheckpoints?: SessionCompactionCheckpoint[];
     memoryFlush?: MemoryFlushState;
     cliSessionIds?: Record<string, string>;
     cliSessionBindings?: Record<string, CliSessionBinding>;
@@ -653,14 +625,7 @@ export type InternalSessionEntryCore = SessionEntryCore & {
   /** Canonical remote repository awaiting preparation by this exact session generation. */
   pendingProjectGitUrl?: string;
   /** Authorized worktree intent awaiting preparation by an admitted turn. */
-  pendingWorktree?: {
-    workspace?: string;
-    name?: string;
-    baseRef?: string;
-    /** Verified commit used for checkout while baseRef remains user-facing metadata. */
-    baseCommit?: string;
-    titleSource: string;
-  };
+  pendingWorktree?: PendingSessionWorktree;
   /** Suppresses repeated byte-triggered compaction after an oversized successor was observed. */
   transcriptByteCompactionLatch?: {
     activeBytes: number;

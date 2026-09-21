@@ -1,5 +1,6 @@
 import type { GatewayEventFrame } from "../../api/gateway.ts";
 import { t } from "../../i18n/index.ts";
+import { registerChatGoalsEnglish } from "../../i18n/locales/en-chat-goals.ts";
 import {
   chatQueueMovableSegments,
   isMovableChatQueueItem,
@@ -38,6 +39,8 @@ import {
   QUEUED_MESSAGE_REORDER_CONFLICT_ERROR,
   QUEUED_MESSAGE_STEER_CONFLICT_ERROR,
 } from "./queued-message-edit.ts";
+
+registerChatGoalsEnglish();
 
 const resetRetryState = (
   entry: ChatQueueItem,
@@ -158,8 +161,12 @@ export function moveQueuedChatMessage(
   return "moved";
 }
 
-export async function retryQueuedChatMessage(host: ChatHost, id: string) {
-  if (isInitialChatHistoryUnavailable(host)) {
+export async function retryQueuedChatMessage(
+  host: ChatHost,
+  id: string,
+  canDispatch?: () => boolean,
+) {
+  if (isInitialChatHistoryUnavailable(host) || (canDispatch && !canDispatch())) {
     return;
   }
   const item = host.chatQueue.find((entry) => entry.id === id);
@@ -206,6 +213,7 @@ export async function retryQueuedChatMessage(host: ChatHost, id: string) {
         await deliverChatQueueItem(host, retry, {
           routingSessionKey: retry.sessionKey ?? host.sessionKey,
           storageMode: "memory",
+          canDispatch,
         });
         return;
       }
@@ -235,6 +243,7 @@ export async function retryQueuedChatMessage(host: ChatHost, id: string) {
     explicitAdmission
       ? {
           routingSessionKey: host.sessionKey,
+          canDispatch,
           ...(retriesFailedDelivery ? { allowActiveRunSend: true } : {}),
         }
       : undefined,

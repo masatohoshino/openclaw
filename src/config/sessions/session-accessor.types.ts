@@ -1,3 +1,4 @@
+import type { AssistantMessage } from "../../llm/types.js";
 import type {
   InternalSessionTranscriptUpdate,
   SessionTranscriptUpdate,
@@ -15,7 +16,7 @@ import type {
 } from "./session-transcript-turn-lifecycle.types.js";
 import type { ResolvedSessionMaintenanceConfig } from "./store-maintenance.js";
 import type { TranscriptEntryAnchor } from "./transcript-entry-anchor.js";
-import type { InternalSessionEntry as SessionEntry, SessionCompactionCheckpoint } from "./types.js";
+import type { InternalSessionEntry as SessionEntry } from "./types.js";
 
 /**
  * Session access API for callers that need entries or transcripts without
@@ -344,6 +345,7 @@ export type LatestTranscriptAssistantText = {
   id?: string;
   text: string;
   timestamp?: number;
+  openclawDelivery?: AssistantMessage["openclawDelivery"];
 };
 
 export type SessionTranscriptWriteLockAccessorContext = {
@@ -697,20 +699,6 @@ export type ForkSessionEntryFromParentTargetParams = {
   skipPatch?: (entry: SessionEntry) => Partial<SessionEntry> | null;
   storePath: string;
 };
-
-/** Result of applying a checkpoint branch or restore mutation to session storage. */
-export type SessionCompactionCheckpointMutationResult =
-  | {
-      status: "created";
-      key: string;
-      checkpoint: SessionCompactionCheckpoint;
-      entry: SessionEntry;
-    }
-  | { status: "missing-session" }
-  | { status: "missing-checkpoint" }
-  | { status: "missing-boundary" }
-  | { status: "model-selection-locked" }
-  | { status: "failed" };
 
 export type SessionMessageCutMutationResult =
   | {

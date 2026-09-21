@@ -8,6 +8,7 @@ import type { MentionsCapability } from "../app/mentions.ts";
 import { isMobileNavLayout } from "../app/mobile-nav-layout.ts";
 import type { UpdateProgress } from "../app/update-confirmation.ts";
 import { t } from "../i18n/index.ts";
+import { registerSidebarAttentionEnglish } from "../i18n/locales/en-sidebar-attention.ts";
 import { shouldHandleNavigationClick } from "../lib/navigation-click.ts";
 import "../styles/sidebar-issues.css";
 import { renderHubTabs } from "./hub-tabs.ts";
@@ -27,7 +28,11 @@ import {
   renderSidebarUpdateSurface,
 } from "./sidebar-issue-item.ts";
 import { ISSUE_TABS, issueTabLabel, type IssueTab } from "./sidebar-issues-tabs.ts";
+import { renderSidebarOutboxItem } from "./sidebar-outbox-item.ts";
 import "./menu-surface.ts";
+
+registerSidebarAttentionEnglish();
+
 // Keep request orchestration behind the same lazy boundary as its Inbox UI;
 // ApplicationContext retains the activated controller across presenters.
 export { ScopeUpgradeController } from "../app/device-scope-upgrade-controller.runtime.ts";
@@ -78,6 +83,7 @@ export function renderSidebarAttentionPanel(params: SidebarAttentionPanelParams)
   const canDismissShown = visibleDismissals.length > 0 || mentionDismissals.length > 0;
   const mentionsTab = params.selectedTab === "mentions";
   const showMentionStatus =
+    params.context.gateway.snapshot.phase === "connected" &&
     (mentionsTab || params.selectedTab === "all") &&
     (mentions.error !== null ||
       mentions.phase === "loading" ||
@@ -87,6 +93,12 @@ export function renderSidebarAttentionPanel(params: SidebarAttentionPanelParams)
     const dismissal = entry.dismissal;
     const onDismiss = dismissal ? () => params.onDismiss(dismissal) : undefined;
     switch (entry.type) {
+      case "outbox":
+        return renderSidebarOutboxItem({
+          entry,
+          context: params.context,
+          onClosePanel: () => params.onClose(false),
+        });
       case "approval":
         return renderSidebarApprovalItem({
           approval: entry.approval,

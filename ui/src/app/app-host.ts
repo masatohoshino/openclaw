@@ -1,16 +1,16 @@
 import type { PropertyValues } from "lit";
 import { property, query, state } from "lit/decorators.js";
 import type { GatewayBrowserClient, GatewayEventFrame } from "../api/gateway.ts";
-import "../components/app-topbar.ts";
-import "../components/assistant-panel.ts";
-import "../components/modal-dialog.ts";
 import {
   formatDocumentTitle,
   isSettingsNavigationRoute,
   titleForRoute,
 } from "../app-navigation.ts";
-import "../components/resizable-divider.ts";
+import "../components/app-topbar.ts";
+import "../components/assistant-panel.ts";
+import "../components/modal-dialog.ts";
 import { isSessionRouteId } from "../app-route-paths.ts";
+import "../components/resizable-divider.ts";
 import { APP_ROUTE_IDS, type RouteId } from "../app-routes.ts";
 import type {
   CommandPaletteElement,
@@ -59,35 +59,27 @@ import type { ApplicationContext, ApplicationNavigationOptions } from "./context
 import { syncControlUiSystemChrome } from "./control-ui-presentation.ts";
 import { createGatewayControlUiReloadOptions } from "./gateway-control-ui-reload.ts";
 import {
+  APP_SIDEBAR_ELEMENT,
   BROWSER_PANEL_ELEMENT,
   COMMAND_PALETTE_ELEMENT,
   DESKTOP_PANEL_ELEMENT,
   EXEC_APPROVAL_ELEMENT,
   LazyCustomElementRequestController,
+  LINK_READER_PANEL_ELEMENT,
   type OptionalCustomElement,
   TERMINAL_PANEL_ELEMENT,
 } from "./lazy-custom-element.ts";
 import { postNativeNavState, type NativeNavState } from "./native-nav-state.ts";
 import { readNativeHistoryState, type NativeHistoryState } from "./native-web-chrome.ts";
 import { resolveOnboardingMode } from "./onboarding-mode.ts";
-import {
-  changedServerUiPrefs,
-  isApplyingServerUiPrefs,
-  pushServerUiPrefs,
-} from "./server-prefs.ts";
+import { changedServerUiPrefs } from "./server-prefs-intent.ts";
+import { isApplyingServerUiPrefs, pushServerUiPrefs } from "./server-prefs.ts";
 import { setSettingsChangeListener } from "./settings.ts";
 import {
   isStaleChunkImportError,
   retryStaleChunkReloadWhenReachable,
   scheduleStaleChunkReload,
 } from "./stale-chunk-reload.ts";
-
-const APP_SIDEBAR_TAG = "openclaw-app-sidebar";
-const APP_SIDEBAR_ELEMENT = {
-  tagName: APP_SIDEBAR_TAG,
-  label: APP_SIDEBAR_TAG,
-  loadModule: () => import("../components/app-sidebar.ts"),
-} satisfies OptionalCustomElement;
 
 i18n.setLocaleLoadRecovery({
   isUnrecoverableError: isStaleChunkImportError,
@@ -115,6 +107,7 @@ class OpenClawShell
   readonly commandPaletteElement = COMMAND_PALETTE_ELEMENT;
   readonly terminalPanelElement = TERMINAL_PANEL_ELEMENT;
   readonly browserPanelElement = BROWSER_PANEL_ELEMENT;
+  readonly linkReaderPanelElement = LINK_READER_PANEL_ELEMENT;
   readonly desktopPanelElement = DESKTOP_PANEL_ELEMENT;
   readonly execApprovalElement = EXEC_APPROVAL_ELEMENT;
   readonly onboardingMemoryImportElement = {
@@ -139,7 +132,7 @@ class OpenClawShell
   // Desktop and modal navigation are two slots for the same live sidebar.
   // Moving its element preserves session controllers and the resident pet
   // instead of resetting their lifecycle at every responsive breakpoint.
-  readonly navigationSidebar = document.createElement(APP_SIDEBAR_TAG);
+  readonly navigationSidebar = document.createElement(APP_SIDEBAR_ELEMENT.tagName);
   // Where "Back to app" / Escape leaves the settings takeover; falls back to
   // chat (the app default route) when settings was the entry point.
   lastWorkspaceLocation: ShellNavigationHost["lastWorkspaceLocation"] = null;
@@ -233,7 +226,7 @@ class OpenClawShell
   private readonly shellChrome = new ShellChromeOwner(this);
   private readonly shellGateway = new ShellGatewayOwner(this);
 
-  get context(): ApplicationContext<RouteId> | undefined {
+  get context(): ApplicationContext | undefined {
     return this.runtime?.context;
   }
 
@@ -248,7 +241,7 @@ class OpenClawShell
     return routeId !== undefined && !isSettingsNavigationRoute(routeId) && !this.onboardingMode;
   }
 
-  storedOutboxScopeHost(context: ApplicationContext<RouteId>): StoredOutboxScopeHost {
+  storedOutboxScopeHost(context: ApplicationContext): StoredOutboxScopeHost {
     const gatewaySnapshot = context.gateway.snapshot;
     return {
       settings: { gatewayUrl: context.gateway.connection.gatewayUrl },
@@ -259,7 +252,7 @@ class OpenClawShell
   }
 
   private chatTitleContext(
-    context: ApplicationContext<RouteId>,
+    context: ApplicationContext,
     outboxScopeHost: StoredOutboxScopeHost,
   ): string {
     const sessionKey = this.activeSessionKey;
@@ -351,7 +344,10 @@ class OpenClawShell
       .watch(
         () => this.context?.gateway,
         (gateway, notify) => gateway.subscribe(notify),
-        (gateway) => this.shellGateway.synchronizeGateway(gateway.snapshot),
+        (gateway) => {
+          this.shellChrome.synchronizeCommandPaletteScope();
+          this.shellGateway.synchronizeGateway(gateway.snapshot);
+        },
       )
       .effect(
         () => this.context?.gateway,
@@ -623,6 +619,10 @@ class OpenClawShell
   }
   readonly togglePendingDebugOverlayMode = () => this.shellChrome.togglePendingDebugOverlayMode();
   readonly openPalette = this.shellChrome.openPalette;
+  readonly closePendingPalette = this.shellChrome.closePendingPalette;
+  get commandPaletteLoading() {
+    return this.shellChrome.commandPaletteLoading;
+  }
   readonly refreshControlUi = (): Promise<boolean> => {
     const context = this.context;
     if (!context) {
@@ -660,9 +660,6 @@ class OpenClawShell
       context: primaryContext,
       attentionCount: context.overlays.snapshot.approvalQueue.length,
       gatewayDisconnected,
-      ...(gatewayDisconnected && {
-        queuedCount: this.outboxStoreRuntime?.summarizeStoredChatOutboxes(outboxScopeHost).total,
-      }),
     });
     const environment = context.config?.current.environment;
     if (environment) {

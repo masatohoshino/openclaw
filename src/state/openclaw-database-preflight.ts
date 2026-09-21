@@ -19,10 +19,7 @@ import {
 import { readSqliteWriterAppVersion as readWriterAppVersion } from "../infra/sqlite-schema-header.js";
 import { prepareSqliteReadOnlyLocation } from "../infra/sqlite-snapshot-source.js";
 import { readSqliteUserVersion } from "../infra/sqlite-user-version.js";
-import {
-  hasStateDatabaseSourceExclusion,
-  prepareStateDatabaseCanonicalMutation,
-} from "../infra/state-database-coordinator.js";
+import { hasStateDatabaseSourceExclusion } from "../infra/state-database-coordinator.js";
 import {
   discoverAgentDatabaseMigrationTargets,
   type PreparedAgentDatabaseMigrationDiscovery,
@@ -35,8 +32,8 @@ import {
 } from "./agent-database-admission.js";
 import { getAgentDatabaseStartupAdmission } from "./agent-database-startup.js";
 import { OPENCLAW_AGENT_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
-import { readAgentDatabasePreflightTargets } from "./openclaw-agent-db-registry-listing.js";
 import { isPersistentOpenClawAgentDatabasePath } from "./openclaw-agent-db-registry.js";
+import { readAgentDatabasePreflightTargets } from "./openclaw-agent-db-registry.read.js";
 import type { AgentSchemaInspection } from "./openclaw-agent-schema-inspection.js";
 import {
   preflightAgentDatabasesBounded,
@@ -52,6 +49,7 @@ import type {
   OpenClawDatabaseSchemaPreflight,
   OpenClawStateSchemaPreflightResult,
 } from "./openclaw-database-preflight.types.js";
+import { requestOpenClawAgentDatabaseQuickCheck } from "./openclaw-database-verify.js";
 import type { OpenClawSchemaVersions } from "./openclaw-schema-versions.js";
 import {
   OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
@@ -135,7 +133,9 @@ export async function assertOpenClawDatabasesReady(
   for (const refusal of schemas.agentRefusals ?? []) {
     if (
       !options.config ||
-      (refusal.code === "agent-database-ownership-mismatch" &&
+      ((refusal.code === "agent-database-ownership-mismatch" ||
+        (options.operation === "gateway-startup" &&
+          refusal.code !== "agent-database-inspection-pending")) &&
         !canIsolateAgentDatabase(options.config, refusal.agentId))
     ) {
       throw new AgentDatabaseAdmissionError(refusal);
@@ -593,13 +593,12 @@ export async function preflightOpenClawDatabaseSchemas(options: {
           inspectOwnership,
           verifyCurrentSchemaShape: options.verifyCurrentSchemaShape,
           requireStartupMigrationReadiness: options.requireStartupMigrationReadiness,
+          startupIntegrityStateDir: options.requireStartupMigrationReadiness
+            ? resolveStateDir(options.env)
+            : undefined,
         };
         // Unprepared agents use the slot's reader, including header-only Doctor checks.
-        if (
-          !schemaInspection &&
-          !hasStateDatabaseSourceExclusion(realAgentPath) &&
-          !prepareStateDatabaseCanonicalMutation(realAgentPath)
-        ) {
+        if (!schemaInspection && !hasStateDatabaseSourceExclusion(realAgentPath)) {
           schemaInspection = await inspectSchema(schemaInput, options.signal);
         }
         if (!schemaInspection) {
@@ -665,6 +664,12 @@ export async function preflightOpenClawDatabaseSchemas(options: {
             ...(writerAppVersion ? { writerAppVersion } : {}),
           });
         }
+        if (schemaInspection.integrityGateOutcome === "cached") {
+          requestOpenClawAgentDatabaseQuickCheck({
+            path: agentPath,
+            env: options.env ?? process.env,
+          });
+        }
         recordPreparedSchemaHeader?.(agentVersion);
       } catch (error) {
         if (options.signal?.aborted) {
@@ -682,7 +687,27 @@ export async function preflightOpenClawDatabaseSchemas(options: {
           reason: formatErrorMessage(error),
         });
       } finally {
-        await agentSnapshot?.cleanupAsync();
+        if (agentSnapshot) {
+          let failure: { error: unknown } | undefined;
+          try {
+            if (!(await agentSnapshot.cleanupAsync())) {
+              failure = {
+                error: new Error(
+                  `SQLite read-only worker snapshot cleanup failed: ${agentSnapshot.location}`,
+                ),
+              };
+            }
+          } catch (error) {
+            failure = { error };
+          }
+          if (failure && !startup?.recordInspectionFailure(row, inspection, failure.error)) {
+            inspection.indeterminate.push({
+              kind: "agent",
+              path: agentPath,
+              reason: formatErrorMessage(failure.error),
+            });
+          }
+        }
       }
     },
     result,

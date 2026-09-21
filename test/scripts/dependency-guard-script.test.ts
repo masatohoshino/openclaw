@@ -143,6 +143,7 @@ describe("dependency guard script", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.statuses.map((call) => call.body?.state)).toEqual(["failure", "success"]);
     expect(result.stdout).toContain("informational");
+    expect(result.stdout).toContain("- `pnpm-workspace.yaml`\n");
   });
 
   it("does not transfer command approval to a duplicate PR with the same head", () => {
@@ -208,7 +209,7 @@ describe("dependency guard script", () => {
       "GET /repos/openclaw/openclaw/collaborators/maintainer/permission": { role_name: role },
       [`GET ${issuePath}/comments`]: [approvalNotice, comment],
     });
-    expect(result.status, result.stderr).toBe(allowed ? 0 : 1);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.statuses.map((call) => call.body?.state)).toEqual([
       "failure",
       allowed ? "success" : "failure",
@@ -225,7 +226,7 @@ describe("dependency guard script", () => {
         responses: [[approvalNotice, approval], [approvalNotice, approval], [approvalNotice]],
       },
     });
-    expect(result.status).toBe(1);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.statuses.at(-1)?.body?.state).toBe("failure");
     expect(result.stdout).toContain("Maintainer dependency review required");
   });
@@ -236,7 +237,7 @@ describe("dependency guard script", () => {
         { filename: "archived.patch", previous_filename: "patches/package.patch" },
       ],
     });
-    expect(result.status).toBe(1);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.statuses.at(-1)?.body?.state).toBe("failure");
     expect(result.stdout).toContain("patches/package.patch");
   });
@@ -260,10 +261,10 @@ describe("dependency guard script", () => {
         { change_type: "removed", name: "example", manifest: "extensions/old/package.json" },
       ],
     });
-    expect(result.status).toBe(1);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.statuses.at(-1)?.body?.state).toBe("failure");
     expect(result.stdout).toContain(
-      "`extensions/old/package.json` moved to `extensions/new/package.json`",
+      "- `extensions/old/package.json`\n- `extensions/new/package.json`\n",
     );
   });
 
@@ -281,7 +282,7 @@ describe("dependency guard script", () => {
     expect(detection.output).toBe("autoscrub=false\n");
     expect(detection.calls.some((call) => call.path === "/graphql")).toBe(false);
     const enforcement = runDependencyGuard(routes);
-    expect(enforcement.status).toBe(1);
+    expect(enforcement.status, enforcement.stderr).toBe(0);
     expect(enforcement.statuses.at(-1)?.body?.state).toBe("failure");
   });
 
@@ -301,42 +302,72 @@ describe("dependency guard script", () => {
     expect(result.statuses.at(-1)?.body?.state).toBe("success");
   });
 
-  it.each([false, true])("preserves autoscrub with late command approval=%s", (lateApproval) => {
-    const result = runDependencyGuard(
-      {
-        [`GET ${pullPath}/files`]: [{ filename: "pnpm-lock.yaml" }],
-        [`GET ${issuePath}/comments`]: {
-          responses: [
-            [approvalNotice],
-            [approvalNotice],
-            lateApproval ? [approvalNotice, approval] : [approvalNotice],
-          ],
+  it.each([
+    { lateApproval: false, writeError: false, headChanged: false },
+    { lateApproval: true, writeError: false, headChanged: false },
+    { lateApproval: false, writeError: true, headChanged: false },
+    { lateApproval: false, writeError: false, headChanged: true },
+  ])(
+    "preserves autoscrub with late approval=$lateApproval, write error=$writeError, head changed=$headChanged",
+    ({ lateApproval, writeError, headChanged }) => {
+      const result = runDependencyGuard(
+        {
+          [`GET ${pullPath}`]: {
+            responses: [
+              pullRequest,
+              pullRequest,
+              headChanged
+                ? { ...pullRequest, head: { ...pullRequest.head, sha: staleSha } }
+                : pullRequest,
+            ],
+          },
+          [`GET ${pullPath}/files`]: [{ filename: "pnpm-lock.yaml" }],
+          [`GET ${issuePath}/comments`]: {
+            responses: [
+              [approvalNotice],
+              [approvalNotice],
+              lateApproval ? [approvalNotice, approval] : [approvalNotice],
+            ],
+          },
+          [`GET /repos/openclaw/openclaw/dependency-graph/compare/${staleSha}...${headSha}`]: [],
+          "GET /repos/openclaw/openclaw/contents/pnpm-lock.yaml": {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from("base lockfile").toString("base64"),
+          },
+          "POST /graphql": writeError
+            ? { httpError: 403 }
+            : { data: { createCommitOnBranch: { commit: { oid: staleSha } } } },
         },
-        [`GET /repos/openclaw/openclaw/dependency-graph/compare/${staleSha}...${headSha}`]: [],
-        "GET /repos/openclaw/openclaw/contents/pnpm-lock.yaml": {
-          type: "file",
-          encoding: "base64",
-          content: Buffer.from("base lockfile").toString("base64"),
-        },
-        "POST /graphql": { data: { createCommitOnBranch: { commit: { oid: staleSha } } } },
-      },
-      "autoscrub",
-    );
-    expect(result.status, result.stderr).toBe(0);
-    const writes = result.calls.filter((call) => call.path === "/graphql");
-    expect(writes).toHaveLength(lateApproval ? 0 : 1);
-    if (!lateApproval) {
-      expect(writes[0]?.body?.variables?.input).toMatchObject({
-        expectedHeadOid: headSha,
-        fileChanges: {
-          additions: [
-            { path: "pnpm-lock.yaml", contents: Buffer.from("base lockfile").toString("base64") },
-          ],
-        },
-      });
-    }
-    expect(result.statuses.map((call) => call.body?.state)).toEqual(["failure"]);
-  });
+        "autoscrub",
+      );
+      expect(result.status, result.stderr).toBe(writeError ? 1 : 0);
+      if (writeError) {
+        expect(result.stderr).toContain("Fixture API failure");
+        expect(result.stdout).toContain(
+          "Auto-scrub was attempted, but GitHub rejected the cleanup commit",
+        );
+      }
+      const writes = result.calls.filter((call) => call.path === "/graphql");
+      expect(writes).toHaveLength(lateApproval || headChanged ? 0 : 1);
+      if (headChanged) {
+        expect(result.stdout).toContain("Superseded");
+        expect(result.calls.some((call) => call.body?.body)).toBe(false);
+        expect(result.stderr).not.toContain("Autoscrub failed");
+      }
+      if (!lateApproval && !headChanged) {
+        expect(writes[0]?.body?.variables?.input).toMatchObject({
+          expectedHeadOid: headSha,
+          fileChanges: {
+            additions: [
+              { path: "pnpm-lock.yaml", contents: Buffer.from("base lockfile").toString("base64") },
+            ],
+          },
+        });
+      }
+      expect(result.statuses.map((call) => call.body?.state)).toEqual(["failure"]);
+    },
+  );
 
   it.each(["detect", "autoscrub", "enforce"])(
     "does not approve or autoscrub a grandfathered lockfile PR in %s mode",
@@ -503,17 +534,14 @@ describe("dependency guard script", () => {
 
     expect(body).toContain("<!-- openclaw:dependency-graph-guard -->");
     expect(body).toContain("Maintainer dependency review required");
-    expect(body).toContain("`pnpm-lock.yaml` changed.");
-    expect(body).toContain("`tools/nested/pnpm-lock.yaml` changed.");
-    expect(body).toContain("`package.json` changed `dependencies`.");
+    expect(body).toContain("- `pnpm-lock.yaml`\n");
+    expect(body).toContain("- `tools/nested/pnpm-lock.yaml`\n");
+    expect(body).toContain("- `package.json`\n");
     expect(body).toContain(
       "git checkout 'origin/main' -- 'pnpm-lock.yaml' 'tools/nested/pnpm-lock.yaml'",
     );
     expect(body).toContain("```text\n/allow-dependencies-change\n```");
-    expect(body).toContain("Post the comment after this guard notice identifies the current head");
-    expect(body).toContain("A normal GitHub Approve review does not satisfy this check");
-    expect(body).toContain("SecOps approval is not required");
-    expect(body).toContain(`Current head SHA: \`${headSha}\``);
+    expect(body).toContain(`Current SHA: \`${headSha}\``);
     expect(body).toContain("A later push requires a fresh approval comment.");
   });
 
@@ -674,7 +702,7 @@ describe("dependency guard script", () => {
       "only push deterministic cleanup commits to PR branches that maintainers can modify",
     );
     expect(unsafeBody).toContain("changes package manifest dependency graph fields");
-    expect(unsafeBody).toContain("`package.json` changed `dependencies`");
+    expect(unsafeBody).toContain("- `package.json`\n");
     expect(unsafeBody).toContain("Dependency graph changes require maintainer review");
     expect(mixedBody).toContain("also changes dependency-related files");
     expect(mixedBody).toContain("`patches/example.patch`");
@@ -815,7 +843,7 @@ describe("dependency guard script", () => {
 
     try {
       await expect(githubApi("token").request("/repos/openclaw/openclaw")).rejects.toMatchObject({
-        message: `403 Forbidden: GitHub error response body exceeded ${GITHUB_ERROR_BODY_MAX_BYTES} bytes`,
+        message: `GitHub API GET /repos/openclaw/openclaw failed: 403 Forbidden: GitHub error response body exceeded ${GITHUB_ERROR_BODY_MAX_BYTES} bytes`,
         status: 403,
       });
     } finally {
@@ -823,31 +851,46 @@ describe("dependency guard script", () => {
     }
   });
 
-  it("retries transient GitHub API failures within the request timeout", async () => {
+  it.each([
+    { method: "GET", status: 500 },
+    { method: "HEAD", status: 500 },
+    { method: "GET", status: 503 },
+  ])("recovers from HTTP $status on $method requests", async ({ method, status }) => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response("unicorn", { status: 503, statusText: "Unavailable" }))
-      .mockResolvedValueOnce(Response.json({ ok: true }));
+      .mockResolvedValueOnce(new Response("unicorn", { status, statusText: "Server Error" }))
+      .mockResolvedValueOnce(
+        method === "HEAD" ? new Response(null, { status: 204 }) : Response.json({ ok: true }),
+      );
 
     await expect(
       githubApi("token", { fetchImpl, retryDelaysMs: [0] }).request(
         "/repos/openclaw/openclaw/pulls/1/files",
+        { method },
       ),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual(method === "HEAD" ? null : { ok: true });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it("does not retry non-idempotent GitHub API requests", async () => {
+  it.each([
+    { method: "POST", status: 500 },
+    { method: "PATCH", status: 500 },
+    { method: "DELETE", status: 500 },
+    { method: "POST", status: 503 },
+  ])("does not retry HTTP $status on $method writes", async ({ method, status }) => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(new Response("unicorn", { status: 503, statusText: "Unavailable" }));
+      .mockResolvedValue(new Response("unicorn", { status, statusText: "Server Error" }));
 
     await expect(
       githubApi("token", { fetchImpl, retryDelaysMs: [0] }).request(
         "/repos/openclaw/openclaw/issues/1/comments",
-        { method: "POST", body: "{}" },
+        { method, body: "{}" },
       ),
-    ).rejects.toMatchObject({ status: 503 });
+    ).rejects.toMatchObject({
+      status,
+      message: `GitHub API ${method} /repos/openclaw/openclaw/issues/1/comments failed: ${status} Server Error: unicorn`,
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 

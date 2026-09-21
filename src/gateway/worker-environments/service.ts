@@ -19,6 +19,7 @@ import type { WorkerInferenceStore } from "./inference-store.js";
 import { createWorkerInferenceManager, type WorkerInferenceExecutor } from "./inference.js";
 import type { WorkerLiveEventReceiver } from "./live-events.js";
 import type { WorkerNodeDesktopCarrier } from "./node-desktop-carrier.js";
+import type { WorkerEnvironmentPlacementFacts } from "./placement-read-projection.types.js";
 import type { WorkerSessionPlacementGate } from "./placement-worker-gate.js";
 import type { WorkerNodePortalCarrier } from "./portal-node-carrier.js";
 import type { WorkerProviderPreparedIntent } from "./preparation-identity.js";
@@ -28,6 +29,7 @@ import type {
   WorkerEnvironmentAbandonment,
   WorkerProviderLifecycleInputOptions,
 } from "./provider-lifecycle.types.js";
+import type { WorkerEnvironmentServiceContract } from "./service-contract.js";
 import {
   createWorkerEnvironmentSessionAttachments,
   type WorkerEnvironmentSessionAttachmentOptions,
@@ -42,6 +44,19 @@ import { joinWorkerTunnelStops } from "./tunnel-contract.js";
 import type { WorkerTunnelManager } from "./tunnel.js";
 import { boundedWorkerError as boundedError } from "./worker-error.js";
 import { createWorkerTurnRpc } from "./worker-turn-rpc.js";
+
+type WorkerEnvironmentCreateRequest = {
+  profileId: string;
+  idempotencyKey: string;
+  machineClass?: string;
+  executionMode?: WorkerExecutionMode;
+  projectPath?: string;
+  signal?: AbortSignal;
+  os?: string;
+  runSetupScript?: boolean;
+  inheritedProfile?: { providerId: string; profileSnapshot: WorkerProfile };
+  admittedIntent?: WorkerProviderPreparedIntent;
+};
 
 type WorkerEnvironmentServiceErrorCode =
   | "profile_not_found"
@@ -574,6 +589,50 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     schedulePreparedRefill,
   });
 
+  const createEnvironment = async ({
+    profileId,
+    idempotencyKey,
+    inheritedProfile,
+    admittedIntent,
+    machineClass,
+    executionMode,
+    projectPath,
+    signal,
+    os,
+    runSetupScript,
+  }: WorkerEnvironmentCreateRequest) => {
+    providerLifecycle.warmMachineShape(profileId);
+    if (executionMode) {
+      requireProviderExecutionMode(
+        inheritedProfile ? inheritedProfile.providerId : configuredProfileProviderId(profileId),
+        executionMode,
+      );
+    }
+    return environmentAccess.project(
+      await providerLifecycle.createWithProfile(
+        profileId,
+        idempotencyKey,
+        {
+          ...(inheritedProfile
+            ? {
+                inherited: {
+                  providerId: inheritedProfile.providerId,
+                  profileSnapshot: inheritedProfile.profileSnapshot,
+                },
+              }
+            : {}),
+          machineClass,
+          os,
+          executionMode,
+          projectPath,
+          runSetupScript,
+          signal,
+        },
+        admittedIntent,
+      ),
+    );
+  };
+
   const service = {
     ...sessionAttachments,
     prepare: (request: { profileId: string; projectPath: string }, authorize?: () => void) =>
@@ -602,81 +661,27 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     inventoryVersion: store.inventoryVersion,
     machineShapeVersion: providerLifecycle.machineShapeVersion,
     subscribeMachineShapeChanged: providerLifecycle.subscribeMachineShapeChanged,
-    readMachineShape: (environmentId: string) => {
-      const record = store.get(environmentId);
-      return record ? providerLifecycle.readMachineShape(record) : undefined;
-    },
+    readMachineShape: (environmentId: string, prepared?: WorkerEnvironmentPlacementFacts) =>
+      providerLifecycle.readMachineShape(prepared ?? store.get(environmentId)),
     supportsNodePortal: async (environmentId: string, ownerEpoch: number) =>
       (await options.nodePortalCarrier?.supports(environmentId, ownerEpoch)) === true,
-    hasPendingNodeEnrollmentSetup: (setupId: string, deviceId: string) =>
-      store.hasPendingNodeEnrollmentSetup(setupId, deviceId),
+    hasPendingNodeEnrollmentSetup: store.hasPendingNodeEnrollmentSetup.bind(store),
+    readProviderDisplayId: providerLifecycle.readProviderDisplayId,
     listMachineOptions: providerLifecycle.listMachineOptions,
     listOperatingSystems: providerLifecycle.listOperatingSystems,
     bindPreparedWorkspace: environmentAccess.bindPreparedWorkspace,
-    create: async (
-      profileId: string,
-      idempotencyKey: string,
-      machineClass?: string,
-      executionMode?: WorkerExecutionMode,
-      projectPath?: string,
-      signal?: AbortSignal,
-      os?: string,
-      runSetupScript?: boolean,
-      admittedIntent?: WorkerProviderPreparedIntent,
-    ) => {
-      providerLifecycle.warmMachineShape(profileId);
-      if (executionMode) {
-        requireProviderExecutionMode(configuredProfileProviderId(profileId), executionMode);
-      }
-      return environmentAccess.project(
-        await providerLifecycle.createWithProfile(
-          profileId,
-          idempotencyKey,
-          {
-            machineClass,
-            os,
-            executionMode,
-            projectPath,
-            runSetupScript,
-            signal,
-          },
-          admittedIntent,
-        ),
-      );
-    },
-    createFromProfileSnapshot: async (
-      profile: { profileId: string; providerId: string; profileSnapshot: WorkerProfile },
-      idempotencyKey: string,
-      machineClass?: string,
-      executionMode?: WorkerExecutionMode,
-      projectPath?: string,
-      signal?: AbortSignal,
-      os?: string,
-      runSetupScript?: boolean,
-      admittedIntent?: WorkerProviderPreparedIntent,
-    ) => {
-      providerLifecycle.warmMachineShape(profile.profileId);
-      requireProviderExecutionMode(profile.providerId, executionMode);
-      return environmentAccess.project(
-        await providerLifecycle.createWithProfile(
-          profile.profileId,
-          idempotencyKey,
-          {
-            inherited: {
-              providerId: profile.providerId,
-              profileSnapshot: profile.profileSnapshot,
-            },
-            machineClass,
-            os,
-            executionMode,
-            projectPath,
-            runSetupScript,
-            signal,
-          },
-          admittedIntent,
-        ),
-      );
-    },
+    createWithRequest: createEnvironment,
+    create: (...args: Parameters<WorkerEnvironmentServiceContract["create"]>) =>
+      createEnvironment({
+        profileId: args[0],
+        idempotencyKey: args[1],
+        machineClass: args[2],
+        executionMode: args[3],
+        projectPath: args[4],
+        signal: args[5],
+        os: args[6],
+        runSetupScript: args[7],
+      }),
     destroy: async (environmentId: string, abandonment?: WorkerEnvironmentAbandonment) =>
       environmentAccess.project(await providerLifecycle.destroy(environmentId, { abandonment })),
     requestDestroy: async (environmentId: string) =>
@@ -691,6 +696,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     },
     observeDesktop: environmentAccess.observeDesktop,
     launchDesktopApp: environmentAccess.launchDesktopApp,
+    reconcileDesktopPolicy: environmentAccess.reconcileDesktopPolicy,
     admitWorker: turnRpc.admitWorker,
     validateWorkerConnection: turnRpc.validateWorkerConnection,
     commitTranscript: turnRpc.commitTranscript,
@@ -703,24 +709,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     cancelInferenceForSession: turnRpc.cancelInferenceForSession,
     hasInferenceForSession: turnRpc.hasInferenceForSession,
     resolveInferenceSessionForRunId: turnRpc.resolveInferenceSessionForRunId,
-    resolveSshIdentity: async (environmentId: string) => {
-      const record = store.get(environmentId);
-      if (!record) {
-        throw serviceError("environment_not_found", `Unknown worker environment: ${environmentId}`);
-      }
-      if (!record.leaseId || !record.sshEndpoint) {
-        throw serviceError(
-          "invalid_state",
-          `Worker environment ${environmentId} has no active SSH endpoint`,
-        );
-      }
-      const provider = providerLifecycle.providerFor(record.providerId);
-      return await providerLifecycle.identityResolverFor(
-        record,
-        provider,
-        record.leaseId,
-      )(record.sshEndpoint.keyRef);
-    },
+    resolveSshIdentity: environmentAccess.resolveSshIdentity,
     attachSession: credentialBroker.attachSession,
     takeMintedCredential: credentialBroker.takeMintedCredential,
     acquireTurnCredential: credentialBroker.acquireTurnCredential,

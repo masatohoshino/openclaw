@@ -89,6 +89,13 @@ const workspaceSourceAliases = [
     replacement: path.resolve(repoRoot, "packages/session-url-contract/src/public-share.ts"),
   },
   {
+    find: "@openclaw/session-url-contract/session-key-normalization",
+    replacement: path.resolve(
+      repoRoot,
+      "packages/session-url-contract/src/session-key-normalization.ts",
+    ),
+  },
+  {
     find: "@openclaw/session-url-contract",
     replacement: path.resolve(repoRoot, "packages/session-url-contract/src/index.ts"),
   },
@@ -116,6 +123,7 @@ function includeUiTests(patterns: string[], env = process.env): string[] {
 
 const sharedUiTestConfig = {
   ...loadVitestPerformanceConfig(process.env, process.platform, here),
+  server: sharedVitestConfig.test.server,
   // Preserve calls recorded during shared setup and beforeAll hooks.
   clearMocks: false,
   isolate: false,
@@ -178,6 +186,7 @@ export function createUiBrowserVitestConfig(env = process.env): ViteUserConfig {
         "@awesome.me/webawesome/dist/components/dropdown/dropdown.js",
         "@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js",
         "@awesome.me/webawesome/dist/components/popover/popover.js",
+        "@awesome.me/webawesome/dist/components/popup/popup.js",
         "@lit/context",
         "@lit/task",
         "@noble/ed25519",

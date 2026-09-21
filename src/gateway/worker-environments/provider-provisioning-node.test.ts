@@ -1,6 +1,8 @@
+import path from "node:path";
 import { setImmediate } from "node:timers/promises";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_CLIENT_IDS } from "../../../packages/gateway-protocol/src/client-info.js";
+import { ensureSessionEntrySync } from "../../config/sessions/session-accessor.js";
 import { bindCloudWorkerSetupCompletion } from "../../infra/device-pairing-cloud-worker.js";
 import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-runner-inventory.js";
 import type {
@@ -9,6 +11,7 @@ import type {
   WorkerProvider,
 } from "../../plugins/types.js";
 import { createDeferredCore } from "../../shared/deferred.js";
+import { closeOpenClawAgentDatabases } from "../../state/openclaw-agent-db.js";
 import type {
   NodeWorkerSupervisorNodeProof,
   NodeWorkerSupervisorTransport,
@@ -26,10 +29,16 @@ import * as support from "./service.test-support.js";
 
 describe("node worker provider provisioning", () => {
   support.setupWorkerEnvironmentServiceSuite();
+  afterEach(() => closeOpenClawAgentDatabases());
 
-  it.each([undefined, "worker-turn", "remote-exec"] as const)(
-    "installs the verified bundle with runtime-appropriate prewarming for %s",
-    async (executionMode) => {
+  it.each([
+    { target: "primary", executionMode: undefined, prewarm: true },
+    { target: "primary", executionMode: "worker-turn", prewarm: true },
+    { target: "primary", executionMode: "remote-exec", prewarm: false },
+    { target: "conversation", executionMode: undefined, prewarm: false },
+  ] as const)(
+    "installs the verified bundle with runtime-appropriate prewarming for $target/$executionMode",
+    async ({ target, executionMode, prewarm }) => {
       const node: NodeWorkerSupervisorNodeProof = {
         nodeId: "cloud-device-mode",
         connId: "connection-mode",
@@ -72,12 +81,29 @@ describe("node worker provider provisioning", () => {
         },
       );
       try {
-        const environment = await workerService.create(
-          "development",
-          "runtime-mode",
-          undefined,
-          executionMode,
-        );
+        const request = {
+          profileId: "development",
+          idempotencyKey: "runtime-mode",
+        };
+        const identity = {
+          agentId: "main",
+          sessionId: "conversation-mode",
+          sessionKey: "agent:main:crabbox",
+        };
+        if (target === "conversation") {
+          support.testState.config.session = {
+            store: path.join(support.testState.root, "sessions.json"),
+          };
+          ensureSessionEntrySync(
+            { ...identity, storePath: support.testState.config.session.store },
+            { sessionId: identity.sessionId, updatedAt: 1 },
+          );
+        }
+        const environment =
+          target === "conversation"
+            ? (await workerService.createSessionAttachment({ ...request, ...identity }, () => {}))
+                .environment
+            : await workerService.createWithRequest({ ...request, executionMode });
         expect(environment).toMatchObject({
           state: "ready",
           bootstrapReceipt: support.BOOTSTRAP_RECEIPT,
@@ -88,10 +114,10 @@ describe("node worker provider provisioning", () => {
           }),
         );
         const input = invoke.mock.calls[0]?.[0].params;
-        if (executionMode === "remote-exec") {
-          expect(input).not.toHaveProperty("bundlePrewarm");
-        } else {
+        if (prewarm) {
           expect(input).toHaveProperty("bundlePrewarm", 1);
+        } else {
+          expect(input).not.toHaveProperty("bundlePrewarm");
         }
       } finally {
         transfer.closeAll();
@@ -155,7 +181,10 @@ describe("node worker provider provisioning", () => {
       );
       let creationSettled = false;
       const creation = workerService
-        .create("development", `bundle-overlap-${outcome}`)
+        .createWithRequest({
+          profileId: "development",
+          idempotencyKey: `bundle-overlap-${outcome}`,
+        })
         .then(
           (value) => ({ value }),
           (error: unknown) => ({ error }),
@@ -291,7 +320,10 @@ describe("node worker provider provisioning", () => {
       },
     );
 
-    const environment = await workerService.create("development", "request-cloud-node");
+    const environment = await workerService.createWithRequest({
+      profileId: "development",
+      idempotencyKey: "request-cloud-node",
+    });
     expect(environment).toMatchObject({
       state: "ready",
       nodeSetupId: expect.any(String),
@@ -350,7 +382,10 @@ describe("node worker provider provisioning", () => {
           ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT),
         },
       );
-      const creation = workerService.create("development", `request-node-preparation-${outcome}`);
+      const creation = workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: `request-node-preparation-${outcome}`,
+      });
       const completed = creation.then(
         (value) => ({ value }),
         (error: unknown) => ({ error }),
@@ -459,7 +494,10 @@ describe("node worker provider provisioning", () => {
           providerCallTimeoutMs: 20,
         },
       );
-      const creation = workerService.create("development", `request-node-closed-${outcome}`);
+      const creation = workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: `request-node-closed-${outcome}`,
+      });
       const rejected = expect(creation).rejects.toMatchObject({ code: "provider_failure" });
       try {
         await providerEntered.promise;
@@ -575,7 +613,10 @@ describe("node worker provider provisioning", () => {
     );
 
     await expect(
-      workerService.create("development", "request-node-destroy-replay"),
+      workerService.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "request-node-destroy-replay",
+      }),
     ).rejects.toMatchObject({ code: "provider_failure" });
     const provisioning = support.testState.store.list()[0]!;
     expect(provisioning).toMatchObject({
@@ -662,7 +703,10 @@ describe("node worker provider provisioning", () => {
       },
     );
 
-    const environment = await workerService.create("development", "request-paired-device");
+    const environment = await workerService.createWithRequest({
+      profileId: "development",
+      idempotencyKey: "request-paired-device",
+    });
     expect(environment).toMatchObject({
       state: "ready",
       nodeSetupId: null,
@@ -695,7 +739,10 @@ describe("node worker provider provisioning", () => {
       { ensureNodeWorkerBundle: async () => workerBuild, placementStore: placementGate },
     );
 
-    const result = await workerService.create("development", "request-device");
+    const result = await workerService.createWithRequest({
+      profileId: "development",
+      idempotencyKey: "request-device",
+    });
 
     expect(result).toMatchObject({
       state: "ready",

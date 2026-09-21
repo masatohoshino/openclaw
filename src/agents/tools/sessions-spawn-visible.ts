@@ -15,9 +15,11 @@ import {
 import { getRuntimeConfig } from "../../config/config.js";
 import { resolveControlUiSessionUrl } from "../../config/control-ui-link-base.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
+import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { ADMIN_SCOPE } from "../../gateway/method-scopes.js";
 import { resolveWorkspacePathContainment } from "../../gateway/server-methods/workspace-path-containment.js";
+import { resolveGatewaySessionStoreTarget } from "../../gateway/session-utils-store-lookup.js";
 import { resolveWorkerPlacementDestination } from "../../gateway/worker-environments/placement-destination.js";
 import { isPathInside } from "../../infra/path-guards.js";
 import {
@@ -63,11 +65,16 @@ import {
 } from "./in-process-gateway.js";
 import { startVisibleCloudSession } from "./sessions-spawn-cloud.js";
 
+const SessionsSpawnPlacementSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("local") }, { additionalProperties: false }),
+  SessionMoveProfileTargetSchema,
+]);
+
 export const VISIBLE_SESSIONS_SPAWN_SCHEMA = {
   placement: Type.Optional({
-    ...SessionMoveProfileTargetSchema,
+    ...SessionsSpawnPlacementSchema,
     description:
-      "Cloud destination: kind=profile, profileId, optional os and machineClass. Requires visible=true and worktree=true. Omitted selectors use profile defaults; first task starts only after cloud dispatch.",
+      'Execution placement: omitted or {kind: "local"} uses local execution for native and ACP runs. {kind: "profile", profileId, os?, machineClass?} selects a configured cloud profile and requires visible=true and worktree=true. Never supply placeholder selectors. Omitted cloud selectors use profile defaults; the first task starts only after cloud dispatch.',
   }),
   visible: Type.Optional(
     Type.Boolean({
@@ -143,17 +150,18 @@ export async function maybeSpawnVisibleSession(params: {
 }): Promise<Record<string, unknown> | undefined> {
   const promptedAt = Date.now();
   const worktree = params.raw.worktree === true;
-  const placement = params.raw.placement;
+  const requestedPlacement = params.raw.placement;
   if (
-    placement !== undefined &&
-    (!Value.Check(SessionMoveProfileTargetSchema, placement) ||
-      params.raw.visible !== true ||
-      !worktree)
+    requestedPlacement !== undefined &&
+    (!Value.Check(SessionsSpawnPlacementSchema, requestedPlacement) ||
+      (requestedPlacement.kind === "profile" && (params.raw.visible !== true || !worktree)))
   ) {
     throw new ToolInputError(
-      'placement requires visible=true, worktree=true, and {kind: "profile", profileId, os?, machineClass?} with non-empty selectors.',
+      'Omit placement for local execution or use {kind: "local"} with no cloud selectors. ' +
+        'For a configured cloud profile, use {kind: "profile", profileId, os?, machineClass?} with non-empty selectors, visible=true, and worktree=true.',
     );
   }
+  const placement = requestedPlacement?.kind === "profile" ? requestedPlacement : undefined;
   const worktreeName = readToolStringParam(params.raw, "worktreeName");
   const worktreeBaseRef = readToolStringParam(params.raw, "worktreeBaseRef");
   const group = readToolStringParam(params.raw, "group");
@@ -253,6 +261,16 @@ export async function maybeSpawnVisibleSession(params: {
     agentSessionKey: params.options?.agentSessionKey,
     completionOwnerKey: params.options?.completionOwnerKey,
   });
+  const requesterTarget = resolveGatewaySessionStoreTarget({
+    cfg,
+    key: ownership.completionRequesterSessionKey,
+    agentId: params.options?.requesterAgentIdOverride,
+  });
+  const completionRequesterSessionId = loadSessionEntryReadOnly({
+    storePath: requesterTarget.storePath,
+    sessionKey: requesterTarget.canonicalKey,
+    clone: false,
+  })?.sessionId;
   const requesterKey = ownership.controllerSessionKey;
   const callerDepth = getSubagentDepthFromSessionStore(requesterKey, {
     cfg,
@@ -613,6 +631,7 @@ export async function maybeSpawnVisibleSession(params: {
         childSessionKey,
         controllerSessionKey: ownership.controllerSessionKey,
         requesterSessionKey: ownership.completionRequesterSessionKey,
+        completionRequesterSessionId,
         requesterOrigin: normalizeDeliveryContext({
           channel: params.options?.agentChannel,
           accountId: params.options?.agentAccountId,
