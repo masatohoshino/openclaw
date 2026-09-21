@@ -5,6 +5,7 @@ import { extractPlannedToolArgs, extractPlannedToolName } from "./mock-openai-ev
 import {
   extractToolOutput,
   extractToolOutputCallId,
+  extractToolOutputStructuredError,
   parseToolOutputJson,
 } from "./mock-openai-input.js";
 import {
@@ -286,6 +287,12 @@ export function unwrapScenarioCatalogOutput(
   // Keep target failures and receipt fields at the same level as direct calls.
   // Do not unwrap unrelated JSON stdout or an unmatched catalog result.
   const result = envelope.result;
+  if (extractToolOutputStructuredError(input) === true) {
+    return stringifyScenarioToolOutput({
+      ...(isRecord(result.details) ? result.details : {}),
+      status: "error",
+    });
+  }
   if (Object.hasOwn(result, "details")) {
     return stringifyScenarioToolOutput(result.details);
   }
