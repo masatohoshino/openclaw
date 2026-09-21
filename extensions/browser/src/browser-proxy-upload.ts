@@ -176,8 +176,6 @@ function sanitizeUploadName(name: string): string {
     .replace(/[. ]+$/u, "");
   const portable = WINDOWS_RESERVED_NAME.test(cleaned) ? `_${cleaned}` : cleaned;
   const safe = portable && portable !== "." && portable !== ".." ? portable : "upload";
-  // The byte clamp is a plain prefix cut, so it can re-expose a trailing dot or
-  // space or a bare Windows device name; re-apply both guards after clamping.
   const truncated = truncateUtf8Prefix(safe, MAX_STAGED_NAME_BYTES).replace(/[. ]+$/u, "");
   return (WINDOWS_RESERVED_NAME.test(truncated) ? `_${truncated}` : truncated) || "upload";
 }

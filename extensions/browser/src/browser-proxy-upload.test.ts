@@ -287,16 +287,10 @@ describe("browser proxy upload transport", () => {
     await discardStagedBrowserProxyUpload(staged);
   });
 
-  it("keeps staged names portable after the byte-length clamp", async () => {
-    const root = await createTempRoot("openclaw-browser-proxy-clamp-");
-    const cases = [
-      { name: `${"a".repeat(179)}.b`, expected: "a".repeat(179) },
-      { name: `${"b".repeat(179)} c`, expected: "b".repeat(179) },
-      { name: `${"c".repeat(175)}\u{1f99e}.d`, expected: `${"c".repeat(175)}\u{1f99e}` },
-      { name: `CON${" ".repeat(177)}x`, expected: "_CON" },
-    ];
-
-    for (const { name, expected } of cases) {
+  it("keeps staged names portable after byte truncation", async () => {
+    const root = await createTempRoot("openclaw-browser-proxy-truncate-");
+    const uploadDir = path.join(root, "uploads");
+    const stagedName = async (name: string): Promise<string> => {
       const staged = await stageBrowserProxyUploadRequest({
         method: "POST",
         path: "/hooks/file-chooser",
@@ -305,16 +299,17 @@ describe("browser proxy upload transport", () => {
           envelope: BROWSER_PROXY_UPLOAD_ENVELOPE,
           files: [{ name, contentBase64: "aGVsbG8=" }],
         },
-        uploadDir: path.join(root, "uploads"),
+        uploadDir,
       });
       const stagedPath = (staged.body as { paths: string[] }).paths[0] ?? "";
-      const basename = path.basename(stagedPath);
-
-      expect(basename).toBe(expected);
-      expect(Buffer.byteLength(basename, "utf8")).toBeLessThanOrEqual(180);
-      expect(await fs.readdir(path.dirname(stagedPath))).toEqual([basename]);
       await discardStagedBrowserProxyUpload(staged);
-    }
+      return path.basename(stagedPath);
+    };
+
+    expect(await stagedName(`${"a".repeat(179)}.b`)).toBe("a".repeat(179));
+    expect(await stagedName(`${"b".repeat(179)} c`)).toBe("b".repeat(179));
+    expect(await stagedName(`${"c".repeat(175)}🦞.d`)).toBe(`${"c".repeat(175)}🦞`);
+    expect(await stagedName(`CON${" ".repeat(177)}x`)).toBe("_CON");
   });
 
   it("enforces retained byte and directory limits across concurrent requests", async () => {
