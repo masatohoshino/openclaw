@@ -1,5 +1,6 @@
 import { finiteSecondsToTimerSafeMilliseconds } from "@openclaw/normalization-core/number-coercion";
 import { beginLifecycleWriteCustody } from "../infra/lifecycle-write-custody.js";
+import { hasCommandProcessCleanupError, type SpawnResult } from "../process/exec-result.js";
 import { withCommandProcessScope } from "../process/exec-spawn.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { isScheduledBackupCommand } from "./backup-command.js";
@@ -54,6 +55,7 @@ function buildDiagnostics(params: {
   signal: NodeJS.Signals | null;
   stdoutTruncatedBytes?: number;
   stderrTruncatedBytes?: number;
+  cleanupError?: string;
   nowMs: () => number;
 }): CronRunDiagnostics {
   const truncated =
@@ -73,6 +75,17 @@ function buildDiagnostics(params: {
         truncated,
         ...(params.signal ? { toolName: `signal:${params.signal}` } : {}),
       },
+      ...(params.cleanupError
+        ? [
+            {
+              ts: params.nowMs(),
+              source: "exec" as const,
+              severity: "error" as const,
+              message: `${params.cleanupError}: ${params.command}`,
+              exitCode: params.code,
+            },
+          ]
+        : []),
     ],
   };
 }
@@ -105,19 +118,36 @@ export async function runCronCommandJob(params: {
     : undefined;
   let failure: unknown;
   try {
-    const result = await withCommandProcessScope(() =>
-      runCommandWithTimeout(payload.argv, {
-        timeoutMs: secondsToMs(payload.timeoutSeconds) ?? DEFAULT_COMMAND_TIMEOUT_MS,
-        ...(payload.cwd ? { cwd: payload.cwd } : {}),
-        ...(payload.input !== undefined ? { input: payload.input } : {}),
-        ...(payload.env ? { env: payload.env } : {}),
-        ...(noOutputTimeoutMs !== undefined ? { noOutputTimeoutMs } : {}),
-        ...(payload.outputMaxBytes !== undefined ? { maxOutputBytes: payload.outputMaxBytes } : {}),
-        preserveOutputLine: isCronCommandActionCriticalLine,
-        ...(params.abortSignal ? { signal: params.abortSignal } : {}),
-        killProcessTree: true,
-      }),
-    );
+    // Scope settlement replaces an already-produced command result with its cleanup
+    // failure. Keep that result so the command's own outcome stays terminal while
+    // the cleanup uncertainty is recorded beside it and still reaches custody.
+    const produced: { result?: SpawnResult } = {};
+    let result: SpawnResult;
+    let cleanupFailure: Error | undefined;
+    try {
+      result = await withCommandProcessScope(async () => {
+        produced.result = await runCommandWithTimeout(payload.argv, {
+          timeoutMs: secondsToMs(payload.timeoutSeconds) ?? DEFAULT_COMMAND_TIMEOUT_MS,
+          ...(payload.cwd ? { cwd: payload.cwd } : {}),
+          ...(payload.input !== undefined ? { input: payload.input } : {}),
+          ...(payload.env ? { env: payload.env } : {}),
+          ...(noOutputTimeoutMs !== undefined ? { noOutputTimeoutMs } : {}),
+          ...(payload.outputMaxBytes !== undefined
+            ? { maxOutputBytes: payload.outputMaxBytes }
+            : {}),
+          preserveOutputLine: isCronCommandActionCriticalLine,
+          ...(params.abortSignal ? { signal: params.abortSignal } : {}),
+          killProcessTree: true,
+        });
+        return produced.result;
+      });
+    } catch (err) {
+      if (!produced.result || !hasCommandProcessCleanupError(err) || !(err instanceof Error)) {
+        throw err;
+      }
+      failure = cleanupFailure = err;
+      result = produced.result;
+    }
     const termination =
       result.termination === "signal" &&
       params.abortSignal?.reason instanceof Error &&
@@ -130,6 +160,10 @@ export async function runCronCommandJob(params: {
       termination !== "timeout" &&
       termination !== "no-output-timeout" &&
       termination !== "signal";
+    if (ok && cleanupFailure) {
+      // Unconfirmed cleanup never records success; the cleanup failure is terminal.
+      throw cleanupFailure;
+    }
     const status: CronRunStatus = ok ? "ok" : "error";
     const summary = buildCronCommandSummary({
       stdout: result.stdout,
@@ -173,6 +207,7 @@ export async function runCronCommandJob(params: {
         signal: result.signal,
         stdoutTruncatedBytes: result.stdoutTruncatedBytes,
         stderrTruncatedBytes: result.stderrTruncatedBytes,
+        ...(cleanupFailure ? { cleanupError: cleanupFailure.message } : {}),
         nowMs,
       }),
     };

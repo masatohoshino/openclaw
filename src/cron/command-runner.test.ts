@@ -334,6 +334,63 @@ describe("runCronCommandJob", () => {
     }),
   );
 
+  function mockUncertainCleanupAfter(result: Pick<SpawnResult, "code" | "termination">) {
+    return vi.spyOn(processExecution, "runCommandWithTimeout").mockImplementation(async () => {
+      execSpawn.retainCommandProcessCleanup(Promise.resolve("uncertain"));
+      return {
+        ...result,
+        signal: null,
+        killed: result.termination === "timeout",
+        stdout: "",
+        stderr: "",
+        cleanup: "uncertain",
+      };
+    });
+  }
+
+  it("keeps a timeout terminal and records the later uncertain cleanup", async () => {
+    const runCommand = mockUncertainCleanupAfter({ code: 124, termination: "timeout" });
+    try {
+      const result = await runCronCommandJob({
+        job: makeCommandJob({ kind: "command", argv: ["sleep", "60"], timeoutSeconds: 1 }),
+        nowMs: () => 789,
+      });
+
+      expect(result).toMatchObject({
+        status: "error",
+        error: "command timed out",
+        errorClassification: { kind: "reason", reason: "timeout" },
+        failureNotificationDetail: { kind: "command-timeout", mode: "wall-clock" },
+      });
+      expect(result.diagnostics?.entries).toEqual([
+        expect.objectContaining({ source: "exec", severity: "error", exitCode: 124 }),
+        {
+          ts: 789,
+          source: "exec",
+          severity: "error",
+          message: 'Command cleanup could not confirm that owned work stopped: "sleep" "60"',
+          exitCode: 124,
+        },
+      ]);
+    } finally {
+      runCommand.mockRestore();
+    }
+  });
+
+  it("never reports success when cleanup after a clean exit is uncertain", async () => {
+    const runCommand = mockUncertainCleanupAfter({ code: 0, termination: "exit" });
+    try {
+      const result = await runCronCommandJob({
+        job: makeCommandJob({ kind: "command", argv: ["true"] }),
+      });
+
+      expect(result.status).toBe("error");
+      expect(result.error).toBe("Command cleanup could not confirm that owned work stopped");
+    } finally {
+      runCommand.mockRestore();
+    }
+  });
+
   it("marks no-output timeouts as cron errors", async () => {
     const result = await runCronCommandJob({
       job: makeCommandJob({
