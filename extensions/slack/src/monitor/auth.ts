@@ -1,8 +1,8 @@
-import {
-  type ChannelIngressEventInput,
-  type ChannelIngressContextBinding,
-  type ChannelIngressPolicyInput,
-  type ChannelIngressStateInput,
+import type {
+  ChannelIngressEventInput,
+  ChannelIngressContextBinding,
+  ChannelIngressPolicyInput,
+  ChannelIngressStateInput,
 } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import { readChannelAllowFromStore } from "openclaw/plugin-sdk/conversation-runtime";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
