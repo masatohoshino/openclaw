@@ -84,11 +84,10 @@ export async function readChannelIngressStoreAllowFrom(
  * Read the default pairing store for channel ingress, preserving a read
  * failure instead of resolving to an empty list.
  *
- * This is the ingress owner's reader, not a plugin-SDK export: the resolver in
- * `runtime.ts` classifies the rejection as an unavailable store. Plugins keep
- * using the best-effort reader above.
+ * Module-local: `readChannelIngressStoreAllowFrom` classifies the rejection as
+ * an unavailable store. Plugins keep using the best-effort reader above.
  */
-export async function readChannelIngressDefaultPairingStore(params: {
+async function readChannelIngressDefaultPairingStore(params: {
   provider: PairingChannel;
   accountId: string;
 }): Promise<string[]> {
