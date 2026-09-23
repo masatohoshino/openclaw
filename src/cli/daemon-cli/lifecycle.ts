@@ -28,8 +28,8 @@ import {
   resolveGatewayServiceMutationError,
 } from "../../infra/gateway-supervision.js";
 import { probePortUsage } from "../../infra/ports-probe.js";
+import { resolveGatewayRestartDrainTimeoutMs } from "../../infra/restart-budget.js";
 import type { GatewayRestartIntent } from "../../infra/restart-intent.js";
-import { resolveGatewayRestartDeferralTimeoutMs } from "../../infra/restart.js";
 import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
 import { formatCliCommand } from "../command-format.js";
@@ -160,29 +160,13 @@ async function stopGatewayWithoutServiceManager(
   };
 }
 
-async function resolveRestartListenerHealthWait(restartIntent: GatewayRestartIntent | undefined) {
-  let drainTimeoutMs: number | undefined;
-  if (restartIntent?.force) {
-    drainTimeoutMs = 0;
-  } else if (typeof restartIntent?.waitMs === "number" && Number.isFinite(restartIntent.waitMs)) {
-    drainTimeoutMs = restartIntent.waitMs > 0 ? Math.floor(restartIntent.waitMs) : undefined;
-  } else {
-    drainTimeoutMs = resolveGatewayRestartDeferralTimeoutMs();
-  }
-
-  const replacementHealthAttempts = postRestartHealthAttempts();
-  if (drainTimeoutMs === undefined) {
-    return {
-      attempts: replacementHealthAttempts,
-      waitIndefinitelyForPreviousOwner: true,
-      timeoutSeconds: Math.round((replacementHealthAttempts * POST_RESTART_HEALTH_DELAY_MS) / 1000),
-    };
-  }
+function resolveRestartListenerHealthWait(restartIntent: GatewayRestartIntent | undefined) {
+  const drainTimeoutMs = resolveGatewayRestartDrainTimeoutMs(restartIntent);
   const attempts =
-    replacementHealthAttempts + Math.ceil(drainTimeoutMs / POST_RESTART_HEALTH_DELAY_MS);
+    postRestartHealthAttempts() + Math.ceil((drainTimeoutMs ?? 0) / POST_RESTART_HEALTH_DELAY_MS);
   return {
     attempts,
-    waitIndefinitelyForPreviousOwner: false,
+    waitIndefinitelyForPreviousOwner: drainTimeoutMs === undefined,
     timeoutSeconds: Math.round((attempts * POST_RESTART_HEALTH_DELAY_MS) / 1000),
   };
 }
@@ -207,7 +191,10 @@ function isGatewaySignalRestartResult(
 }
 
 async function runExternalSupervisorRestart(opts: DaemonLifecycleOptions): Promise<boolean> {
-  const { emit, fail } = createDaemonActionContext({ action: "restart", json: Boolean(opts.json) });
+  const { emitMessage, fail } = createDaemonActionContext({
+    action: "restart",
+    json: Boolean(opts.json),
+  });
   const restartIntent = resolveGatewayRestartIntentOptions(opts);
   const lockIdentity = await readActiveGatewayLockIdentity().catch(() => undefined);
   if (!lockIdentity?.ownerId) {
@@ -241,7 +228,7 @@ async function runExternalSupervisorRestart(opts: DaemonLifecycleOptions): Promi
     return false;
   }
 
-  const healthWait = await resolveRestartListenerHealthWait(restartIntent);
+  const healthWait = resolveRestartListenerHealthWait(restartIntent);
   const health = await waitForGatewayHealthyListener({
     port: lockIdentity.port,
     attempts: healthWait.attempts,
@@ -255,14 +242,11 @@ async function runExternalSupervisorRestart(opts: DaemonLifecycleOptions): Promi
     return false;
   }
 
-  emit({
+  emitMessage({
     ok: true,
     result: signaled.result,
     message: signaled.message,
   });
-  if (!opts.json) {
-    defaultRuntime.log(signaled.message);
-  }
   return true;
 }
 
@@ -420,9 +404,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
   const restartHealthAttempts = postRestartHealthAttempts();
   const restartWaitMs = restartHealthAttempts * POST_RESTART_HEALTH_DELAY_MS;
   const restartWaitSeconds = Math.round(restartWaitMs / 1000);
-  let unmanagedRestartHealthAttempts = restartHealthAttempts;
-  let unmanagedRestartWaitIndefinitely = false;
-  let unmanagedRestartWaitSeconds = restartWaitSeconds;
+  let unmanagedRestartWait: ReturnType<typeof resolveRestartListenerHealthWait> | undefined;
 
   return await runServiceRestart({
     serviceNoun: "Gateway",
@@ -475,10 +457,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
           }
           restartedWithoutServiceManager = true;
           unmanagedPreviousLockIdentity = handled.previousLockIdentity;
-          const healthWait = await resolveRestartListenerHealthWait(restartIntent);
-          unmanagedRestartHealthAttempts = healthWait.attempts;
-          unmanagedRestartWaitIndefinitely = healthWait.waitIndefinitelyForPreviousOwner;
-          unmanagedRestartWaitSeconds = healthWait.timeoutSeconds;
+          unmanagedRestartWait = resolveRestartListenerHealthWait(restartIntent);
           return handled;
         },
     repairLoadedService: preserveDefinition
@@ -521,10 +500,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         restartedWithoutServiceManager = true;
         if (isGatewaySignalRestartResult(handled) && handled.previousLockIdentity) {
           unmanagedPreviousLockIdentity = handled.previousLockIdentity;
-          const healthWait = await resolveRestartListenerHealthWait(restartIntent);
-          unmanagedRestartHealthAttempts = healthWait.attempts;
-          unmanagedRestartWaitIndefinitely = healthWait.waitIndefinitelyForPreviousOwner;
-          unmanagedRestartWaitSeconds = healthWait.timeoutSeconds;
+          unmanagedRestartWait = resolveRestartListenerHealthWait(restartIntent);
         }
         return handled;
       }
@@ -541,12 +517,13 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         const health = await waitForGatewayHealthyListener({
           port: unmanagedPort,
           env: process.env,
-          attempts: unmanagedRestartHealthAttempts,
+          attempts: unmanagedRestartWait?.attempts ?? restartHealthAttempts,
           delayMs: POST_RESTART_HEALTH_DELAY_MS,
           ...(unmanagedPreviousLockIdentity
             ? {
                 previousLockIdentity: unmanagedPreviousLockIdentity,
-                waitIndefinitelyForPreviousOwner: unmanagedRestartWaitIndefinitely,
+                waitIndefinitelyForPreviousOwner:
+                  unmanagedRestartWait?.waitIndefinitelyForPreviousOwner ?? false,
               }
             : {}),
         });
@@ -555,7 +532,8 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         }
 
         const diagnostics = renderGatewayPortHealthDiagnostics(health);
-        const timeoutLine = `Timed out after ${unmanagedRestartWaitSeconds}s waiting for gateway port ${unmanagedPort} to become healthy.`;
+        const waitSeconds = unmanagedRestartWait?.timeoutSeconds ?? restartWaitSeconds;
+        const timeoutLine = `Timed out after ${waitSeconds}s waiting for gateway port ${unmanagedPort} to become healthy.`;
         if (!jsonOutput) {
           defaultRuntime.log(theme.warn(timeoutLine));
           for (const line of diagnostics) {
@@ -567,7 +545,7 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         }
 
         fail(
-          `Gateway restart timed out after ${unmanagedRestartWaitSeconds}s waiting for health checks.`,
+          `Gateway restart timed out after ${waitSeconds}s waiting for health checks.`,
           [formatCliCommand("openclaw gateway status --deep"), formatCliCommand("openclaw doctor")],
           activationAccepted ? "restart-health-failed" : undefined,
         );
