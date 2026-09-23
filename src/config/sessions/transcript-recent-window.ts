@@ -63,10 +63,12 @@ export function extractRecentConversationText(
   event: TranscriptEvent,
   options: ReadRecentSessionConversationTextOptions = {},
 ): SessionRecentConversationText | undefined {
+  // SAFETY: every field is read as unknown and narrowed before use.
   const parsed = event as {
     id?: unknown;
     message?: unknown;
   };
+  // SAFETY: an optional record of unknown fields; each is type-checked below.
   const message = parsed.message as
     | {
         role?: unknown;
@@ -116,7 +118,7 @@ export function extractRecentConversationText(
   }
   const provenance =
     message.provenance && typeof message.provenance === "object"
-      ? (message.provenance as { sourceChannel?: unknown })
+      ? (message.provenance as { sourceChannel?: unknown }) // SAFETY: object-guarded; field re-checked.
       : undefined;
   return {
     ...(typeof parsed.id === "string" && parsed.id ? { id: parsed.id } : {}),
