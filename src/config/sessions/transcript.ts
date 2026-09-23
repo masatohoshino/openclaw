@@ -257,7 +257,7 @@ function extractRecentConversationText(
 
 async function readRecentUserAssistantTextFromSqliteTranscript(
   scope: SqliteSessionFileMarker,
-  options: ReadRecentSessionConversationTextOptions = {},
+  options: ReadRecentSessionConversationTextOptions & { excludeResetCarryover?: boolean } = {},
 ): Promise<SessionRecentConversationText[]> {
   const limit = normalizeRecentTranscriptLimit(options.limit);
   const pageSize = 250;
@@ -272,6 +272,7 @@ async function readRecentUserAssistantTextFromSqliteTranscript(
       const recent: SessionRecentConversationText[] = [];
       for (let offset = 0; recent.length < limit; offset += pageSize) {
         const page = readSessionTranscriptMessageEventPage(readScope, {
+          ...(options.excludeResetCarryover ? { excludeResetCarryover: true } : {}),
           maxMessages: pageSize,
           offset,
         });
@@ -338,6 +339,24 @@ export async function readRecentUserAssistantTextForSession(
   const target = resolveSessionConversationTranscriptTarget(params);
   if (target.sqliteScope) {
     return await readRecentUserAssistantTextFromSqliteTranscript(target.sqliteScope, params);
+  }
+  return [];
+}
+
+/**
+ * Like `readRecentUserAssistantTextForSession`, but only what the latest reset
+ * admitted: a reset keeps `sessionId` and retains a replay tail for the runner,
+ * which prompt context must not re-surface. Core-only; not a plugin SDK reader.
+ */
+export async function readCurrentSessionUserAssistantText(
+  params: ReadRecentSessionConversationTextParams,
+): Promise<SessionRecentConversationText[]> {
+  const target = resolveSessionConversationTranscriptTarget(params);
+  if (target.sqliteScope) {
+    return await readRecentUserAssistantTextFromSqliteTranscript(target.sqliteScope, {
+      ...params,
+      excludeResetCarryover: true,
+    });
   }
   return [];
 }
