@@ -1,7 +1,7 @@
 // Message access tests cover channel message visibility and permission helpers.
 import { describe, expect, it } from "vitest";
 import { decideChannelIngress } from "./decision.js";
-import { resolveStableChannelMessageIngress } from "./runtime.js";
+import { resolveStableChannelIngressPolicy } from "./runtime.js";
 import { resolveChannelIngressState } from "./state.js";
 import type {
   ChannelIngressPolicyInput,
@@ -163,7 +163,7 @@ describe("channel message access ingress", () => {
   });
 
   it("surfaces a throwing readStoreAllowFrom callback through the real production entry", async () => {
-    const resolved = await resolveStableChannelMessageIngress({
+    const resolved = await resolveStableChannelIngressPolicy({
       channelId: "test",
       accountId: "default",
       subject: { stableId: "paired-sender" },

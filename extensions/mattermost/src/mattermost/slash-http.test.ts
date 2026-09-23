@@ -1,6 +1,7 @@
 // Mattermost tests cover slash http plugin behavior.
 import { createServer, IncomingMessage, type ServerResponse } from "node:http";
 import { Socket } from "node:net";
+import { resolveStableChannelMessageIngress } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import { postRawWebhook } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig, PluginRuntime, RuntimeEnv } from "../../runtime-api.js";
@@ -721,6 +722,7 @@ describe("slash-http", () => {
       channel: {
         commands: { shouldHandleTextCommands: () => true },
         text: { hasControlCommand: () => false },
+        inbound: { ingress: { resolveStable: resolveStableChannelMessageIngress } },
         pairing: {
           readAllowFromStore: async () => {
             throw new Error("store unavailable");
