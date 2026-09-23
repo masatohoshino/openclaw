@@ -26,7 +26,7 @@ export type ReadRecentSessionConversationTextOptions = {
   preferUpstreamUserText?: boolean;
 };
 
-export const normalizeTranscriptTimestamp = asFiniteNumber;
+const normalizeTranscriptTimestamp = asFiniteNumber;
 
 export function isWithinTranscriptWindow(
   timestamp: number | undefined,
@@ -46,7 +46,7 @@ export function normalizeRecentTranscriptLimit(limit: number | undefined): numbe
   return Math.max(1, Math.floor(limit ?? 10));
 }
 
-export function readPreferredUpstreamUserText(message: {
+function readPreferredUpstreamUserText(message: {
   __openclaw?: unknown;
 }): string | null | undefined {
   const meta =
