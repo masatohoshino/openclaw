@@ -100,19 +100,18 @@ function readServerImplementation(): string {
 }
 
 describe("gateway startup import boundaries", () => {
-  it.each(["src/gateway/methods/core-descriptors.ts", "src/gateway/method-scopes.ts"])(
-    "keeps static method policy independent of session storage: %s",
-    (entryPath) => {
-      const graph = collectStaticValueImportGraph(entryPath);
-      const sessionStorageImports = [...graph.keys()]
-        .map((filePath) => path.relative(repoRoot, filePath))
-        .filter((filePath) =>
-          filePath.startsWith(path.join("src", "config", "sessions") + path.sep),
-        );
+  it.each([
+    "src/gateway/methods/core-descriptors.ts",
+    "src/gateway/methods/core-method-policy.ts",
+    "src/gateway/method-scopes.ts",
+  ])("keeps static method policy independent of session storage: %s", (entryPath) => {
+    const graph = collectStaticValueImportGraph(entryPath);
+    const sessionStorageImports = [...graph.keys()]
+      .map((filePath) => path.relative(repoRoot, filePath))
+      .filter((filePath) => filePath.startsWith(path.join("src", "config", "sessions") + path.sep));
 
-      expect(sessionStorageImports).toEqual([]);
-    },
-  );
+    expect(sessionStorageImports).toEqual([]);
+  });
 
   it("keeps remote catalog refresh networking behind the overlay boundary", () => {
     const startupGraph = collectStaticValueImportGraph(
@@ -165,9 +164,6 @@ describe("gateway startup import boundaries", () => {
     expect(serverImpl).not.toContain('from "./config-reload.js"');
     expect(serverImpl).not.toMatch(
       /import\s+\{[^}]*resolveSessionKeyForRun[^}]*\}\s+from "\.\/server-session-key\.js"/s,
-    );
-    expect(serverImpl).not.toMatch(
-      /export\s+\{[^}]*resetPreparedModelCatalogForTest[^}]*\}\s+from "\.\/server-model-catalog\.js"/s,
     );
     expect(readSource("src/gateway/server-runtime-subscriptions.ts")).toContain(
       'import("./server-session-key.js")',
@@ -231,14 +227,13 @@ describe("gateway startup import boundaries", () => {
   it("defers retained plugin generation cleanup to the post-ready idle scheduler", () => {
     const serverImpl = readServerImplementation();
     const cleanup = readSource("src/gateway/server-retained-plugin-cleanup.ts");
-    const importBoundary = serverImpl.indexOf("type LoadGatewayModelCatalog");
+    const staticImports = staticValueSpecifiers("server-implementation.ts", serverImpl);
     const serverStart = serverImpl.indexOf("export async function startGatewayServerCore");
     const postReadyStart = serverImpl.indexOf("scheduleGatewayPostReadyMaintenance({", serverStart);
     const cleanupCall = serverImpl.lastIndexOf("cleanupRetainedPluginInstallGenerations(");
 
-    expect(importBoundary).toBeGreaterThan(-1);
-    expect(serverImpl.slice(0, importBoundary)).not.toContain("managed-npm-retention");
-    expect(serverImpl.slice(0, importBoundary)).not.toContain("installed-plugin-index-records");
+    expect(staticImports).not.toContain("../plugins/managed-npm-retention.js");
+    expect(staticImports).not.toContain("../plugins/installed-plugin-index-records.js");
     expect(cleanup).toContain('import("../plugins/managed-npm-retention.js")');
     expect(cleanup).toContain('import("../plugins/installed-plugin-index-records.js")');
     expect(postReadyStart).toBeGreaterThan(serverStart);

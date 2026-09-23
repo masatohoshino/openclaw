@@ -10,11 +10,10 @@ import type {
   SessionListSnapshot,
   SessionState,
 } from "./session-capability.ts";
-import {
-  sessionListQueryAgentId,
-  type ManagedSessionList,
-  type ManagedSessionListRefresh,
-  type ObservedSessionList,
+import type {
+  ManagedSessionList,
+  ManagedSessionListRefresh,
+  ObservedSessionList,
 } from "./session-list-query.ts";
 import { requestSessionListParams } from "./session-requests.ts";
 import type { createSessionRosterObservations } from "./session-roster-observations.ts";
@@ -57,14 +56,16 @@ export function createSessionManagedListRefresh(
     observations,
     nextRevision,
     isPageActive,
+    publishPrimary,
   }: {
     managedLists: ReadonlyMap<string, ManagedSessionList>;
     observations: Pick<
       ReturnType<typeof createSessionRosterObservations>,
-      "inherit" | "accept" | "stageObservedRows"
+      "inherit" | "accept" | "stageObservedRows" | "mergeRows"
     >;
     nextRevision: () => number;
     isPageActive: () => boolean;
+    publishPrimary: (result: SessionsListResult | null) => void;
   },
 ) {
   const refreshManagedList = (
@@ -122,16 +123,12 @@ export function createSessionManagedListRefresh(
           if (!response) {
             throw new Error("The session query did not return a result. Try again.");
           }
-          const result = host.reconcileList(
-            response,
-            issuedRevision,
-            sessionListQueryAgentId(entry.query),
-          );
+          const result = host.reconcileList(response, issuedRevision, entry.query.agentId);
           const previous = entry.snapshot.result;
           // Only this response's rows were observed now; pagination retains older
           // members and discards duplicate page rows without refreshing their facts.
           const presented = reconcileRosterPresentationMetadata(result, previous);
-          const agentId = sessionListQueryAgentId(entry.query);
+          const agentId = entry.query.agentId;
           observations.inherit(presented, result, previous, agentId);
           const observed = observations.accept(
             presented,
@@ -156,16 +153,29 @@ export function createSessionManagedListRefresh(
             false,
           );
           entry.connectionEpoch = scope.epoch;
-          publishManagedList(
-            entry,
-            {
-              result: decorated,
-              agentId: sessionListQueryAgentId(entry.query) ?? null,
-              loading: false,
-              error: null,
-            },
-            isCurrent,
+          const snapshot: SessionListSnapshot = {
+            result: decorated,
+            agentId: agentId ?? null,
+            loading: false,
+            error: null,
+          };
+          // Stage this window before notifying primary observers. Each query keeps
+          // its membership; only overlapping, admitted row facts reach the primary.
+          entry.snapshot = snapshot;
+          const primary = host.readState();
+          const merged = observations.mergeRows(
+            primary.result,
+            decorated?.sessions ?? [],
+            primary.agentId,
+            agentId,
           );
+          if (merged !== primary.result) {
+            publishPrimary(merged);
+          }
+          // Primary listeners can retire the connection or replace this snapshot.
+          if (isCurrent() && entry.snapshot === snapshot) {
+            publishManagedList(entry, snapshot, isCurrent);
+          }
           notifyObserved();
         } catch (error) {
           if (!isCurrent()) {

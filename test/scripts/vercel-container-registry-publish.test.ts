@@ -913,7 +913,12 @@ describe("Vercel Container Registry publishing", () => {
     expect(releasePublish.secrets).toEqual({
       VERCEL_TOKEN: "${{ secrets.VERCEL_TOKEN }}",
     });
-    expect(finalizeRelease.needs).toEqual(["publish", "publish_docker", "approve_github_release"]);
+    expect(finalizeRelease.needs).toEqual([
+      "publish",
+      "publish_docker",
+      "approve_github_release",
+      "finalize_github_release_before_docker",
+    ]);
     expect(finalizeRelease.if).not.toContain("publish_vcr");
     expect(recoveryValidation.if).toBe("${{ !inputs.advisory }}");
     expect(recoveryValidation.permissions).toEqual({});
@@ -974,7 +979,7 @@ describe("Vercel Container Registry publishing", () => {
       version: reusable.on?.workflow_call?.inputs?.version,
     });
     expect(reusablePublish.steps?.find((step) => step.name === "Set up Docker Builder")?.uses).toBe(
-      "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+      "docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003",
     );
     const materializeVercel = reusablePublish.steps?.find(
       (step) => step.name === "Materialize locked Vercel CLI",
@@ -1018,18 +1023,18 @@ describe("Vercel Container Registry publishing", () => {
     };
     const materialize = readFileSync("scripts/materialize-vercel-cli.sh", "utf8");
 
-    expect(packageJson.dependencies).toEqual({ sandbox: "4.2.1", vercel: "59.11.7" });
+    expect(packageJson.dependencies).toEqual({ sandbox: "4.4.0", vercel: "59.19.0" });
     expect(packageLock.lockfileVersion).toBe(3);
     expect(packageLock.packages?.["node_modules/vercel"]).toMatchObject({
       integrity:
-        "sha512-C+L/JKmlGDypKGcTU/atckydeK/AKa/7fKwUbvcwveguV1QPlY8beiIGgbwkdbb80bbIpPFHRQYrhi5XPAmCBA==",
-      version: "59.11.7",
+        "sha512-BL1lyyH24SCxAYA9MnsnHQm5R545ErS5I3BR3yRrMpGOwl2zAfEyNxk3cr3Cvy+GafauuKk4/kQsuBWcQfwcyg==",
+      version: "59.19.0",
     });
     expect(packageLock.packages?.["node_modules/sandbox"]).toMatchObject({
-      bin: { sandbox: "bin/sandbox.mjs" },
+      bin: { sandbox: "bin/sandbox.mjs", sbx: "bin/sandbox.mjs" },
       integrity:
-        "sha512-e7D/gnq4Q8M4SUDRCtKo8CtsZX9jntdzzteIBhuuTOe5+wpfEqOZsNnAqbqiEakOnoctRAbAuc2fdoj+iopmuA==",
-      version: "4.2.1",
+        "sha512-8DlAEKlHbOQmz5R05dAYE+P1wNQ44nEvAnf1jnWtF0LZWHiu/F48USSMKyY8Ib8iE1MCfo3Yvhmky8bUppLaWA==",
+      version: "4.4.0",
     });
     const lockSha256 = createHash("sha256").update(packageLockBytes).digest("hex");
     expect(materialize).toContain(`expected_lock_sha256="${lockSha256}"`);

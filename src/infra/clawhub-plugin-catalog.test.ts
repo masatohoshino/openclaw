@@ -1,4 +1,7 @@
+import { Value } from "typebox/value";
 import { describe, expect, it, vi } from "vitest";
+import { PluginDiscoveryDetailSchema } from "../../packages/gateway-protocol/src/schema/plugins.js";
+import { joinClawHubPluginDetail } from "../plugins/catalog-discovery.js";
 import { jsonResponse, requestUrl } from "../test-helpers/http.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import {
@@ -17,6 +20,7 @@ const remotePlugin = {
   isOfficial: false,
   summary: "Long-term memory",
   ownerHandle: "alice",
+  ownerImage: "https://cdn.example.com/alice.png",
   categories: ["memory"],
   latestVersion: "1.2.3",
   runtimeId: "memory-plus",
@@ -171,6 +175,7 @@ describe("ClawHub plugin catalog client", () => {
 
   it.each([
     [remotePlugin.icon, `https://example.com${remotePlugin.icon}`],
+    [null, remotePlugin.ownerImage],
     ["https://cdn.example.com/memory-plus.svg", "https://cdn.example.com/memory-plus.svg"],
   ])(
     "uses plugin search with a resolved icon and no invented pagination: %s",
@@ -280,6 +285,7 @@ describe("ClawHub plugin catalog client", () => {
 
   it.each([
     ["agent-runtimes", "bot"],
+    ["voice", "mic"],
     ["integrations", "plug"],
     ["developer-tools", "code-xml"],
     ["infrastructure", "server"],
@@ -406,12 +412,13 @@ describe("ClawHub plugin catalog client", () => {
           topics: ["Retrieval"],
           createdAt: 100,
           updatedAt: 300,
-          compatibility: { minGatewayVersion: ">=1.0.0" },
+          compatibility: { minGatewayVersion: ">=2.0.0" },
           scanStatus: "clean",
         },
         owner: {
           handle: "alice",
           displayName: "Alice",
+          official: true,
           image: "https://avatars.example.com/alice.png",
         },
         versions: {
@@ -436,6 +443,9 @@ describe("ClawHub plugin catalog client", () => {
               { name: "apiKey", description: "Service API key", required: true, sensitive: true },
             ],
             mcpServers: [{ name: "memory" }],
+            contracts: { tools: ["memory_recall"], videoGenerationProviders: ["presenter"] },
+            providers: ["memory-model"],
+            channels: ["memory-chat"],
             bundledSkills: [
               {
                 name: "Recall",
@@ -467,6 +477,7 @@ describe("ClawHub plugin catalog client", () => {
         },
         security: {
           overview: "Exact release passed ClawHub security review.",
+          verdict: "review",
           securityAuditUrl: "https://example.com/alice/plugins/memory-plus/security-audit",
           trust: {
             scanStatus: "clean",
@@ -496,6 +507,7 @@ describe("ClawHub plugin catalog client", () => {
         handle: "alice",
         displayName: "Alice",
         imageUrl: "https://avatars.example.com/alice.png",
+        official: true,
       },
       topics: ["Retrieval"],
       createdAt: 100,
@@ -506,6 +518,9 @@ describe("ClawHub plugin catalog client", () => {
         { name: "apiKey", description: "Service API key", required: true, sensitive: true },
       ],
       mcpServers: ["memory"],
+      contracts: { tools: ["memory_recall"], videoGenerationProviders: ["presenter"] },
+      providers: ["memory-model"],
+      channels: ["memory-chat"],
       skills: [{ name: "Recall", description: "Recall saved knowledge" }],
       versions: [
         { version: "1.2.3", createdAt: 300, changelog: "Current release", tags: ["latest"] },
@@ -521,10 +536,21 @@ describe("ClawHub plugin catalog client", () => {
       },
       security: {
         status: "clean",
+        verdict: "review",
         auditUrl: "https://example.com/alice/plugins/memory-plus/security-audit",
         summary: "Exact release passed ClawHub security review.",
       },
     });
+    const joined = joinClawHubPluginDetail({
+      remote: detail,
+      local: { plugins: [], diagnostics: [], mutationAllowed: true },
+    });
+    expect(joined.detail).toMatchObject({
+      contracts: { tools: ["memory_recall"], videoGenerationProviders: ["presenter"] },
+      providers: ["memory-model"],
+      channels: ["memory-chat"],
+    });
+    expect(Value.Check(PluginDiscoveryDetailSchema, joined.detail)).toBe(true);
   });
 
   it.each([undefined, null, {}])(
@@ -532,7 +558,11 @@ describe("ClawHub plugin catalog client", () => {
     async (security) => {
       const fetchImpl = vi.fn(async () =>
         jsonResponse({
-          package: { ...remotePlugin, latestVersion: undefined },
+          package: {
+            ...remotePlugin,
+            latestVersion: undefined,
+            compatibility: { minGatewayVersion: ">=2.0.0" },
+          },
           versions: { items: [] },
           version: null,
           readme: null,
@@ -548,6 +578,7 @@ describe("ClawHub plugin catalog client", () => {
       expect(detail).toMatchObject({ packageName: "memory-plus", versions: [], configFields: [] });
       expect(detail.readme).toBeUndefined();
       expect(detail.security).toBeUndefined();
+      expect(detail.compatibility).toEqual({ minGatewayVersion: ">=2.0.0" });
       expect(fetchImpl).toHaveBeenCalledOnce();
     },
   );

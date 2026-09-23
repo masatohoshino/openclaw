@@ -61,6 +61,7 @@ import {
 } from "./config-reload-plan.js";
 import { resolveGatewayReloadSettings } from "./config-reload-settings.js";
 import type {
+  GatewayConfigReloader,
   GatewayHotReloadApplication,
   GatewayHotReloadStatus,
 } from "./config-reload-status.types.js";
@@ -95,16 +96,6 @@ function resolveChokidarUsePolling(degradedToPolling: boolean): boolean {
   }
   return Boolean(process.env.VITEST) || degradedToPolling;
 }
-
-type GatewayConfigReloader = {
-  /** Candidate validation and watcher creation; stop owns this work immediately. */
-  ready: Promise<void>;
-  isReady: () => boolean;
-  stop: () => Promise<void>;
-  hotReloadStatus: () => GatewayHotReloadStatus | undefined;
-  applyPluginLifecycleChange: PluginLifecycleRuntimeApply;
-  isReloading: () => boolean;
-};
 
 type PluginInstallRecords = Record<string, PluginInstallRecord>;
 
@@ -554,6 +545,13 @@ export function startGatewayConfigReloader(opts: {
       return { runtime, isCurrent };
     };
     assertInvokerOwned();
+    // A watcher can echo this operation's ledger change before the first checkpoint.
+    // Compare it with the candidate records, not the previous runtime generation.
+    try {
+      nextPluginInstallRecords = await readPluginInstallRecords();
+    } catch (err) {
+      opts.log.warn(`config reload plugin install record check failed: ${String(err)}`);
+    }
     await checkpoint();
     await application?.prepare?.(assertCurrent);
     await checkpoint();
@@ -569,8 +567,8 @@ export function startGatewayConfigReloader(opts: {
     if (stopped) {
       throw new GatewayConfigReloadSupersededError();
     }
-    // The full checkpoint below reads candidate install records before reconciling
-    // watcher echoes. Recheck the invoking admission after asynchronous preparation.
+    // Recheck the invoking admission after asynchronous preparation. The next
+    // checkpoint reconciles watcher echoes against the captured install records.
     assertInvokerOwned();
     const nextConfig = preparedCandidate?.runtimeConfig ?? candidateRuntimeConfig;
     const nextCompareConfig = preparedCandidate?.compareConfig ?? nextSourceConfig;
@@ -635,11 +633,6 @@ export function startGatewayConfigReloader(opts: {
       currentCompareConfig,
       nextCompareConfig,
     );
-    try {
-      nextPluginInstallRecords = await readPluginInstallRecords();
-    } catch (err) {
-      opts.log.warn(`config reload plugin install record check failed: ${String(err)}`);
-    }
     await checkpoint();
     assertCurrent();
     const previousPluginInstallConfig = asPluginInstallConfig(currentPluginInstallRecords);
@@ -853,9 +846,9 @@ export function startGatewayConfigReloader(opts: {
         ...installMetadata.forceChangedPaths,
       ],
       candidateConfig: nextConfig,
-      candidateCompareConfig: nextCompareConfig,
-      previousCompareConfig: currentCompareConfig,
       previousConfig: currentConfig,
+      previousCompareConfig: currentCompareConfig,
+      candidateCompareConfig: nextCompareConfig,
     });
     if (pluginLifecycle) {
       plan.pluginLifecycle = pluginLifecycle;

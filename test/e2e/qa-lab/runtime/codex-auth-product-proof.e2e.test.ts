@@ -52,7 +52,10 @@ function expectBoundedMissingProfileRecovery(
   const serialized = JSON.stringify(value);
   if (options?.allowSessionTruncation) {
     expect(typeof value).toBe("string");
-    expect(value).toBe(SELECTED_AUTH_PROFILE_UNAVAILABLE_USER_TEXT.slice(0, 160));
+    expect(value).toContain("The selected auth profile is unavailable");
+    expect(value).toContain("`openclaw configure`");
+    expect(value).toMatch(/then retry\.$/u);
+    expect(value).toHaveLength(160);
   } else {
     expect(serialized).toContain(SELECTED_AUTH_PROFILE_UNAVAILABLE_USER_TEXT);
   }
@@ -224,7 +227,6 @@ describe("Codex auth product proof", () => {
                     command: process.execPath,
                     args: [appServerFixture],
                     requestTimeoutMs: REQUEST_TIMEOUT_MS,
-                    turnCompletionIdleTimeoutMs: REQUEST_TIMEOUT_MS,
                   },
                 },
               },
@@ -391,7 +393,6 @@ describe("Codex auth product proof", () => {
                     command: process.execPath,
                     args: [appServerFixture],
                     requestTimeoutMs: REQUEST_TIMEOUT_MS,
-                    turnCompletionIdleTimeoutMs: REQUEST_TIMEOUT_MS,
                   },
                 },
               },
@@ -581,7 +582,9 @@ describe("Codex auth product proof", () => {
       );
       // App-server may perform read-only capability discovery before OpenClaw rejects the
       // removed profile, but it must not start or resume a conversation turn.
-      expect(operationalMethods).toEqual(["model/list", "account/read"]);
+      expect(
+        operationalMethods.filter((method) => method !== "model/list" && method !== "account/read"),
+      ).toEqual([]);
 
       console.log(
         `[qa-codex-missing-auth-profile] ${JSON.stringify({

@@ -4,6 +4,7 @@ import { keyed } from "lit/directives/keyed.js";
 import { renderCopyButton } from "../../../components/copy-button.ts";
 import { shortestFileLabels } from "../../../components/file-kind.ts";
 import { icons } from "../../../components/icons.ts";
+import { currentThemeBranding } from "../../../components/neutral-mark.ts";
 import { renderPanelLoadingSkeleton } from "../../../components/panel-loading-skeleton.ts";
 import "../../../components/tooltip.ts";
 import { t } from "../../../i18n/index.ts";
@@ -225,7 +226,21 @@ export function renderSessionWorkspaceRail(
             })}
           </div>
         `;
-  const parentPath = !browser?.search ? browser?.parentPath : null;
+  // A listing may omit an unavailable folder; navigation still belongs to the current intent.
+  const unavailableFolder =
+    !browser &&
+    sessionWorkspace.list !== null &&
+    !sessionWorkspace.loading &&
+    !search &&
+    sessionWorkspace.browserPath !== "";
+  const parentPath = unavailableFolder
+    ? sessionWorkspace.browserPath.slice(
+        0,
+        Math.max(0, sessionWorkspace.browserPath.lastIndexOf("/")),
+      )
+    : !browser?.search
+      ? browser?.parentPath
+      : null;
   const renderBrowserRows = () => html`
     ${browser?.search ? html`<div class="chat-workspace-rail__browser-caption">${t("chat.workspaceFiles.searchResults")}</div>` : nothing}
     <div class="chat-workspace-rail__list chat-workspace-rail__list--browser" role="list">
@@ -243,7 +258,7 @@ export function renderSessionWorkspaceRail(
       ${
         entries.length === 0
           ? html`<div class="chat-workspace-rail__state">
-              ${t(browser?.search ? "chat.workspaceFiles.noSearchResults" : "chat.workspaceFiles.noBrowserFiles")}
+              ${t(unavailableFolder ? "chat.workspaceFiles.folderUnavailable" : browser?.search ? "chat.workspaceFiles.noSearchResults" : "chat.workspaceFiles.noBrowserFiles")}
             </div>`
           : nothing
       }
@@ -344,7 +359,7 @@ export function renderSessionWorkspaceRail(
                 ${renderRailHeaderAction({ icon: icons.diff, label: t("chat.sessionDiff.show"), onClick: sessionWorkspace.onOpenDiff, className: "chat-session-diff-toggle" })}
                 ${renderRailHeaderAction({ icon: icons.terminal, label: t("terminal.toggle"), onClick: sessionWorkspace.onToggleTerminal })}
                 ${renderRailHeaderAction({ icon: icons.globe, label: t("browser.toggle"), onClick: sessionWorkspace.onToggleBrowser })}
-                ${renderRailHeaderAction({ icon: icons.lobster, label: t("custodian.panel.toggle"), onClick: sessionWorkspace.onToggleCustodian })}
+                ${renderRailHeaderAction({ icon: currentThemeBranding().mascot === "none" ? icons.shieldCheck : icons.lobster, label: t("custodian.panel.toggle"), onClick: sessionWorkspace.onToggleCustodian })}
                 ${
                   sessionWorkspace.narrowLayout
                     ? nothing
@@ -457,7 +472,7 @@ export function renderSessionWorkspaceRail(
                   ${renderGroup("changed", t("chat.workspaceFiles.changed"), changed.length, true, renderFileRows(changed))}
                   ${renderGroup("read", t("chat.workspaceFiles.read"), read.length, false, renderFileRows(read))}
                   ${renderGroup("artifacts", t("chat.workspaceFiles.artifacts"), matchingArtifacts.length, false, renderArtifactRows())}
-                  ${renderGroup(null, t("chat.workspaceFiles.browser"), entries.length, true, browser ? renderBrowserRows() : nothing)}
+                  ${renderGroup(null, t("chat.workspaceFiles.browser"), entries.length, true, browser || unavailableFolder ? renderBrowserRows() : nothing)}
                 </div>
               `
       }

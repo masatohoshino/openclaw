@@ -69,6 +69,8 @@ const UPDATE_FIRST_HOP_COMPAT_CATALOGS = new Set([
   // Node-runner aliases for newer releases moved to the recorded package inventory.
   "0a12e16a5b6a2d723472cff04a05b356751da92a54c7b9a19cbb539c94190bb6",
   "2cb55271610aae5578175cf1587574231e9a72f9420a544d73370a8d3b8531ec",
+  // Current outputs retire pre-June memory teardown stubs.
+  "dfa812490cac8f09a274d698eb54c7c4a4b8474f3e264fbd38008af70b013cb3",
 ]);
 const IOS_WATCH_RELAY_COMMANDS = ['"watch.status"', '"watch.notify"'];
 type DockerE2ePlanOptions = {
@@ -131,7 +133,7 @@ function sanitizeLaneNameSuffix(value: string): string {
 const UPGRADE_SURVIVOR_RUNTIME_COMPANION_PACKAGES = ["@openclaw/codex"];
 
 // Pre-protocol catalogs are content-addressed. Unknown legacy blocks fail
-// closed instead of requiring a dependency or reimplementing a JavaScript parser.
+// closed; current catalogs declare capabilities in JSON without executing target code.
 const LEGACY_UPGRADE_SURVIVOR_SCENARIO_CATALOGS = new Map([
   [
     "f2549a057028829ff5286db89d357e5b3d4ec1f5cdb3ca07672b7e34a739b60a",
@@ -242,13 +244,62 @@ function readLegacyFrozenScenarioContract(source: string): string[] | undefined 
   return LEGACY_UPGRADE_SURVIVOR_SCENARIO_CATALOGS.get(digest)?.split(" ");
 }
 
+function readInertFrozenScenarioContract(
+  source: string,
+  targetRoot: string | undefined,
+  frozenTarget?: InertTargetContract,
+): string[] | undefined {
+  const text = readTargetMetadata(
+    targetRoot,
+    "scripts/lib/upgrade-survivor-scenarios.json",
+    frozenTarget,
+  );
+  if (text === null) {
+    return readLegacyFrozenScenarioContract(source);
+  }
+  // Read declared capabilities as data; never evaluate the selected tree's modules.
+  let catalog: unknown;
+  try {
+    catalog = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (
+    !catalog ||
+    typeof catalog !== "object" ||
+    Array.isArray(catalog) ||
+    Object.keys(catalog).length !== 2 ||
+    !("scenarios" in catalog) ||
+    !("assertionOnlyScenarios" in catalog) ||
+    !Array.isArray(catalog.scenarios) ||
+    catalog.scenarios.length === 0 ||
+    !Array.isArray(catalog.assertionOnlyScenarios)
+  ) {
+    return undefined;
+  }
+  const scenarios: unknown[] = [...catalog.scenarios, ...catalog.assertionOnlyScenarios];
+  if (
+    !scenarios.every(
+      (scenario): scenario is string =>
+        typeof scenario === "string" && /^[a-z0-9][a-z0-9-]*$/u.test(scenario),
+    ) ||
+    new Set(scenarios).size !== scenarios.length
+  ) {
+    return undefined;
+  }
+  return scenarios;
+}
+
 function readFrozenScenarioContract(
   assertionsFile: string,
   targetRoot: string,
   allowExecutableContract: boolean,
 ): string[] {
   if (!allowExecutableContract) {
-    const inertScenarios = readLegacyFrozenScenarioContract(readFileSync(assertionsFile, "utf8"));
+    const inertScenarios = readInertFrozenScenarioContract(
+      readFileSync(assertionsFile, "utf8"),
+      targetRoot,
+    );
     if (inertScenarios) {
       return inertScenarios;
     }
@@ -266,8 +317,9 @@ function readFrozenScenarioContract(
   if (result.status !== 0) {
     const errorLines = result.stderr.trim().split("\n");
     if (result.stderr.includes("unknown upgrade-survivor assertion command: list-scenarios")) {
-      const legacyScenarios = readLegacyFrozenScenarioContract(
+      const legacyScenarios = readInertFrozenScenarioContract(
         readFileSync(assertionsFile, "utf8"),
+        targetRoot,
       );
       if (legacyScenarios) {
         return legacyScenarios;
@@ -322,7 +374,10 @@ function filterUpgradeSurvivorScenariosForTarget(
   const relativePath = "scripts/e2e/lib/upgrade-survivor/assertions.mjs";
   if (frozenTarget) {
     const source = frozenTarget.source.readText(relativePath);
-    const catalog = source === null ? undefined : readLegacyFrozenScenarioContract(source);
+    const catalog =
+      source === null
+        ? undefined
+        : readInertFrozenScenarioContract(source, targetRoot, frozenTarget);
     if (!catalog) {
       throw new Error(`unrecognized required inert scenario catalog: ${relativePath}`);
     }
@@ -699,6 +754,7 @@ export function requiredPrepublishPluginPackagesForLanes(poolLanes: DockerE2eLan
       scenario === "abandoned-update" ||
       scenario === "custom-plugin-siblings" ||
       scenario === "projects-doctor" ||
+      scenario === "projects-startup-migration" ||
       scenario === "taskflow-restoration" ||
       scenario === "workshop-doctor-recovery"
     ) {

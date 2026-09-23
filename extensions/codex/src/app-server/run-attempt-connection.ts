@@ -1,3 +1,4 @@
+import { createAgentHarnessAttemptCancellation } from "openclaw/plugin-sdk/agent-harness-attempt-runtime";
 import {
   isActiveHarnessContextEngine,
   resolveSandboxContext,
@@ -39,11 +40,11 @@ import { resolveCodexNativeHookRelayEvents } from "./native-hook-relay.js";
 import { isCodexAppServerProfilerEnabled } from "./profiler-flag.js";
 import { ensureCodexWorkspaceDirOnce } from "./run-attempt-lifecycle.js";
 import type { CodexRunAttemptInput } from "./run-attempt-types.js";
+import { scopeCodexRunBindingStore } from "./session-binding-scope.js";
 import {
   createCodexSessionGenerationSupersededError,
   resolveCodexSessionBinding,
   resolveCodexRunSessionBindingAuthority,
-  scopeCodexRunBindingStore,
   sessionBindingIdentity,
   type CodexAppServerBindingIdentity,
   type CodexAppServerThreadBinding,
@@ -207,19 +208,28 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       bindingIdentity = physicalIdentity;
     }
   }
-  const { binding: admittedBinding, assertCurrent } = await resolveCodexSessionBinding({
-    reclaimStale: true,
-    bindingStore,
-    identity: bindingIdentity,
-    config: params.config,
-    storePath: params.sessionTarget?.storePath,
-    assertCurrent: params.hostCapabilities.assertActive,
-    signal: params.abortSignal,
-    assertBinding: params.expectedSessionRuntimeOwnership
-      ? (binding) =>
-          assertCodexSessionRuntimeOwnership(binding, params.expectedSessionRuntimeOwnership)
-      : undefined,
-  });
+  let modelExecution:
+    | ReturnType<NonNullable<typeof params.hostCapabilities.bindModelExecution>>
+    | undefined;
+  const assertModelExecutionCurrent = () => modelExecution?.assertCurrent();
+  const { binding: admittedBinding, assertCurrent: assertBindingCurrent } =
+    await resolveCodexSessionBinding({
+      reclaimStale: true,
+      bindingStore,
+      identity: bindingIdentity,
+      config: params.config,
+      storePath: params.sessionTarget?.storePath,
+      assertCurrent: params.hostCapabilities.assertActive,
+      signal: params.abortSignal,
+      assertBinding: params.expectedSessionRuntimeOwnership
+        ? (binding) =>
+            assertCodexSessionRuntimeOwnership(binding, params.expectedSessionRuntimeOwnership)
+        : undefined,
+    });
+  const assertCurrent = () => {
+    assertBindingCurrent();
+    assertModelExecutionCurrent();
+  };
   let startupBinding = admittedBinding;
   preDynamicStartupStages.mark("read-binding");
   const usesSupervisionConnection = startupBinding?.connectionScope === "supervision";
@@ -231,22 +241,25 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       "Codex supervision is disabled; refusing to open a native user-home supervised session",
     );
   }
-  const resolveRuntimeOptionsForBinding = (
+  const resolveRuntimeOptionsForBinding = async (
     binding: CodexAppServerThreadBinding | undefined,
     selection: { modelProvider?: string; model?: string },
   ) =>
-    resolveCodexBindingAppServerConnection({
-      binding,
-      pluginConfig,
-      execPolicy,
-      modelProvider: selection.modelProvider,
-      model: selection.model,
-      config: params.config,
-      agentDir,
-      requirementsToml,
-      openClawSandboxActive: sandbox?.enabled === true,
-      sessionPermissionMode: params.permissionMode,
-    }).appServer;
+    (
+      await resolveCodexBindingAppServerConnection({
+        binding,
+        pluginConfig,
+        execPolicy,
+        modelProvider: selection.modelProvider,
+        model: selection.model,
+        config: params.config,
+        agentDir,
+        requirementsToml,
+        openClawSandboxActive: sandbox?.enabled === true,
+        sessionPermissionMode: params.permissionMode,
+        assertCurrent,
+      })
+    ).appServer;
   const initialStartupBindingHadInactiveThreadBootstrap =
     isInactiveThreadBootstrapBinding(startupBinding);
   const appServerHomeScope = resolveCodexAppServerHomeScope({
@@ -315,7 +328,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
   };
   let reviewerPolicyContext = resolveReviewerPolicyContext(startupBinding);
   preDynamicStartupStages.mark("auth-profile");
-  let configuredAppServer = resolveRuntimeOptionsForBinding(startupBinding, {
+  let configuredAppServer = await resolveRuntimeOptionsForBinding(startupBinding, {
     modelProvider: reviewerPolicyContext.modelProvider,
     model: reviewerPolicyContext.model,
   });
@@ -392,35 +405,40 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
     terminalOutcomeFrozen: false,
     sharedAbortAllowedAfterTerminalOutcome: false,
   };
-  const runAbortController = new AbortController();
-  let attemptAbortNotified = false;
-  const notifyAttemptAbort = () => {
-    if (attemptAbortNotified) {
+  const cancellation = createAgentHarnessAttemptCancellation({
+    upstreamSignal: params.abortSignal,
+    onAttemptAbort: () => params.onAttemptAbort?.(),
+    state: terminalState,
+  });
+  const { controller: runAbortController, abortExplicitly } = cancellation;
+  let detachModelAbort: (() => void) | undefined;
+  const releaseModelExecution = () => {
+    detachModelAbort?.();
+    detachModelAbort = undefined;
+    modelExecution?.release();
+  };
+  const bindModelExecution = (
+    model: Parameters<NonNullable<typeof params.hostCapabilities.bindModelExecution>>[0],
+  ) => {
+    assertCurrent();
+    const bind = params.hostCapabilities.bindModelExecution;
+    if (!bind) {
+      throw new Error("Codex inference requires host model execution authority.");
+    }
+    const execution = bind(model);
+    releaseModelExecution();
+    modelExecution = execution;
+    if (!execution) {
       return;
     }
-    attemptAbortNotified = true;
-    params.onAttemptAbort?.();
-  };
-  const abortExplicitly = (reason: unknown) => {
-    if (terminalState.terminalOutcomeFrozen) {
-      if (terminalState.sharedAbortAllowedAfterTerminalOutcome) {
-        notifyAttemptAbort();
-      }
-      return;
+    const abortModelExecution = () => abortExplicitly(execution.signal.reason);
+    execution.signal.addEventListener("abort", abortModelExecution, { once: true });
+    detachModelAbort = () => execution.signal.removeEventListener("abort", abortModelExecution);
+    if (execution.signal.aborted) {
+      abortModelExecution();
     }
-    notifyAttemptAbort();
-    terminalState.explicitCancellationObserved = true;
-    terminalState.explicitCancellationReason ??= reason;
-    runAbortController.abort(reason);
+    execution.assertCurrent();
   };
-  const abortFromUpstream = () => {
-    abortExplicitly(params.abortSignal?.reason ?? "upstream_abort");
-  };
-  if (params.abortSignal?.aborted) {
-    abortFromUpstream();
-  } else {
-    params.abortSignal?.addEventListener("abort", abortFromUpstream, { once: true });
-  }
   try {
     const startupBindingBeforeRotation = startupBinding;
     const startupBindingResolution = await rotateOversizedCodexAppServerStartupBinding({
@@ -428,9 +446,8 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       binding: startupBinding,
       bindingStore,
       identity: bindingIdentity,
-      sessionFile: params.sessionFile,
       agentDir,
-      codexHome: appServer.start.env?.CODEX_HOME,
+      codexHome: appServer.start.codexHome ?? appServer.start.env?.CODEX_HOME,
       config: params.config,
       contextEngineActive: Boolean(activeContextEngine),
       expectedSessionRuntimeOwnership: params.expectedSessionRuntimeOwnership,
@@ -443,7 +460,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
     // cleared or replaced native thread changes its model, policy, or connection.
     if (startupBinding !== startupBindingBeforeRotation) {
       reviewerPolicyContext = resolveReviewerPolicyContext(startupBinding);
-      configuredAppServer = resolveRuntimeOptionsForBinding(startupBinding, {
+      configuredAppServer = await resolveRuntimeOptionsForBinding(startupBinding, {
         modelProvider: reviewerPolicyContext.modelProvider,
         model: reviewerPolicyContext.model,
       });
@@ -473,12 +490,12 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       // best available sample for sizing the fresh thread's continuity projection.
       continuityCalibration: startupBindingBeforeRotation?.continuityCalibration,
     };
-    const resolveRuntimeOptionsForCurrentBinding = (selection: {
+    const resolveRuntimeOptionsForCurrentBinding = async (selection: {
       modelProvider?: string;
       model?: string;
     }) =>
       resolveFinalAppServer(
-        resolveRuntimeOptionsForBinding(mutable.startupBinding, selection),
+        await resolveRuntimeOptionsForBinding(mutable.startupBinding, selection),
         selection,
       ).appServer;
     assertCurrent();
@@ -486,6 +503,9 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
     return {
       params,
       assertCurrent,
+      assertModelExecutionCurrent,
+      bindModelExecution,
+      releaseModelExecution,
       options,
       attemptStartedAt,
       profilerEnabled,
@@ -525,7 +545,7 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
       runAbortController,
       terminalState,
       abortExplicitly,
-      abortFromUpstream,
+      cancellation,
       resolveReviewerPolicyContext,
       resolveRuntimeOptionsForCurrentBinding,
       mutable,
@@ -534,7 +554,8 @@ export async function prepareCodexAttemptConnection({ params, options }: CodexRu
     };
   } catch (error) {
     // The attempt owns this listener only after connection preparation returns.
-    params.abortSignal?.removeEventListener("abort", abortFromUpstream);
+    cancellation.dispose();
+    releaseModelExecution();
     throw error;
   }
 }

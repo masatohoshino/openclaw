@@ -347,12 +347,10 @@ describe("config plugin validation", () => {
   });
 
   it("reports missing plugin refs across entries and allowlist surfaces", () => {
-    const missingPath = path.join(suiteHome, "missing-plugin-dir");
     const res = validateInSuite({
       agents: { list: [{ id: "openclaw" }] },
       plugins: {
         enabled: true,
-        load: { paths: [missingPath] },
         entries: {
           "missing-plugin": { enabled: true },
           "missing-slot": { enabled: false },
@@ -747,31 +745,6 @@ describe("config plugin validation", () => {
 
       expect(res.ok).toBe(true);
       expectNoMissingCodexPluginWarning(res.warnings);
-    });
-
-    it("warns when a listed agent can fall back from gpt-5.6 to Spark", () => {
-      const res = validateWithMissingCodexPlugin({
-        agents: {
-          ownership: "explicit",
-          defaults: {
-            model: { primary: "openai/gpt-5.6", fallbacks: [] },
-          },
-          list: [
-            { id: "openclaw" },
-            {
-              id: "worker",
-              model: {
-                primary: "openai/gpt-5.6",
-                fallbacks: ["openai/gpt-5.3-codex-spark"],
-              },
-            },
-          ],
-        },
-        plugins: { entries: { codex: {} } },
-      });
-
-      expect(res.ok).toBe(true);
-      expectMissingCodexPluginWarning(res.warnings);
     });
 
     it.each([

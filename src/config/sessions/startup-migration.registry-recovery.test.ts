@@ -21,19 +21,18 @@ import {
   openOpenClawAgentDatabase,
   type OpenClawAgentDatabaseOptions,
 } from "../../state/openclaw-agent-db.js";
+import { clearOpenClawAgentIntegrityVerification } from "../../state/openclaw-quarantine-store.js";
 import {
   closeOpenClawStateDatabaseForTest,
-  repairOpenClawStateDatabaseSchemaIfNeeded,
+  prepareOpenClawStateDatabaseSchema,
   runOpenClawStateWriteTransaction,
 } from "../../state/openclaw-state-db.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
 import { loadCombinedSessionStoreForGatewayCore } from "./combined-store-gateway.js";
 import { replaceSessionEntry } from "./session-accessor.js";
-import {
-  isCanonicalSqliteSessionMainKeyCurrent,
-  setCanonicalSqliteSessionMainKey,
-} from "./session-canonical-key.js";
+import { isCanonicalSqliteSessionMainKeyCurrent } from "./session-canonical-key-read.js";
+import { setCanonicalSqliteSessionMainKey } from "./session-canonical-key.js";
 import { resolveSqliteTargetFromSessionStorePath } from "./session-sqlite-target.js";
 import { reconcileSessionTranscriptIndexes } from "./session-transcript-reconcile.js";
 import { runSessionStartupMigration } from "./startup-migration.js";
@@ -92,7 +91,6 @@ it("does not create a missing configured agent database during startup maintenan
     agentId: "idle",
     env,
   }).path;
-  const migrateManagedWorktreeCanonicalWorkspaces = vi.fn(async () => 0);
 
   await runSessionStartupMigration({
     cfg,
@@ -109,13 +107,11 @@ it("does not create a missing configured agent database during startup maintenan
         outcomes: [{ kind: "not-armed" as const }],
         warnings: [],
       })),
-      migrateManagedWorktreeCanonicalWorkspaces,
       resolveAllAgentSessionStoreTargetsSync: () => [{ agentId: "idle", storePath }],
     },
   });
 
   expect(fs.existsSync(sqlitePath)).toBe(false);
-  expect(migrateManagedWorktreeCanonicalWorkspaces).not.toHaveBeenCalled();
 });
 
 it.each([false, true])(
@@ -226,13 +222,11 @@ it("re-registers durable lineage children before configured-only runtime reads",
       ),
     ).toBe(false);
 
-    const migrateManagedWorktreeCanonicalWorkspaces = vi.fn(async () => 0);
     await runSessionStartupMigration({
       cfg,
       env,
       log: { info: vi.fn(), warn: vi.fn() },
       deps: {
-        migrateManagedWorktreeCanonicalWorkspaces,
         migrateLegacyMainSessionKeys: vi.fn(async () => ({
           armed: false,
           changes: [],
@@ -245,7 +239,6 @@ it("re-registers durable lineage children before configured-only runtime reads",
         })),
       },
     });
-    expect(migrateManagedWorktreeCanonicalWorkspaces).toHaveBeenCalled();
 
     expect(listOpenClawRegisteredAgentDatabases({ env })).toContainEqual(
       expect.objectContaining({ agentId: "codex", path: childDatabasePath }),
@@ -292,7 +285,7 @@ it("keeps copied state directories self-contained for combined gateway reads", a
   const canonicalCopiedStateDir = fs.realpathSync.native(copiedStateDir);
   await withEnvAsync({ OPENCLAW_STATE_DIR: canonicalCopiedStateDir }, async () => {
     const env = { ...process.env };
-    expect(repairOpenClawStateDatabaseSchemaIfNeeded({ env }).warnings).toEqual([]);
+    expect((await prepareOpenClawStateDatabaseSchema({ env })).warnings).toEqual([]);
     const combined = loadCombinedSessionStoreForGatewayCore(cfg, {
       configuredAgentsOnly: true,
     });
@@ -318,13 +311,12 @@ it.each(["registry", "main-key"] as const)(
     const initial = openOpenClawAgentDatabase(options);
     setCanonicalSqliteSessionMainKey(initial, repair === "main-key" ? "previous" : "main");
     closeOpenClawAgentDatabasesForTest();
+    clearOpenClawAgentIntegrityVerification(initial.path, env);
     if (repair === "registry") {
       unregisterOpenClawAgentDatabase({ ...options, path: initial.path });
     }
     const originalOpen = nodeSqlite.openNodeSqliteDatabase;
     let yielded = false;
-    let maintenanceSawProgress = false;
-    let maintenanceSawSelectedKey = false;
     let tick: ReturnType<typeof setImmediate> | undefined;
     const open = vi
       .spyOn(nodeSqlite, "openNodeSqliteDatabase")
@@ -345,17 +337,10 @@ it.each(["registry", "main-key"] as const)(
         cfg,
         env,
         log,
-        deps: {
-          migrateManagedWorktreeCanonicalWorkspaces: async () => {
-            maintenanceSawProgress = yielded;
-            maintenanceSawSelectedKey = isCanonicalSqliteSessionMainKeyCurrent(options, undefined);
-            return 0;
-          },
-        },
       });
       expect(log.warn).not.toHaveBeenCalled();
-      expect(maintenanceSawProgress).toBe(true);
-      expect(maintenanceSawSelectedKey).toBe(true);
+      expect(yielded).toBe(true);
+      expect(isCanonicalSqliteSessionMainKeyCurrent(options, undefined)).toBe(true);
       expect(listOpenClawRegisteredAgentDatabases({ env })).toContainEqual(
         expect.objectContaining({ agentId: "main", path: initial.path }),
       );

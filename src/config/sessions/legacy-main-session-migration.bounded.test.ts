@@ -9,7 +9,7 @@ import { appendTranscriptEventInTransaction } from "./session-accessor.sqlite-tr
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(["doctor-fix", "automatic"] as const)(
+it.each(["doctor-fix", "detect"] as const)(
   "%s completes an owner-only store without reading transcripts",
   async (mode) => {
     await withOpenClawTestState({ label: "legacy-main-bounded" }, async (state) => {
@@ -25,7 +25,7 @@ it.each(["doctor-fix", "automatic"] as const)(
       expect(result).toMatchObject({
         armed: true,
         complete: true,
-        ledgerComplete: true,
+        ledgerComplete: mode === "doctor-fix",
         outcomes: [{ kind: "no-legacy-rows" }],
         warnings: [],
       });
@@ -34,7 +34,7 @@ it.each(["doctor-fix", "automatic"] as const)(
   },
 );
 
-it.each(["doctor-fix", "automatic"] as const)(
+it.each(["doctor-fix", "detect"] as const)(
   "%s reads only legacy-targeted transcripts across stores without materializing them",
   async (mode) => {
     await withOpenClawTestState({ label: "legacy-main-targeted" }, async (state) => {
@@ -93,7 +93,7 @@ function recordTranscriptReads() {
     [eager, streamed].flatMap((spy) =>
       spy.mock.calls.flatMap(([, query]) => {
         const compiled = query.compile();
-        return /^select .* from "transcript_events"/.test(compiled.sql)
+        return /^select\b[\s\S]*\bfrom "transcript_events"/.test(compiled.sql)
           ? [{ eager: spy === eager, parameters: compiled.parameters }]
           : [];
       }),

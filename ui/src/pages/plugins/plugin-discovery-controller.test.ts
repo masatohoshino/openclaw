@@ -51,13 +51,11 @@ function setup(
     }
     return response;
   });
-  const onEntriesChanged = vi.fn();
   const controller = new PluginDiscoveryController(host, {
     getClient: () => client,
     isConnected: () => true,
-    onEntriesChanged,
   });
-  return { controller, onEntriesChanged, request };
+  return { controller, request };
 }
 
 afterEach(() => {
@@ -207,7 +205,7 @@ it("counts only settled manual searches across refresh, filters and connection i
   controller.invalidate();
   await vi.advanceTimersByTimeAsync(250);
   expect(request).not.toHaveBeenCalled();
-  controller.ensureInitial();
+  await controller.refresh();
   await vi.advanceTimersByTimeAsync(0);
   expect(request.mock.lastCall?.[1]).toEqual({ intent: "all", query: "calendar", pageSize: 100 });
   request.mockClear();
