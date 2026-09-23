@@ -99,16 +99,16 @@ function buildBaseAllowFrom(ctx: SlackMonitorContext, teamId?: string): string[]
 export async function resolveSlackEffectiveAllowFrom(
   ctx: SlackMonitorContext,
   options?: { includePairingStore?: boolean; eventScope?: SlackEventScope },
-): Promise<{ allowFrom: string[]; storeReadFailed: boolean }> {
+): Promise<{ allowFromLower: string[]; storeReadFailed: boolean }> {
   const teamId = options?.eventScope?.teamId ?? ctx.teamId;
   const base = buildBaseAllowFrom(ctx, teamId);
   if (options?.includePairingStore !== true) {
-    return { allowFrom: base, storeReadFailed: false };
+    return { allowFromLower: base, storeReadFailed: false };
   }
   // Same gating the shared ingress resolver applies: a policy that never
   // consults stored approvals must not read the store at all.
   if (ctx.dmPolicy === "allowlist" || ctx.dmPolicy === "open") {
-    return { allowFrom: base, storeReadFailed: false };
+    return { allowFromLower: base, storeReadFailed: false };
   }
   let storeReadFailed = false;
   let storeAllowFrom: string[];
@@ -122,7 +122,7 @@ export async function resolveSlackEffectiveAllowFrom(
     storeAllowFrom = [];
   }
   return {
-    allowFrom: resolveSlackUserAllowListForTeam({
+    allowFromLower: resolveSlackUserAllowListForTeam({
       allowList: [...base, ...storeAllowFrom],
       teamId,
     }),
@@ -555,13 +555,10 @@ export async function authorizeSlackSystemEventSender(params: {
     }
   }
 
-  const { allowFrom: allowFromLower, storeReadFailed } = await resolveSlackEffectiveAllowFrom(
-    params.ctx,
-    {
-      includePairingStore: ingressChannelType === "im",
-      eventScope: params.eventScope,
-    },
-  );
+  const { allowFromLower, storeReadFailed } = await resolveSlackEffectiveAllowFrom(params.ctx, {
+    includePairingStore: ingressChannelType === "im",
+    eventScope: params.eventScope,
+  });
   const channelConfig = channelId
     ? resolveSlackChannelConfig({
         teamId: params.eventScope?.teamId ?? params.ctx.teamId,

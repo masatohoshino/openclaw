@@ -169,28 +169,28 @@ describe("resolveSlackEffectiveAllowFrom", () => {
       "falls back to channel config allowFrom when pairing store throws",
       () => readChannelAllowFromStoreMock.mockRejectedValueOnce(new Error("boom")),
       true,
-      { allowFrom: ["u1"], storeReadFailed: true },
+      { allowFromLower: ["u1"], storeReadFailed: true },
       undefined,
     ],
     [
       "treats malformed non-array pairing-store responses as empty",
       () => readChannelAllowFromStoreMock.mockReturnValueOnce(undefined),
       true,
-      { allowFrom: ["u1"], storeReadFailed: false },
+      { allowFromLower: ["u1"], storeReadFailed: false },
       undefined,
     ],
     [
       "reads pairing-store allowFrom when requested",
       () => readChannelAllowFromStoreMock.mockResolvedValue(["u2"]),
       true,
-      { allowFrom: ["u1", "u2"], storeReadFailed: false },
+      { allowFromLower: ["u1", "u2"], storeReadFailed: false },
       1,
     ],
     [
       "does not read pairing-store allowFrom unless requested",
       () => readChannelAllowFromStoreMock.mockResolvedValue(["u2"]),
       false,
-      { allowFrom: ["u1"], storeReadFailed: false },
+      { allowFromLower: ["u1"], storeReadFailed: false },
       0,
     ],
   ] as const)("%s", async (_name, setup, includePairingStore, expected, expectedCalls) => {
@@ -221,7 +221,7 @@ describe("resolveSlackEffectiveAllowFrom", () => {
         eventScope: { teamId: "T11111111", client: {} as never },
       }),
     ).resolves.toEqual({
-      allowFrom: ["uconfig123", "ulegacy123", "team:t11111111:user:u11111111"],
+      allowFromLower: ["uconfig123", "ulegacy123", "team:t11111111:user:u11111111"],
       storeReadFailed: false,
     });
     await expect(
@@ -230,12 +230,12 @@ describe("resolveSlackEffectiveAllowFrom", () => {
         eventScope: { teamId: "T22222222", client: {} as never },
       }),
     ).resolves.toEqual({
-      allowFrom: ["uconfig123", "ulegacy123", "team:t22222222:user:u22222222"],
+      allowFromLower: ["uconfig123", "ulegacy123", "team:t22222222:user:u22222222"],
       storeReadFailed: false,
     });
     await expect(
       resolveSlackEffectiveAllowFrom(ctx, { includePairingStore: true }),
-    ).resolves.toEqual({ allowFrom: ["uconfig123", "ulegacy123"], storeReadFailed: false });
+    ).resolves.toEqual({ allowFromLower: ["uconfig123", "ulegacy123"], storeReadFailed: false });
   });
 
   it("keeps only configured users for the current Enterprise workspace", async () => {
@@ -246,14 +246,17 @@ describe("resolveSlackEffectiveAllowFrom", () => {
       resolveSlackEffectiveAllowFrom(ctx, {
         eventScope: { teamId: "T11111111", client: {} as never },
       }),
-    ).resolves.toEqual({ allowFrom: ["team:t11111111:user:u01234567"], storeReadFailed: false });
+    ).resolves.toEqual({
+      allowFromLower: ["team:t11111111:user:u01234567"],
+      storeReadFailed: false,
+    });
     await expect(
       resolveSlackEffectiveAllowFrom(ctx, {
         eventScope: { teamId: "T22222222", client: {} as never },
       }),
-    ).resolves.toEqual({ allowFrom: [], storeReadFailed: false });
+    ).resolves.toEqual({ allowFromLower: [], storeReadFailed: false });
     await expect(resolveSlackEffectiveAllowFrom(ctx)).resolves.toEqual({
-      allowFrom: [],
+      allowFromLower: [],
       storeReadFailed: false,
     });
   });
