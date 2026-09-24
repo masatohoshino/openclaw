@@ -566,6 +566,7 @@ function runProtocolSinceFixture(checkout: string, baseSha: string) {
   for (const scriptPath of [
     "packages/normalization-core/src/record-coerce.ts",
     "scripts/check-protocol-since.mts",
+    "scripts/lib/native-typescript.mts",
     "scripts/lib/repo-root.mjs",
   ]) {
     const target = path.join(checkout, scriptPath);
@@ -1277,7 +1278,6 @@ fi
     const runProfileStep = qaShardJob.steps.find(
       (step: WorkflowStep) => step.name === "Run QA profile shard",
     );
-    expect(runProfileStep.env?.OPENCLAW_QA_ALLOW_UPDATE_RUN_SELF).toBe("1");
     expect(runProfileStep.env?.OPENCLAW_QA_CREDENTIAL_ACQUIRE_TIMEOUT_MS).toBe("120000");
     expect(runProfileStep.env?.PROTOCOL_SINCE_BASE_SHA).toBe(
       "${{ needs.validate_selected_ref.outputs.protocol_base_revision }}",

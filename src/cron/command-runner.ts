@@ -160,11 +160,7 @@ export async function runCronCommandJob(params: {
       termination !== "timeout" &&
       termination !== "no-output-timeout" &&
       termination !== "signal";
-    if (ok && cleanupFailure) {
-      // Unconfirmed cleanup never records success; the cleanup failure is terminal.
-      throw cleanupFailure;
-    }
-    const status: CronRunStatus = ok ? "ok" : "error";
+    const status: CronRunStatus = ok && !cleanupFailure ? "ok" : "error";
     const summary = buildCronCommandSummary({
       stdout: result.stdout,
       stderr: result.stderr,
@@ -172,7 +168,7 @@ export async function runCronCommandJob(params: {
       preservedStderrLines: result.preservedStderrLines,
     });
     const error = ok
-      ? undefined
+      ? cleanupFailure?.message
       : commandErrorMessage({
           code: result.code,
           signal: result.signal,
@@ -197,7 +193,9 @@ export async function runCronCommandJob(params: {
                 ? ({ kind: "reason", reason: "timeout" } as const)
                 : ({ kind: "permanent" } as const),
           }
-        : {}),
+        : ok && cleanupFailure
+          ? { errorClassification: { kind: "permanent" as const } }
+          : {}),
       ...(summary ? { summary } : {}),
       diagnostics: buildDiagnostics({
         command,

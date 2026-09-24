@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandProcessCleanupError } from "../../process/exec-result.js";
 
 const service = {
@@ -8,7 +8,9 @@ const service = {
 const runServiceRestart = vi.fn();
 const runServiceStop = vi.fn();
 const readActiveGatewayLockIdentity = vi.fn();
-const findVerifiedGatewayListenerPidsOnPortSync = vi.fn((_port: number) => [] as number[]);
+const resolveVerifiedGatewayListenerPids = vi.fn(
+  (_port: number, _env?: NodeJS.ProcessEnv): number[] => [],
+);
 const signalVerifiedGatewayPidSync = vi.fn();
 const resolveGatewayPort = vi.fn(() => 18_789);
 const readBestEffortConfig = vi.fn(async () => ({}));
@@ -72,8 +74,7 @@ vi.mock("./lifecycle-safe-restart.js", () => ({
   runSafeGatewayRestart: vi.fn(),
 }));
 vi.mock("./lifecycle-unmanaged.js", () => ({
-  resolveVerifiedGatewayListenerPids: (port: number) =>
-    findVerifiedGatewayListenerPidsOnPortSync(port),
+  resolveVerifiedGatewayListenerPids,
   signalGatewayRestart: vi.fn(),
 }));
 vi.mock("./restart-health.js", () => ({
@@ -97,6 +98,13 @@ vi.mock("../terminal-interactivity.js", () => ({
 const { runDaemonRestart, runDaemonStop } = await import("./lifecycle.js");
 
 describe("Gateway lifecycle fallback inspection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    service.readCommand.mockReset().mockResolvedValue(null);
+    service.readRuntime.mockReset().mockResolvedValue({ status: "stopped" });
+    readActiveGatewayLockIdentity.mockReset().mockResolvedValue(undefined);
+  });
+
   it("does not fall back after uncertain native command cleanup during restart inspection", async () => {
     const cleanupError = new CommandProcessCleanupError();
     service.readCommand.mockRejectedValueOnce(cleanupError);
@@ -109,7 +117,6 @@ describe("Gateway lifecycle fallback inspection", () => {
   it("does not choose unmanaged stop fallback after uncertain native command cleanup", async () => {
     const cleanupError = new CommandProcessCleanupError();
     readActiveGatewayLockIdentity.mockResolvedValueOnce(undefined);
-    service.readRuntime.mockResolvedValueOnce({ status: "stopped" });
     service.readCommand.mockRejectedValueOnce(cleanupError);
     runServiceStop.mockImplementationOnce(
       async (params: {
@@ -122,11 +129,32 @@ describe("Gateway lifecycle fallback inspection", () => {
     expect(signalVerifiedGatewayPidSync).not.toHaveBeenCalled();
   });
 
+  it("does not choose unmanaged stop after uncertain Linux runtime inspection cleanup", async () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const cleanupError = new CommandProcessCleanupError();
+    service.readRuntime.mockRejectedValueOnce(cleanupError);
+    runServiceStop.mockImplementationOnce(
+      async (params: {
+        onNotLoaded?: (ctx: { stdout: NodeJS.WritableStream }) => Promise<unknown>;
+      }) => await params.onNotLoaded?.({ stdout: process.stdout }),
+    );
+
+    try {
+      await expect(runDaemonStop({ json: true })).rejects.toBe(cleanupError);
+
+      expect(readActiveGatewayLockIdentity).not.toHaveBeenCalled();
+      expect(service.readCommand).not.toHaveBeenCalled();
+      expect(resolveVerifiedGatewayListenerPids).not.toHaveBeenCalled();
+      expect(signalVerifiedGatewayPidSync).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it("keeps unmanaged stop fallback for ordinary command inspection failures", async () => {
     readActiveGatewayLockIdentity.mockResolvedValueOnce(undefined);
-    service.readRuntime.mockResolvedValueOnce({ status: "stopped" });
     service.readCommand.mockRejectedValueOnce(new Error("inspection failed"));
-    findVerifiedGatewayListenerPidsOnPortSync.mockReturnValueOnce([4200]);
+    resolveVerifiedGatewayListenerPids.mockReturnValueOnce([4200]);
     runServiceStop.mockImplementationOnce(
       async (params: {
         onNotLoaded?: (ctx: { stdout: NodeJS.WritableStream }) => Promise<unknown>;
@@ -137,6 +165,10 @@ describe("Gateway lifecycle fallback inspection", () => {
       expect.objectContaining({ result: "stopped" }),
     );
 
-    expect(signalVerifiedGatewayPidSync).toHaveBeenCalledWith(4200, "SIGTERM");
+    expect(resolveVerifiedGatewayListenerPids).toHaveBeenCalledWith(18_789, process.env);
+    expect(signalVerifiedGatewayPidSync).toHaveBeenCalledWith(4200, "SIGTERM", {
+      env: process.env,
+      port: 18_789,
+    });
   });
 });

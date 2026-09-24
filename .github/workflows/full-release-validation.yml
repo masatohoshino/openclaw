@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       trusted_workflow_json:
-        description: Source envelope {trustedWorkflow, validationPurpose, publicationSelection}; null identity permits existing direct-route inference, never intent inference
+        description: Source envelope {trustedWorkflow, validationPurpose, publicationSelection, optional laneInputs}; null identity permits existing direct-route inference, never intent inference
         required: true
         default: ""
         type: string
@@ -108,7 +108,7 @@ on:
         default: ""
         type: string
       cross_os_suite_filter:
-        description: Optional cross-OS selection for all or cross-os runs, e.g. ubuntu,macos or windows/packaged-upgrade
+        description: Optional cross-OS selection; all runs require every OS/install/upgrade suite, focused cross-os runs allow windows/packaged-upgrade
         required: false
         default: ""
         type: string
@@ -1674,7 +1674,6 @@ jobs:
     name: Run package Telegram E2E
     needs: [resolve_target, plugin_compatibility_readiness, evidence_reuse]
     if: ${{ always() && github.run_attempt == 1 && needs.resolve_target.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.plugin_compatibility_readiness.result) && contains(fromJSON('["success","skipped"]'), needs.evidence_reuse.result) && inputs.telegram_waiver == '' && needs.resolve_target.outputs.coverage_policy != 'npm-beta-v1' && contains(fromJSON('["all","npm-telegram"]'), inputs.rerun_group) && (inputs.npm_telegram_package_spec != '' || inputs.release_package_spec != '') && needs.evidence_reuse.outputs.reuse != 'true' }}
-    continue-on-error: ${{ startsWith(github.ref, 'refs/heads/tideclaw/alpha/') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
