@@ -40,7 +40,6 @@ vi.mock("./openai-chatgpt-oauth-flow.runtime.js", () => ({
   refreshOpenAICodexToken: runtimeMocks.refreshOpenAICodexToken,
 }));
 
-import { createOpenAICodexProviderRuntime } from "./openai-chatgpt-provider-runtime.factory.js";
 const capturedRegistrations: ReturnType<typeof createCapturedPluginRegistration>[] = [];
 
 function registerOpenAIPluginWithHook(params?: { pluginConfig?: Record<string, unknown> }) {
@@ -387,15 +386,21 @@ describe("openai plugin", () => {
       expires: Date.now() + 60_000,
     };
     runtimeMocks.refreshOpenAICodexToken.mockResolvedValue(refreshed);
-    const runtime = createOpenAICodexProviderRuntime({
-      ensureGlobalUndiciEnvProxyDispatcher: runtimeMocks.ensureGlobalUndiciEnvProxyDispatcher,
-      refreshOpenAICodexToken: runtimeMocks.refreshOpenAICodexToken,
-    });
-
-    await expect(runtime.refreshOpenAICodexToken("refresh-token")).resolves.toBe(refreshed);
+    const { providers } = registerOpenAIPluginWithHook();
+    const provider = requireRegisteredProvider(providers, "openai");
+    await expect(
+      provider.refreshOAuth!({
+        type: "oauth",
+        provider: "openai",
+        access: "old-access",
+        refresh: "refresh-token",
+        expires: 0,
+      }),
+    ).resolves.toMatchObject(refreshed);
 
     expect(runtimeMocks.ensureGlobalUndiciEnvProxyDispatcher).toHaveBeenCalledOnce();
     expect(runtimeMocks.refreshOpenAICodexToken).toHaveBeenCalledOnce();
+    expect(runtimeMocks.refreshOpenAICodexToken).toHaveBeenCalledWith("refresh-token");
     expect(
       expectDefined(
         runtimeMocks.ensureGlobalUndiciEnvProxyDispatcher.mock.invocationCallOrder[0],
@@ -484,6 +489,103 @@ describe("openai plugin", () => {
         tools: [noParamsTool],
       } as never),
     ).toStrictEqual([]);
+  });
+
+  it.each([
+    {
+      name: "Platform",
+      baseUrl: "https://api.openai.com/v1",
+      supportsPromptCacheKey: undefined,
+      expected: true,
+    },
+    {
+      name: "Codex OAuth",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      supportsPromptCacheKey: undefined,
+      expected: true,
+    },
+    {
+      name: "normalized official endpoint",
+      baseUrl: " https://API.OPENAI.COM./v1/ ",
+      supportsPromptCacheKey: undefined,
+      expected: true,
+    },
+    {
+      name: "custom proxy",
+      baseUrl: "https://openai-proxy.example/v1",
+      supportsPromptCacheKey: undefined,
+      expected: false,
+    },
+    {
+      name: "opted proxy",
+      baseUrl: "https://openai-proxy.example/v1",
+      supportsPromptCacheKey: true,
+      expected: true,
+    },
+    {
+      name: "opted-out Platform",
+      baseUrl: "https://api.openai.com/v1",
+      supportsPromptCacheKey: false,
+      expected: false,
+    },
+    {
+      name: "opted-out Codex",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      supportsPromptCacheKey: false,
+      expected: false,
+    },
+    {
+      name: "opted-out proxy",
+      baseUrl: "https://openai-proxy.example/v1",
+      supportsPromptCacheKey: false,
+      expected: false,
+    },
+    {
+      name: "lookalike host",
+      baseUrl: "https://api.openai.com.example/v1",
+      supportsPromptCacheKey: undefined,
+      expected: false,
+    },
+    {
+      name: "plaintext official endpoint",
+      baseUrl: "http://api.openai.com/v1",
+      supportsPromptCacheKey: undefined,
+      expected: false,
+    },
+    {
+      name: "invalid official path",
+      baseUrl: "https://api.openai.com/not-api",
+      supportsPromptCacheKey: undefined,
+      expected: false,
+    },
+    {
+      name: "unresolved route",
+      baseUrl: undefined,
+      supportsPromptCacheKey: undefined,
+      expected: false,
+    },
+  ])("registers $name cache-TTL eligibility", ({ baseUrl, supportsPromptCacheKey, expected }) => {
+    const { providers } = registerOpenAIPluginWithHook();
+    const provider = requireRegisteredProvider(providers, "openai");
+    expect(
+      provider.isCacheTtlEligible?.({
+        provider: " OPENAI ",
+        modelId: "gpt-4o",
+        modelApi: baseUrl?.includes("chatgpt.com")
+          ? "openai-chatgpt-responses"
+          : "openai-responses",
+        baseUrl,
+        supportsPromptCacheKey,
+      }),
+    ).toBe(expected);
+    expect(
+      provider.isCacheTtlEligible?.({
+        provider: "openrouter",
+        modelId: "openai/gpt-4o",
+        baseUrl,
+        supportsPromptCacheKey: true,
+      }),
+    ).toBe(false);
   });
 
   it("registers GPT-5 system prompt contributions when the friendly overlay is enabled", () => {

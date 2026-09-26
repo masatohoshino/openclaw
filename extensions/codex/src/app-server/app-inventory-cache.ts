@@ -50,7 +50,7 @@ type CodexAppInventoryCacheDiagnostic = {
 /** Immutable app inventory snapshot returned from cache reads and refreshes. */
 export type CodexAppInventorySnapshot = {
   key: string;
-  apps: v2.AppInfo[];
+  apps: CodexAppServerRequestResult<"app/read">["apps"];
   installedApps: readonly v2.InstalledApp[];
   /** Absent for complete inventory; present for plugin-targeted snapshots. */
   targetAppIds?: readonly string[];
@@ -98,9 +98,8 @@ export class CodexAppInventoryCache {
   private readonly ttlMs: number;
   private readonly entries = new Map<string, CacheEntry>();
   private readonly inFlight = new Map<string, InFlightRefresh>();
-  // Per-key refresh generation. Each refresh attempt claims the next token so
-  // an older request that finishes late cannot overwrite a newer snapshot.
-  private readonly refreshTokens = new Map<string, number>();
+  // Identity tokens cannot be reused by a refresh started after clear().
+  private readonly refreshTokens = new Map<string, symbol>();
   private readonly diagnostics = new Map<string, CodexAppInventoryCacheDiagnostic>();
   private revision = 0;
 
@@ -161,7 +160,7 @@ export class CodexAppInventoryCache {
     // Invalidation outranks in-flight refreshes: retire their publish token so
     // pre-invalidation reads cannot republish as fresh, and drop the shared
     // in-flight slot so the next read starts a post-invalidation refresh.
-    this.refreshTokens.set(key, (this.refreshTokens.get(key) ?? 0) + 1);
+    this.refreshTokens.delete(key);
     this.inFlight.delete(key);
     const diagnostic = { message: reason, atMs: nowMs };
     const entry = this.entries.get(key);
@@ -216,7 +215,7 @@ export class CodexAppInventoryCache {
       return existing.promise;
     }
 
-    const refreshToken = (this.refreshTokens.get(params.key) ?? 0) + 1;
+    const refreshToken = Symbol("app-inventory-refresh");
     this.refreshTokens.set(params.key, refreshToken);
     const previousRefresh = params.forceRefetch ? undefined : existing?.promise;
     const promise = this.refreshUncoalesced(params, refreshToken, previousRefresh);
@@ -236,7 +235,7 @@ export class CodexAppInventoryCache {
 
   private async refreshUncoalesced(
     params: RefreshParams,
-    refreshToken: number,
+    refreshToken: symbol,
     previousRefresh?: Promise<CodexAppInventorySnapshot>,
   ): Promise<CodexAppInventorySnapshot> {
     const nowMs = resolveDateTimestampMs(params.nowMs);
@@ -478,7 +477,7 @@ async function readInstalledApps(
     forceRefresh: boolean;
     targetAppIds?: readonly string[];
   },
-): Promise<{ apps: v2.AppInfo[]; installedApps: v2.InstalledApp[] }> {
+): Promise<Pick<CodexAppInventorySnapshot, "apps" | "installedApps">> {
   const installed = await request("app/installed", { forceRefresh: options.forceRefresh });
   const targetIds = new Set((options.targetAppIds ?? []).filter(Boolean).map(codexAppIdentityKey));
   const apps =
@@ -506,32 +505,9 @@ async function readInstalledApps(
   );
 
   return {
-    apps: apps.flatMap((installedApp): v2.AppInfo[] => {
+    apps: apps.flatMap((installedApp) => {
       const metadata = metadataById.get(installedApp.id);
-      if (!metadata) {
-        return [];
-      }
-
-      return [
-        {
-          id: installedApp.id,
-          name: metadata.name,
-          description: metadata.description ?? null,
-          logoUrl: metadata.iconUrl ?? null,
-          logoUrlDark: metadata.iconUrlDark ?? null,
-          distributionChannel: metadata.distributionChannel ?? null,
-          branding: null,
-          appMetadata: null,
-          labels: null,
-          installUrl: metadata.installUrl ?? null,
-          // app/read proves account authorization, while runtime callability
-          // remains separately visible in installedApps for thread admission.
-          isAccessible: true,
-          isEnabled: installedApp.enabled,
-          pluginDisplayNames: metadata.pluginDisplayNames,
-          ...(metadata.toolSummaries ? { toolSummaries: metadata.toolSummaries } : {}),
-        },
-      ];
+      return metadata ? [metadata] : [];
     }),
     installedApps: apps,
   };

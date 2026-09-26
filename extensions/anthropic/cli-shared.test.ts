@@ -2,13 +2,17 @@
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { describe, expect, it, vi } from "vitest";
 import { buildAnthropicCliBackend } from "./cli-backend.js";
+import { CLAUDE_CLI_CLEAR_ENV } from "./cli-constants.js";
 import {
-  CLAUDE_CLI_CLEAR_ENV,
   normalizeClaudeBackendConfig,
   resolveClaudeCliExecutionArgs,
   supportsClaudeDynamicSystemPromptSections,
 } from "./cli-shared.js";
 import { registerAnthropicPlugin } from "./register.runtime.js";
+
+vi.mock("./session-catalog-executable.js", () => ({
+  resolveClaudeTerminalExecutable: () => ({ executable: "claude" }),
+}));
 
 type ClaudePreparedExecutionWithSecret = {
   env?: Record<string, string>;

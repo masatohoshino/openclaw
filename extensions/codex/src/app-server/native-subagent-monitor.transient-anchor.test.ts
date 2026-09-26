@@ -13,6 +13,7 @@ import {
   successfulSendInputOutput,
   taskRecord,
   threadRead,
+  turnStartedNotification,
 } from "./native-subagent-monitor.test-support.js";
 import type {
   CodexNativeSubagentSubmission,
@@ -24,13 +25,7 @@ const followupRunId = "codex-thread:child-thread:turn:turn-b";
 type Client = ReturnType<typeof createClient>;
 
 async function startTurn(client: Client, id: string) {
-  await client.notify({
-    method: "turn/started",
-    params: {
-      threadId: "child-thread",
-      turn: { id, status: "inProgress", items: [], error: null },
-    },
-  });
+  await client.notify(turnStartedNotification(id, { error: null }));
 }
 
 async function completeTurn(client: Client, id: string, text: string) {
@@ -98,7 +93,7 @@ async function submitFollowup(client: Client, submissionId = "turn-b") {
   await client.notify(successfulSendInputOutput({ callId: "send-b", submissionId }));
 }
 
-function createFixture(
+async function createFixture(
   records = new Map<string, AgentHarnessTaskRecord>(),
   submissionStore?: CodexNativeSubagentSubmissionStore,
   historyOwner?: CodexNativeSubagentHistoryOwner,
@@ -136,7 +131,7 @@ function createFixture(
     client.setThreadRead("child-thread", history);
     resolveHistory(history);
   };
-  const owner = monitor.registerParent({
+  const owner = await monitor.registerParent({
     parentThreadId: "parent-thread",
     requesterSessionKey: "agent:main:discord:channel:C123",
     taskRuntimeScope: createTaskScope(),
@@ -193,7 +188,7 @@ describe("Codex native transient predecessor anchor", () => {
         return receipts.delete(receipt.callId);
       }),
     } satisfies CodexNativeSubagentSubmissionStore;
-    const fixture = createFixture(
+    const fixture = await createFixture(
       records,
       order === "parent-unregister-before-anchor" ? submissionStore : undefined,
     );
@@ -293,7 +288,7 @@ describe("Codex native transient predecessor anchor", () => {
       }),
       consume: vi.fn<CodexNativeSubagentSubmissionStore["consume"]>(async () => false),
     } satisfies CodexNativeSubagentSubmissionStore;
-    const fixture = createFixture(records, submissionStore);
+    const fixture = await createFixture(records, submissionStore);
     const { client, monitor, owner } = fixture;
     try {
       await notifyChildStarted(client);
@@ -343,7 +338,7 @@ describe("Codex native transient predecessor anchor", () => {
   });
 
   it("creates no extra task or retained observation for an opaque steer after A catches up", async () => {
-    const fixture = createFixture();
+    const fixture = await createFixture();
     const { client, owner, records, runtime } = fixture;
     try {
       await notifyChildStarted(client);
@@ -392,7 +387,11 @@ describe("Codex native transient predecessor anchor", () => {
         },
       };
       const snapshot = structuredClone(legacyA);
-      const fixture = createFixture(new Map([[initialRunId, legacyA]]), undefined, historyOwner);
+      const fixture = await createFixture(
+        new Map([[initialRunId, legacyA]]),
+        undefined,
+        historyOwner,
+      );
       const { client, monitor, owner, records, runtime } = fixture;
       try {
         await notifyChildStarted(client);

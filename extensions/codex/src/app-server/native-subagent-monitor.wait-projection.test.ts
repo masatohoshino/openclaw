@@ -7,16 +7,15 @@ import {
   nativeHistoryOwner,
   notifyChildStarted,
   registerParent,
+  successfulSendInputOutput,
   taskRecord,
+  turnStartedNotification,
 } from "./native-subagent-monitor.test-support.js";
 
 type Client = ReturnType<typeof createClient>;
 
 async function startTurn(client: Client, threadId: string, turnId: string) {
-  await client.notify({
-    method: "turn/started",
-    params: { threadId, turn: { id: turnId, status: "inProgress", items: [], error: null } },
-  });
+  await client.notify(turnStartedNotification(turnId, { threadId, error: null }));
 }
 
 async function endTurn(
@@ -75,21 +74,12 @@ async function acceptFollowup(client: Client, parentThreadId = "parent-thread") 
       },
     },
   });
-  await client.notify({
-    method: "rawResponseItem/completed",
-    params: {
-      threadId: parentThreadId,
-      turnId: "parent-turn",
-      item: {
-        type: "function_call_output",
-        call_id: "submit-b",
-        output: '{"submission_id":"turn-b"}',
-      },
-    },
-  });
+  await client.notify(
+    successfulSendInputOutput({ parentThreadId, callId: "submit-b", submissionId: "turn-b" }),
+  );
 }
 
-function createFixture(historyOwner?: ReturnType<typeof nativeHistoryOwner>) {
+async function createFixture(historyOwner?: ReturnType<typeof nativeHistoryOwner>) {
   const client = createClient();
   const runtime = createRuntime();
   const monitor = new CodexNativeSubagentMonitor(client.client, runtime);
@@ -103,7 +93,7 @@ function createFixture(historyOwner?: ReturnType<typeof nativeHistoryOwner>) {
     unsubscribe();
     monitor.dispose();
   });
-  registerParent(monitor, undefined, undefined, historyOwner).bindTurn("parent-turn");
+  (await registerParent(monitor, undefined, undefined, historyOwner)).bindTurn("parent-turn");
   return { client, runtime, monitor, events };
 }
 
@@ -115,11 +105,11 @@ async function awaitingAdmission(
     laterPendingTurn?: boolean;
   } = {},
 ) {
-  const fixture = createFixture();
+  const fixture = await createFixture();
   const { client, monitor } = fixture;
   const receiverParent = options.receiverParent ?? "parent-thread";
   if (receiverParent !== "parent-thread") {
-    registerParent(monitor, receiverParent, "agent:main:foreign").bindTurn("parent-turn");
+    (await registerParent(monitor, receiverParent, "agent:main:foreign")).bindTurn("parent-turn");
   }
   await notifyChildStarted(client, receiverParent, "receiver");
   await startTurn(client, "receiver", "turn-a");
@@ -140,7 +130,7 @@ describe("native wait assignment projection", () => {
     "reprojects an observed receiver when discovery restores its recorded follow-up assignment (%s)",
     async (status) => {
       const historyOwner = nativeHistoryOwner();
-      const { client, runtime, events } = createFixture(historyOwner);
+      const { client, runtime, events } = await createFixture(historyOwner);
       await notifyChildStarted(client, "parent-thread", "waiter");
       await startTurn(client, "waiter", "waiter-turn");
       await waitItem(client, "started", ["receiver"]);
@@ -148,6 +138,7 @@ describe("native wait assignment projection", () => {
         dependencies: [{ runId: "codex-thread:receiver" }],
       });
       runtime.listTaskRecords.mockReturnValue([
+        ...runtime.listTaskRecords(),
         taskRecord({ childThreadId: "receiver:turn:turn-b", status, historyOwner }),
       ]);
       await notifyChildStarted(client, "parent-thread", "receiver");
@@ -180,7 +171,7 @@ describe("native wait assignment projection", () => {
     "does not adopt an ineligible recorded receiver into an observed wait: %s",
     async (scenario) => {
       const historyOwner = nativeHistoryOwner();
-      const { client, runtime, events } = createFixture(historyOwner);
+      const { client, runtime, events } = await createFixture(historyOwner);
       await notifyChildStarted(client, "parent-thread", "waiter");
       await startTurn(client, "waiter", "waiter-turn");
       await waitItem(client, "started", ["receiver"]);

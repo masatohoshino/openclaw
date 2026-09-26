@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import "../plugins/plugin-source-capture-context.js";
 import type { AgentHarness } from "../agents/harness/types.js";
 import { LegacyPluginSdkResourceHost } from "../plugins/legacy-sdk-resource-host.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
@@ -72,12 +73,24 @@ export function withCliCommandCleanup<T>(
 export function retainCliRegistryHarnesses(
   registry: PluginRegistry,
   dispose: (harness: AgentHarness) => Promise<void>,
+  retain: () => (() => void | Promise<void>) | undefined,
 ): void {
   const current = scope.getStore();
   if (!current || current === "process") {
     return;
   }
   for (const { harness } of registry.agentHarnesses) {
+    if (!current.registries.has(registry)) {
+      // Retain physical custody for terminal teardown, not ordinary invocation authority.
+      const release = retain();
+      if (release) {
+        current.pluginResources?.adopt({
+          release: async () => {
+            await release();
+          },
+        });
+      }
+    }
     current.registries.add(registry);
     if (!current.harnesses.has(harness)) {
       // Preserve request facts as well as the exact registry binding after helpers unwind.
