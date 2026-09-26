@@ -9,10 +9,9 @@ import { CronCliError } from "./cron-cli-error.js";
 import {
   parseCronCommandArgv,
   parseCronCommandEnv,
-  parseCronFallbacks,
   parseCronIntegerOption,
   parseCronNoOutputTimeoutOption,
-  parseCronToolsAllow,
+  parseCronStringList,
 } from "./shared.js";
 import { parseCronThreadIdOption } from "./thread-id-shared.js";
 import { readCronPayloadScript } from "./trigger-options.js";
@@ -37,7 +36,7 @@ export async function resolveCronEditPayloadDeliveryPatch(
   const patch: Record<string, unknown> = {};
   const hasSystemEventPatch = typeof opts.systemEvent === "string";
   const scriptPath = readNonBlankString(opts.script);
-  const commandShell = normalizeOptionalString(opts.command);
+  const commandShell = readNonBlankString(opts.command);
   const commandArgv = parseCronCommandArgv(opts.commandArgv);
   if (commandShell && commandArgv) {
     throw new CronCliError(
@@ -55,11 +54,11 @@ export async function resolveCronEditPayloadDeliveryPatch(
   if (hasThinking && opts.clearThinking) {
     throw new CronCliError("Use --thinking or --clear-thinking, not both");
   }
-  const fallbacks = parseCronFallbacks(opts.fallbacks);
+  const fallbacks = parseCronStringList(opts.fallbacks);
   if (typeof opts.fallbacks === "string" && opts.clearFallbacks) {
     throw new CronCliError("Use --fallbacks or --clear-fallbacks, not both");
   }
-  const toolsAllow = parseCronToolsAllow(opts.tools);
+  const toolsAllow = parseCronStringList(opts.tools);
   const timeoutSeconds = parseCronIntegerOption(
     opts.timeoutSeconds,
     "--timeout-seconds",
@@ -168,16 +167,14 @@ export async function resolveCronEditPayloadDeliveryPatch(
     }
     toolsOnlyPayloadKind = existingJob.payload.kind;
   }
-  const hasAgentTurnPayloadField =
+  const hasAgentTurnPatch =
     hasAgentTurnSpecificPayloadField ||
     timeoutOnlyPayloadKind === "agentTurn" ||
     (hasToolsAllowPatch && toolsOnlyPayloadKind === "agentTurn");
-  const hasCommandPayloadField =
+  const hasCommandPatch =
     hasCommandSpecificPayloadField ||
     timeoutOnlyPayloadKind === "command" ||
     toolsOnlyPayloadKind === "command";
-  const hasAgentTurnPatch = hasAgentTurnPayloadField;
-  const hasCommandPatch = hasCommandPayloadField;
   const hasScriptPatch = hasScriptSpecificPayloadField || toolsOnlyPayloadKind === "script";
   const hasSystemEventOrToolsPatch = hasSystemEventPatch || toolsOnlyPayloadKind === "systemEvent";
   if (
@@ -187,23 +184,12 @@ export async function resolveCronEditPayloadDeliveryPatch(
     throw new CronCliError("Choose at most one payload change");
   }
 
-  const assignToolsAllowPatch = (payload: Record<string, unknown>): void => {
-    if (opts.clearTools) {
-      // Clearing a restriction means an explicit unrestricted grant. Persisting
-      // a wildcard avoids creating a new capless legacy job at the upgrade boundary.
-      payload.toolsAllow = ["*"];
-    } else if (toolsAllow) {
-      payload.toolsAllow = toolsAllow;
-    }
-  };
-
+  let payload: Record<string, unknown> | undefined;
   if (hasSystemEventOrToolsPatch) {
-    const payload: Record<string, unknown> = { kind: "systemEvent" };
+    payload = { kind: "systemEvent" };
     assignIf(payload, "text", String(opts.systemEvent), hasSystemEventPatch);
-    assignToolsAllowPatch(payload);
-    patch.payload = payload;
   } else if (hasAgentTurnPatch) {
-    const payload: Record<string, unknown> = { kind: "agentTurn" };
+    payload = { kind: "agentTurn" };
     assignIf(payload, "message", String(opts.message), typeof opts.message === "string");
     if (opts.clearModel) {
       payload.model = null;
@@ -219,10 +205,8 @@ export async function resolveCronEditPayloadDeliveryPatch(
     }
     assignIf(payload, "timeoutSeconds", timeoutSeconds, hasTimeoutSeconds);
     assignIf(payload, "lightContext", opts.lightContext, typeof opts.lightContext === "boolean");
-    assignToolsAllowPatch(payload);
-    patch.payload = payload;
   } else if (hasCommandPatch) {
-    const payload: Record<string, unknown> = { kind: "command" };
+    payload = { kind: "command" };
     assignIf(payload, "argv", commandArgv, Boolean(commandArgv));
     assignIf(payload, "argv", ["sh", "-lc", commandShell], Boolean(commandShell));
     assignIf(payload, "cwd", commandCwd, Boolean(commandCwd));
@@ -236,16 +220,22 @@ export async function resolveCronEditPayloadDeliveryPatch(
       noOutputTimeoutSeconds !== undefined,
     );
     assignIf(payload, "outputMaxBytes", outputMaxBytes, outputMaxBytes !== undefined);
-    assignToolsAllowPatch(payload);
-    patch.payload = payload;
   } else if (hasScriptPatch) {
-    const payload: Record<string, unknown> = { kind: "script" };
+    payload = { kind: "script" };
     if (scriptPath) {
       payload.script = await readCronPayloadScript(scriptPath);
     }
     assignIf(payload, "timeoutSeconds", scriptTimeoutSeconds, scriptTimeoutSeconds !== undefined);
     assignIf(payload, "toolBudget", scriptToolBudget, scriptToolBudget !== undefined);
-    assignToolsAllowPatch(payload);
+  }
+  if (payload) {
+    if (opts.clearTools) {
+      // Clearing a restriction means an explicit unrestricted grant. Persisting
+      // a wildcard avoids creating a new capless legacy job at the upgrade boundary.
+      payload.toolsAllow = ["*"];
+    } else if (toolsAllow) {
+      payload.toolsAllow = toolsAllow;
+    }
     patch.payload = payload;
   }
 
@@ -264,16 +254,14 @@ export async function resolveCronEditPayloadDeliveryPatch(
     if (opts.clearChannel) {
       delivery.channel = null;
     } else if (typeof opts.channel === "string") {
-      const channel = opts.channel.trim();
-      delivery.channel = channel ? channel : undefined;
+      delivery.channel = normalizeOptionalString(opts.channel);
     }
     if (hasWebhookDelivery) {
       delivery.to = webhookUrl;
     } else if (opts.clearTo) {
       delivery.to = null;
     } else if (typeof opts.to === "string") {
-      const to = opts.to.trim();
-      delivery.to = to ? to : undefined;
+      delivery.to = normalizeOptionalString(opts.to);
     }
     if (opts.clearThreadId) {
       delivery.threadId = null;
@@ -283,8 +271,7 @@ export async function resolveCronEditPayloadDeliveryPatch(
     if (opts.clearAccount) {
       delivery.accountId = null;
     } else if (typeof opts.account === "string") {
-      const account = opts.account.trim();
-      delivery.accountId = account ? account : undefined;
+      delivery.accountId = normalizeOptionalString(opts.account);
     }
     if (typeof opts.bestEffortDeliver === "boolean") {
       delivery.bestEffort = opts.bestEffortDeliver;

@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -59,9 +60,10 @@ function writeJson(filePath: string, value: unknown) {
 }
 
 function fullSurfaceInspectPayload(pluginId: string) {
+  const diagnostics: Array<{ level: string; message: string }> = [];
   return {
     commands: ["kitchen"],
-    diagnostics: [],
+    diagnostics,
     plugin: {
       id: pluginId,
       enabled: true,
@@ -167,10 +169,12 @@ function runAssertClawhubInstalled({
   contextEngineIds = [],
   installPathRelative,
   recordOverrides = {},
+  wrongPeerTarget = false,
 }: {
   contextEngineIds?: string[];
   installPathRelative?: string;
   recordOverrides?: Record<string, unknown>;
+  wrongPeerTarget?: boolean;
 } = {}) {
   const label = `clawhub-context-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const pluginId = "openclaw-kitchen-sink-fixture";
@@ -204,8 +208,12 @@ function runAssertClawhubInstalled({
     mkdirSync(installPath, { recursive: true });
     if (record.artifactKind === "npm-pack") {
       mkdirSync(path.join(installPath, "node_modules"), { recursive: true });
+      const peerTarget = wrongPeerTarget ? path.join(home, "other-host") : process.cwd();
+      if (wrongPeerTarget) {
+        mkdirSync(peerTarget);
+      }
       symlinkSync(
-        process.cwd(),
+        peerTarget,
         path.join(installPath, "node_modules", "openclaw"),
         process.platform === "win32" ? "junction" : "dir",
       );
@@ -239,6 +247,7 @@ function runAssertClawhubInstalled({
         },
       }),
       record,
+      wrongPeerRealPath: wrongPeerTarget ? realpathSync(path.join(home, "other-host")) : undefined,
     };
   } finally {
     rmSync(home, { force: true, recursive: true });
@@ -513,6 +522,85 @@ describe("kitchen-sink plugin assertions", () => {
     expect(`${result.stdout}\n${result.stderr}`).toContain("tools missing kitchen_sink_search");
   });
 
+  it.each(["all", "single"])(
+    "retains bounded redacted %s inspection failure details without dumping config",
+    (inspection) => {
+      const root = mkdtempSync(path.join(tmpdir(), "openclaw-inspection-redactor-"));
+      const redactor = path.join(root, "redactor.mjs");
+      const secret = `FIXTURE_SECRET_${"x".repeat(5000)}_END`;
+      try {
+        writeFileSync(
+          redactor,
+          `export function redactSensitiveText(value, options) {
+  if (options.mode !== "tools") throw new Error("wrong redaction mode");
+  return value.replace(/FIXTURE_SECRET_.*?_END/gs, "[REDACTED]");
+}\n`,
+        );
+        const healthy = fullSurfaceInspectPayload("openclaw-kitchen-sink-fixture");
+        const failed = {
+          ...healthy,
+          plugin: {
+            ...healthy.plugin,
+            status: "error",
+            error: `loader refused ${secret}; retained cause`,
+            source: "/fixture/plugin/index.js",
+            config: { privateValue: "DO_NOT_DUMP_CONFIG" },
+          },
+          diagnostics: [
+            { level: "error", message: `registration failed ${secret}; retained diagnostic` },
+            ...Array.from({ length: 25 }, (_, index) => ({
+              level: "error",
+              message: `extra-diagnostic-${index} ${"z".repeat(4096)}`,
+            })),
+          ],
+        };
+        const result = runAssertInstalled({
+          inspectPayload: inspection === "single" ? failed : healthy,
+          allInspectPayload: [inspection === "all" ? failed : healthy],
+          env: { OPENCLAW_E2E_REDACTOR_MODULE: redactor },
+        });
+        const output = `${result.stdout}\n${result.stderr}`;
+        expect(result.status).toBe(1);
+        expect(output).toContain("expected enabled loaded kitchen-sink plugin");
+        expect(output).toContain("loader refused [REDACTED]; retained cause");
+        expect(output).toContain("registration failed [REDACTED]; retained diagnostic");
+        expect(output).toContain("/fixture/plugin/index.js");
+        expect(output).not.toContain("FIXTURE_SECRET_");
+        expect(output).not.toContain("DO_NOT_DUMP_CONFIG");
+        expect(output).not.toContain("extra-diagnostic-24");
+        expect(output.length).toBeLessThan(16 * 1024);
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it("keeps inspection failure details private when the canonical redactor fails", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "openclaw-inspection-redactor-"));
+    const redactor = path.join(root, "redactor.mjs");
+    try {
+      writeFileSync(redactor, 'throw new Error("DO_NOT_DUMP_REDACTOR_ERROR");\n');
+      const healthy = fullSurfaceInspectPayload("openclaw-kitchen-sink-fixture");
+      const result = runAssertInstalled({
+        allInspectPayload: [
+          {
+            ...healthy,
+            plugin: { ...healthy.plugin, status: "error", error: "DO_NOT_DUMP_RAW_ERROR" },
+          },
+        ],
+        env: { OPENCLAW_E2E_REDACTOR_MODULE: redactor },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "inspection details omitted: canonical redaction unavailable",
+      );
+      expect(result.stderr).not.toContain("DO_NOT_DUMP_RAW_ERROR");
+      expect(result.stderr).not.toContain("DO_NOT_DUMP_REDACTOR_ERROR");
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("requires ClawHub kitchen-sink fixtures to expose context engines", () => {
     const result = runAssertClawhubInstalled({ contextEngineIds: [] });
 
@@ -578,6 +666,20 @@ describe("kitchen-sink plugin assertions", () => {
       errorPrefix: null,
     },
     {
+      name: "rejects an npm peer linked to a different host",
+      recordOverrides: {
+        artifactKind: "npm-pack",
+        artifactFormat: "tgz",
+        clawpackSha256: "digest",
+        clawpackSize: 0,
+        npmIntegrity: "integrity",
+        npmShasum: "shasum",
+        npmTarballName: "package.tgz",
+      },
+      wrongPeerTarget: true,
+      errorPrefix: null,
+    },
+    {
       name: "rejects metadata before an empty install path",
       recordOverrides: { artifactFormat: "tgz", installPath: "" },
       errorPrefix: "missing kitchen-sink legacy ZIP artifact metadata",
@@ -587,20 +689,29 @@ describe("kitchen-sink plugin assertions", () => {
       recordOverrides: { artifactFormat: "tgz", installPath: 42 },
       errorPrefix: "missing kitchen-sink legacy ZIP artifact metadata",
     },
-  ])("ClawHub kitchen-sink metadata: $name", ({ recordOverrides, errorPrefix }) => {
-    const result = runAssertClawhubInstalled({
-      contextEngineIds: ["openclaw-kitchen-sink-fixture"],
-      recordOverrides,
-    });
-    if (errorPrefix === null) {
-      expect(result.status, result.stderr).toBe(0);
-    } else {
-      expect(result.status).toBe(1);
-      expect(result.stderr.match(/^(?:Error|error): (.*)$/m)?.[1]).toBe(
-        `${errorPrefix}: ${JSON.stringify(result.record)}`,
-      );
-    }
-  });
+  ])(
+    "ClawHub kitchen-sink metadata: $name",
+    ({ recordOverrides, errorPrefix, wrongPeerTarget }) => {
+      const result = runAssertClawhubInstalled({
+        contextEngineIds: ["openclaw-kitchen-sink-fixture"],
+        recordOverrides,
+        wrongPeerTarget,
+      });
+      if (wrongPeerTarget) {
+        expect(result.status).toBe(1);
+        expect(result.stderr.match(/^(?:Error|error): (.*)$/m)?.[1]).toBe(
+          `expected kitchen-sink openclaw peer ${result.wrongPeerRealPath} to target ${realpathSync(process.cwd())}`,
+        );
+      } else if (errorPrefix === null) {
+        expect(result.status, result.stderr).toBe(0);
+      } else {
+        expect(result.status).toBe(1);
+        expect(result.stderr.match(/^(?:Error|error): (.*)$/m)?.[1]).toBe(
+          `${errorPrefix}: ${JSON.stringify(result.record)}`,
+        );
+      }
+    },
+  );
 
   it("rejects ClawHub kitchen-sink install paths that resolve outside managed extensions", () => {
     const result = runAssertClawhubInstalled({

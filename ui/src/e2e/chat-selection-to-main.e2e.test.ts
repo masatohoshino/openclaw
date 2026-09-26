@@ -30,6 +30,66 @@ async function selectText(text: Locator) {
 }
 
 suite.define(() => {
+  it("reveals draft and sent comments by touch before and after reload", async () => {
+    await suite.withPage(
+      { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: "en-US" },
+      async ({ page }) => {
+        const gateway = await installMockGateway(page, {
+          historyMessages: [{ role: "assistant", content: selectedText }],
+        });
+        await page.goto(`${suite.server.baseUrl}chat`);
+        const source = page.locator(".chat-bubble .chat-text p").filter({ hasText: selectedText });
+        await source.waitFor({ state: "visible" });
+        await selectText(source);
+        await page.getByRole("button", { name: "Add to chat", exact: true }).tap();
+        const editor = page.getByRole("dialog", { name: "Comment", exact: true });
+        await editor.getByRole("textbox").fill("Check the rollback steps. 🦞");
+        await editor.getByRole("button", { name: "Save comment", exact: true }).tap();
+        const preview = page.getByRole("region", { name: "Comments", exact: true });
+        await page.locator(".chat-attachments-preview .chat-selection-annotations__chip").tap();
+        await expect.poll(() => preview.isVisible()).toBe(true);
+        const clear = page.getByRole("button", { name: "Remove all comments", exact: true });
+        expect(await clear.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
+        await page.locator(".agent-chat__composer-shell textarea").tap();
+        await expect.poll(() => preview.isVisible()).toBe(false);
+        await page.getByRole("button", { name: "Send message", exact: true }).tap();
+        const request = await gateway.waitForRequest("chat.send");
+        await gateway.emitChatFinal({
+          runId: (request.params as { idempotencyKey: string }).idempotencyKey,
+          text: "Selected passage received.",
+        });
+        await page.reload();
+        const sentChip = page.locator(
+          "openclaw-chat-sent-comments .chat-selection-annotations__chip",
+        );
+        await sentChip.waitFor({ state: "visible" });
+        await sentChip.tap();
+        await page.screenshot({ path: `${suite.artifactDir}/sent-comment-touch.png` });
+        await expect.poll(() => preview.isVisible()).toBe(true);
+        await expect.poll(() => preview.textContent()).toContain(selectedText);
+        await expect.poll(() => preview.textContent()).toContain("Check the rollback steps. 🦞");
+        expect(await preview.locator("button").count()).toBe(0);
+        await page.locator(".agent-chat__composer-shell textarea").tap();
+        await expect.poll(() => preview.isVisible()).toBe(false);
+        await selectText(source);
+        await page.getByRole("button", { name: "Add to chat", exact: true }).tap();
+        await editor.getByRole("textbox").fill("Remove only this pending comment.");
+        await editor.getByRole("button", { name: "Save comment", exact: true }).tap();
+        const pendingChip = page.locator(
+          ".chat-attachments-preview .chat-selection-annotations__chip",
+        );
+        await pendingChip.getByRole("button", { name: "Remove all comments", exact: true }).tap();
+        await pendingChip.waitFor({ state: "detached" });
+        expect(await sentChip.count()).toBe(1);
+        await sentChip.tap();
+        await expect.poll(() => preview.isVisible()).toBe(true);
+        await expect.poll(() => preview.textContent()).toContain("Check the rollback steps. 🦞");
+        expect(await preview.textContent()).not.toContain("Remove only this pending comment.");
+        expect(await preview.locator("button").count()).toBe(0);
+      },
+    );
+  });
+
   it.each(viewports)(
     "stages, edits, restores, and sends annotations at $width px",
     async (viewport) => {
@@ -118,7 +178,10 @@ suite.define(() => {
           await pin(2).waitFor({ state: "visible" });
           await chip(2).click();
           expect(await editor.count()).toBe(0);
-          expect(await page.getByRole("region", { name: "Comments", exact: true }).count()).toBe(0);
+          const openedPreview = page.getByRole("region", { name: "Comments", exact: true });
+          await expect.poll(() => openedPreview.isVisible()).toBe(true);
+          await composer.click();
+          await expect.poll(() => openedPreview.isVisible()).toBe(false);
           await capture("multiple");
 
           const pinBounds = (await pin(1).boundingBox())!;
@@ -171,10 +234,12 @@ suite.define(() => {
             `chat:v3:${storedChatOutboxScopeKey({ agentId: "main", sessionKey: "agent:main:main" })}`,
             draft,
             1,
+            ["Explain the rollback checks. 🦞"],
           );
           await page.reload();
           await chip(1).waitFor({ state: "visible" });
           expect(await composer.inputValue()).toBe(draft);
+          await capture("restored-draft");
           await chip(1).hover();
           const preview = page.getByRole("region", { name: "Comments", exact: true });
           await preview.waitFor({ state: "visible" });

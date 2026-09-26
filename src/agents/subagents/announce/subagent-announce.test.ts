@@ -343,7 +343,7 @@ describe("subagent announce seam flow", () => {
   });
 
   it.each([false, true])(
-    "does not substitute private grandchild findings for its parent's authored result: private=%s",
+    "keeps the parent's authored result for public and private grandchildren: private=%s",
     async (privateChild) => {
       const parentKey = "agent:main:subagent:parent";
       subagentRegistryRuntimeMock.listSubagentRunsForRequester.mockReturnValue([
@@ -379,12 +379,8 @@ describe("subagent announce seam flow", () => {
         }),
       ).toBe("delivered");
       const message = String(requireAgentCall().params?.message);
-      if (privateChild) {
-        expect(message).toContain("parent reviewed and approved");
-        expect(message).not.toContain("raw grandchild marker");
-      } else {
-        expect(message).toContain("raw grandchild marker");
-      }
+      expect(message).toContain("parent reviewed and approved");
+      expect(message).not.toContain("raw grandchild marker");
     },
   );
 
@@ -777,7 +773,7 @@ describe("subagent announce seam flow", () => {
     expect(agentCall.params?.to).toBe("-1001234567890");
   });
 
-  it("logs direct completion announce delivery failures through the gateway log path", async () => {
+  it("leaves direct completion failure logging to the shared delivery owner", async () => {
     const logSpy = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
     agentSpy.mockResolvedValueOnce({ status: "error", error: "Outbound not configured for slack" });
 
@@ -802,9 +798,7 @@ describe("subagent announce seam flow", () => {
     });
 
     expect(didAnnounce).toBe("retryable");
-    expect(logSpy).toHaveBeenCalledWith(
-      "[warn] Subagent completion direct announce failed for run run-direct-failure-log: Outbound not configured for slack",
-    );
+    expect(logSpy).not.toHaveBeenCalled();
     logSpy.mockRestore();
   });
 

@@ -28,6 +28,7 @@ const pluginMetadataSnapshot = vi.hoisted((): PluginMetadataSnapshot => {
     setupProviders: new Map(),
     commandAliases: new Map(),
     contracts: new Map(),
+    providerAuthContributions: [],
     modelIdNormalizationPolicies: new Map(),
   };
   const zeroMetrics = {
@@ -189,7 +190,6 @@ async function expectStartupResult(params: {
     }),
   ).resolves.toEqual({
     snapshot: params.snapshot,
-    wroteConfig: false,
     pluginMetadataSnapshot,
   });
 }
@@ -198,6 +198,7 @@ function expectPluginAutoEnableFor(config: OpenClawConfig) {
   expect(applyPluginAutoEnable).toHaveBeenCalledWith({
     config,
     env: process.env,
+    ambientEnvTriggers: "suppress",
     manifestRegistry: pluginManifestRegistry,
   });
 }
@@ -277,6 +278,7 @@ function loadTestStartup(params: {
 }) {
   return loadGatewayStartupConfigSnapshot({
     minimalTestGateway: params.minimalTestGateway ?? true,
+    ambientEnvTriggers: "suppress",
     log: params.log ?? testStartupLog(),
     initialSnapshotRead: params.initialSnapshotRead,
   });
@@ -410,7 +412,6 @@ describe("gateway startup config validation", () => {
     expect(result.snapshot.sourceConfig.models?.providers?.anthropic).toEqual(overlay);
     expectPluginAutoEnableFor(sourceConfig);
     expect(runtimeConfig.channels?.telegram?.enabled).toBeUndefined();
-    expect(result.wroteConfig).toBe(false);
     expect(configIo.writeConfigFile).not.toHaveBeenCalled();
     expect(configMutate.replaceConfigFile).not.toHaveBeenCalled();
   });
@@ -626,21 +627,21 @@ describe("gateway startup config validation", () => {
   it.each(["Nix", "read-only"])("rejects legacy config entries in %s mode", async (mode) => {
     const legacySnapshot = buildInvalidConfigSnapshot({
       rawConfig: {
-        heartbeat: { model: "anthropic/claude-3-5-haiku-20241022", every: "30m" },
+        session: { typingMode: "thinking" },
       },
       config: {} as OpenClawConfig,
       issues: [
         {
-          path: "heartbeat",
+          path: "session.typingMode",
           message:
-            "top-level heartbeat is not a valid config path; use agents.defaults.heartbeat (cadence/target/model settings) or channels.defaults.heartbeat (showOk/showAlerts/useIndicator).",
+            'session.typingMode moved to agents.defaults.typingMode. Run "openclaw doctor --fix".',
         },
       ],
       legacyIssues: [
         {
-          path: "heartbeat",
+          path: "session.typingMode",
           message:
-            "top-level heartbeat is not a valid config path; use agents.defaults.heartbeat (cadence/target/model settings) or channels.defaults.heartbeat (showOk/showAlerts/useIndicator).",
+            'session.typingMode moved to agents.defaults.typingMode. Run "openclaw doctor --fix".',
         },
       ],
     });

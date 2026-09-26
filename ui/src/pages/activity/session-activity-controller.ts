@@ -1,5 +1,6 @@
 import type { RouteLocation } from "@openclaw/uirouter";
 import type { ReactiveController, ReactiveControllerHost } from "lit";
+import { createDeferredCore } from "../../../../src/shared/deferred.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
 import { activityPersonFromPath, activityPersonLocation } from "../../app-route-paths.ts";
@@ -51,12 +52,14 @@ export class SessionActivityController implements ReactiveController {
   }
   private client: GatewayBrowserClient | null = null;
   private queryKey?: string;
-  private pending?: AbortController;
+  private pending?: {
+    controller: AbortController;
+    completion: ReturnType<typeof createDeferredCore<void>>;
+  };
   private summaryPending?: AbortController;
   private readonly summaryAttempts = new Map<string, string>();
   private readonly summaryRetries = new Set<string>();
   private canEnsureSummaries = false;
-  private refreshPending = false;
   private filters: ActivityQuery | null = null;
   private readonly pendingChanges: CurrentWorkChange[] = [];
   private changesOverflowed = false;
@@ -66,7 +69,7 @@ export class SessionActivityController implements ReactiveController {
   private pageActive = !this.observesPageLifecycle || document.visibilityState !== "hidden";
   private readonly eventRefresh = createSessionEventRefreshCoordinator({
     active: this.pageActive,
-    refresh: async () => this.load(this.client, this.filters, "refresh"),
+    refresh: () => this.load(this.client, this.filters, "refresh"),
   });
 
   constructor(private readonly host: ReactiveControllerHost) {
@@ -85,21 +88,24 @@ export class SessionActivityController implements ReactiveController {
     this.resetQuery();
   }
 
-  private resetQuery(): void {
-    this.eventRefresh.reset();
-    this.pending?.abort();
-    this.pending = undefined;
+  private resetSummaries(): void {
     this.summaryPending?.abort();
     this.summaryPending = undefined;
     this.summaryAttempts.clear();
     this.summaryRetries.clear();
+  }
+
+  private resetQuery(): void {
+    this.eventRefresh.reset();
+    this.pending?.controller.abort();
+    this.pending = undefined;
+    this.resetSummaries();
     this.requestState = "idle";
     this.incomplete = false;
     this.error = undefined;
     this.client = null;
     this.queryKey = undefined;
     this.result = undefined;
-    this.refreshPending = false;
     this.filters = null;
     this.pendingChanges.length = 0;
     this.changesOverflowed = false;
@@ -313,16 +319,9 @@ export class SessionActivityController implements ReactiveController {
     const interrupted = this.pending !== undefined || this.summaryPending !== undefined;
     this.pageActive = !leaving && document.visibilityState !== "hidden";
     if (!this.pageActive) {
-      this.summaryPending?.abort();
-      this.summaryPending = undefined;
-      this.summaryAttempts.clear();
-      this.summaryRetries.clear();
+      this.resetSummaries();
     }
     this.eventRefresh.setActive(this.pageActive, leaving || interrupted);
-    if (!this.pageActive) {
-      // The lifecycle coordinator owns catch-up after hiding, including queued in-flight work.
-      this.refreshPending = false;
-    }
   };
 
   private updatePageLifecycleListeners(add: boolean): void {
@@ -365,18 +364,15 @@ export class SessionActivityController implements ReactiveController {
     filters: ActivityQuery | null,
     reason: "query" | "refresh" | "retry" = "query",
     canEnsureSummaries = this.canEnsureSummaries,
-  ): void {
+  ): Promise<void> {
     this.canEnsureSummaries = canEnsureSummaries;
     if (!canEnsureSummaries) {
-      this.summaryPending?.abort();
-      this.summaryPending = undefined;
-      this.summaryAttempts.clear();
-      this.summaryRetries.clear();
+      this.resetSummaries();
     }
     if (!client || !filters) {
       this.resetQuery();
       this.host.requestUpdate();
-      return;
+      return Promise.resolve();
     }
     const request =
       filters === "current"
@@ -409,17 +405,19 @@ export class SessionActivityController implements ReactiveController {
           };
     const queryKey = JSON.stringify(request);
     const sameQuery = this.client === client && this.queryKey === queryKey;
-    if (sameQuery && this.pending) {
-      this.refreshPending ||= reason === "refresh";
-      return;
+    if (sameQuery && this.pending && reason !== "retry") {
+      if (reason === "refresh") {
+        this.eventRefresh.schedule();
+      }
+      return this.pending.completion.promise;
     }
     if (reason === "query" && sameQuery) {
       void this.ensureSummaries();
-      return;
+      return Promise.resolve();
     }
-    this.pending?.abort();
+    this.pending?.controller.abort();
     this.eventRefresh.absorb();
-    const pending = new AbortController();
+    const pending = { controller: new AbortController(), completion: createDeferredCore() };
     this.pending = pending;
     this.client = client;
     this.queryKey = queryKey;
@@ -429,17 +427,13 @@ export class SessionActivityController implements ReactiveController {
     this.requestState = reason === "retry" ? "retrying" : "loading";
     this.error = undefined;
     if (!sameQuery) {
-      this.summaryPending?.abort();
-      this.summaryPending = undefined;
-      this.summaryAttempts.clear();
-      this.summaryRetries.clear();
+      this.resetSummaries();
       this.result = undefined;
       this.incomplete = false;
     }
-    this.refreshPending = false;
     this.host.requestUpdate();
     void client
-      .request<SessionsListResult>("sessions.list", request, { signal: pending.signal })
+      .request<SessionsListResult>("sessions.list", request, { signal: pending.controller.signal })
       .then((result) => {
         if (this.pending === pending) {
           if (filters === "current") {
@@ -459,7 +453,7 @@ export class SessionActivityController implements ReactiveController {
         }
       })
       .catch((error: unknown) => {
-        if (this.pending === pending && !pending.signal.aborted) {
+        if (this.pending === pending && !pending.controller.signal.aborted) {
           if (filters === "current") {
             this.result = undefined;
             this.incomplete = false;
@@ -473,10 +467,9 @@ export class SessionActivityController implements ReactiveController {
           this.pendingChanges.length = 0;
           this.requestState = "idle";
           this.host.requestUpdate();
-          if (this.refreshPending) {
-            this.load(client, filters, "refresh");
-          }
         }
+        pending.completion.resolve();
       });
+    return pending.completion.promise;
   }
 }

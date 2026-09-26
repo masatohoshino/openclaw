@@ -22,7 +22,7 @@ function inWriterTransaction(db: DatabaseSync, check: () => void) {
 }
 
 describe("committed session mutation authorization", () => {
-  it("validates unrelated metadata once while fresh transaction guards observe access and session changes", async () => {
+  it("keeps committed guards independent of unrelated entries while observing access and session changes", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
       const cfg = rolePolicyConfig();
       const client = roleClient("write", "committed-reader");
@@ -63,11 +63,11 @@ describe("committed session mutation authorization", () => {
           .prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?")
           .run(JSON.stringify({ ...shared, visibility: "draft" }), sessionKey);
         expect(() => authorization.assertCurrent()).not.toThrow();
-        expect(unrelatedParses()).toBe(unrelatedCount);
+        expect(unrelatedParses()).toBe(0);
         for (let index = 0; index < 4; index += 1) {
           expect(() => authorization.assertCurrent()).not.toThrow();
         }
-        expect(unrelatedParses()).toBe(unrelatedCount);
+        expect(unrelatedParses()).toBe(0);
       });
 
       replaceSessionEntrySync(scope, { ...shared, visibility: "draft", updatedAt: 2 });
@@ -82,7 +82,7 @@ describe("committed session mutation authorization", () => {
       inWriterTransaction(owner.db, () => {
         expect(() => authorization.assertCurrent()).toThrow("session changed before chat.send");
       });
-      expect(unrelatedParses()).toBe(unrelatedCount);
+      expect(unrelatedParses()).toBe(0);
     });
   });
 
@@ -118,16 +118,21 @@ describe("committed session mutation authorization", () => {
             expect(() => authorization.assertCurrent()).not.toThrow();
           }
           setCanonicalSqliteSessionMainKey(owner, "work");
+          owner.db
+            .prepare("UPDATE session_nodes SET parent_session_key = ? WHERE session_key = ?")
+            .run("agent:main:unrecorded-parent", "agent:main:main");
           expect(() => authorization.assertCurrent()).not.toThrow();
           expect(() => authorization.assertCurrent()).not.toThrow();
           owner.db.exec("COMMIT");
         });
 
-        // The target remains valid, but the newly committed contract invalidates another row.
+        // A policy change never makes this valid target depend on an invalid sibling.
         inWriterTransaction(owner.db, () => {
-          expect(() => authorization.assertCurrent()).toThrow("session changed before chat.send");
+          expect(() => authorization.assertCurrent()).not.toThrow();
         });
-        setCanonicalSqliteSessionMainKey(owner, "main");
+        owner.db
+          .prepare("UPDATE session_nodes SET parent_session_key = NULL WHERE session_key = ?")
+          .run("agent:main:main");
         inWriterTransaction(owner.db, () => {
           expect(() => authorization.assertCurrent()).not.toThrow();
         });

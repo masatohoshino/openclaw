@@ -2,10 +2,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
-import type {
-  AgentHarnessTaskRecord,
-  AgentHarnessTaskRuntime,
-} from "openclaw/plugin-sdk/agent-harness-task-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { withTempDir } from "openclaw/plugin-sdk/test-env";
 import { SemVer } from "semver";
@@ -16,12 +12,14 @@ import type { CodexAppServerAuthHandoff, CodexAppServerPreparedAuth } from "./au
 import { CodexAppServerClient } from "./client.js";
 import type { CodexAppServerStartOptions } from "./config.js";
 import { acquireCodexNativeConfigFence } from "./native-config-fence.js";
-import { codexNativeSubagentMonitorRuntime } from "./native-subagent-monitor.js";
 import { withCodexAppServerJsonClient } from "./request.js";
 import { createCodexTestBindingStore } from "./session-binding.test-helpers.js";
+import { registerSharedClientCompactionRetentionTests } from "./shared-client-compaction-retention.test-support.js";
+import { registerSharedClientConnectionArtifactTests } from "./shared-client-connection-artifact.test-support.js";
+import { registerSharedClientInferenceTests } from "./shared-client-inference.test-support.js";
 import { retireSharedCodexAppServerClientsBeforeDesktopGeneration } from "./shared-client-lifecycle.js";
+import { registerSharedClientLifetimeTests } from "./shared-client-lifetime.test-support.js";
 import { createClientHarness } from "./test-support.js";
-import { CodexAdoptedThreadActiveError } from "./thread-lifecycle-errors.js";
 import { CODEX_APP_SERVER_VERSION, MIN_SUPPORTED_CODEX_APP_SERVER_VERSION } from "./version.js";
 
 const mocks = vi.hoisted(() => ({
@@ -121,12 +119,12 @@ vi.mock("openclaw/plugin-sdk/agent-harness-registration", async (importOriginal)
 
 import {
   assertCodexAppServerClientStartSelectionCurrent,
-  captureCodexAppServerClientLifetime,
   captureSharedCodexAppServerCatalogLifetime,
   getSharedCodexAppServerClient,
   readCodexAppServerClientDesktopGeneration,
   readCodexAppServerClientProcessIdentity,
 } from "./shared-client.js";
+import { resolveCodexAppServerSpawnIdentity } from "./spawn-identity.js";
 
 let listCodexAppServerModels: typeof import("./models.js").listCodexAppServerModels;
 let clearSharedCodexAppServerClientAndWait: typeof import("./shared-client.js").clearSharedCodexAppServerClientAndWait;
@@ -141,22 +139,10 @@ let retainSharedCodexAppServerClientByInstanceId: typeof import("./shared-client
 let releaseLeasedSharedCodexAppServerClient: typeof import("./shared-client.js").releaseLeasedSharedCodexAppServerClient;
 let releaseCodexAppServerClientLease: typeof import("./shared-client.js").releaseCodexAppServerClientLease;
 let resolveCodexNativeConfigFenceKey: typeof import("./shared-client.js").resolveCodexNativeConfigFenceKey;
-let resolveCodexAppServerSpawnIdentity: typeof import("./shared-client.js").resolveCodexAppServerSpawnIdentity;
 let retireSharedCodexAppServerClientIfCurrent: typeof import("./shared-client.js").retireSharedCodexAppServerClientIfCurrent;
 let waitForCodexAppServerClientDesktopGenerationDrain: typeof import("./shared-client.js").waitForCodexAppServerClientDesktopGenerationDrain;
 let resetSharedCodexAppServerClientForTests: typeof import("./shared-client.js").resetSharedCodexAppServerClientForTests;
 let withLeasedCodexAppServerClientStartSelectionRetry: typeof import("./shared-client.js").withLeasedCodexAppServerClientStartSelectionRetry;
-
-function createAutoInitializingClientHarness() {
-  return createClientHarness({
-    onWrite(line, send) {
-      const request = JSON.parse(line) as { id: number; method: string };
-      if (request.method === "initialize") {
-        send({ id: request.id, result: { userAgent: `codex-cli/${CODEX_APP_SERVER_VERSION}` } });
-      }
-    },
-  });
-}
 
 async function sendInitializeResult(
   harness: ReturnType<typeof createClientHarness>,
@@ -168,7 +154,7 @@ async function sendInitializeResult(
 }
 
 // Capture reads runtime files before startup; respond when initialize reaches the wire.
-function createInitializingClientHarness(userAgent: string) {
+function createInitializingClientHarness(userAgent = `codex-cli/${CODEX_APP_SERVER_VERSION}`) {
   return createClientHarness({
     onWrite: (line, send) => {
       const request = JSON.parse(line) as { id: number; method: string };
@@ -290,7 +276,6 @@ describe("shared Codex app-server client", () => {
       releaseLeasedSharedCodexAppServerClient,
       releaseCodexAppServerClientLease,
       resolveCodexNativeConfigFenceKey,
-      resolveCodexAppServerSpawnIdentity,
       retireSharedCodexAppServerClientIfCurrent,
       waitForCodexAppServerClientDesktopGenerationDrain,
       resetSharedCodexAppServerClientForTests,
@@ -348,7 +333,7 @@ describe("shared Codex app-server client", () => {
   it.each(["shared", "isolated"] as const)(
     "uses the configured remote endpoint for a %s client without explicit start options",
     async (kind) => {
-      const harness = createAutoInitializingClientHarness();
+      const harness = createInitializingClientHarness();
       const startSpy = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
       const acquire =
         kind === "shared" ? getSharedCodexAppServerClient : createIsolatedCodexAppServerClient;
@@ -369,8 +354,16 @@ describe("shared Codex app-server client", () => {
     },
   );
 
+  registerSharedClientInferenceTests((generation, command) => {
+    mocks.desktopGeneration = generation;
+    mocks.resolveManagedCodexAppServerStartOptions.mockImplementation(async (options) =>
+      options.transport === "stdio" && options.commandSource === "managed"
+        ? { ...options, command, commandSource: "resolved-managed" }
+        : options,
+    );
+  }, sendInitializeResult);
   it("preserves explicit start options over the plugin endpoint", async () => {
-    const harness = createAutoInitializingClientHarness();
+    const harness = createInitializingClientHarness();
     const startSpy = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
 
     const client = await getSharedCodexAppServerClient({
@@ -398,7 +391,7 @@ describe("shared Codex app-server client", () => {
   it.each(["shared", "isolated"] as const)(
     "opens a native %s catalog client without selecting an OpenClaw agent",
     async (kind) => {
-      const harness = createAutoInitializingClientHarness();
+      const harness = createInitializingClientHarness();
       const startSpy = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
       const acquire =
         kind === "shared" ? getSharedCodexAppServerClient : createIsolatedCodexAppServerClient;
@@ -488,25 +481,6 @@ describe("shared Codex app-server client", () => {
 
     expect(mocks.resolveManagedCodexAppServerStartOptions).not.toHaveBeenCalled();
     expect(startSpy).not.toHaveBeenCalled();
-  });
-
-  it("bounds isolated transport startup and closes a client returned after its deadline", async () => {
-    vi.useFakeTimers();
-    const harness = createClientHarness();
-    let finishStart!: (client: CodexAppServerClient) => void;
-    const starting = new Promise<CodexAppServerClient>((resolve) => {
-      finishStart = resolve;
-    });
-    const startSpy = vi.spyOn(CodexAppServerClient, "start").mockReturnValue(starting);
-    const acquire = createIsolatedCodexAppServerClient({ timeoutMs: 50 });
-    const rejected = expect(acquire).rejects.toThrow("codex app-server initialize timed out");
-    await vi.advanceTimersByTimeAsync(0);
-    expect(startSpy).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(50);
-    await rejected;
-    finishStart(harness.client);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(harness.stdinDestroyed).toBe(true);
   });
 
   it.each(["implicit", "explicit"] as const)(
@@ -617,19 +591,6 @@ describe("shared Codex app-server client", () => {
     expect(releaseLeasedSharedCodexAppServerClient(harness.client)).toBe(true);
   });
 
-  it("retains an initialized shared client by its persisted instance id", async () => {
-    const harness = createClientHarness();
-    vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-    const acquire = getLeasedSharedCodexAppServerClient({ timeoutMs: 1_000 });
-    await sendInitializeResult(harness, "openclaw/0.149.0 (Linux; test)");
-    const client = await acquire;
-
-    const retained = retainSharedCodexAppServerClientByInstanceId(client.getInstanceId());
-    expect(retained?.client).toBe(client);
-    retained?.release();
-    expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-  });
-
   it.each([
     {
       version: "2026.7.1",
@@ -655,7 +616,7 @@ describe("shared Codex app-server client", () => {
     const globalState = globalThis as Record<symbol, unknown>;
     globalState[legacySlot] = legacyState;
     try {
-      const harness = createAutoInitializingClientHarness();
+      const harness = createInitializingClientHarness();
       vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
       const client = await getLeasedSharedCodexAppServerClient({ timeoutMs: 1_000 });
 
@@ -666,201 +627,17 @@ describe("shared Codex app-server client", () => {
     }
   });
 
-  it.each([
-    { name: "isolated stdio", transport: "stdio", allowed: true },
-    { name: "isolated websocket", transport: "websocket", allowed: false },
-    { name: "isolated unix", transport: "unix", allowed: false },
-    { name: "shared websocket", transport: "websocket", allowed: false, shared: true },
-    { name: "shared unix", transport: "unix", allowed: false, shared: true },
-    { name: "redirected stdio", transport: "stdio", allowed: false, redirect: true },
-    { name: "stdio proxy", transport: "stdio", allowed: false, args: ["app-server", "proxy"] },
-    {
-      name: "stdio option value",
-      transport: "stdio",
-      allowed: true,
-      args: ["app-server", "--cd", "proxy"],
+  registerSharedClientCompactionRetentionTests();
+  registerSharedClientLifetimeTests(
+    () => {
+      mocks.bridgeCodexAppServerStartOptions.mockImplementationOnce(async ({ startOptions }) => ({
+        ...startOptions,
+        transport: "websocket",
+        url: "ws://127.0.0.1:8123",
+      }));
     },
-  ] as const)(
-    "captures configuration ownership only for a caller-spawned runtime: $name",
-    async (scenario) => {
-      const harness = createClientHarness();
-      vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-      if ("redirect" in scenario) {
-        mocks.bridgeCodexAppServerStartOptions.mockImplementationOnce(async ({ startOptions }) => ({
-          ...startOptions,
-          transport: "websocket",
-          url: "ws://127.0.0.1:8123",
-        }));
-      }
-      const acquire = (
-        "shared" in scenario
-          ? getLeasedSharedCodexAppServerClient
-          : createIsolatedCodexAppServerClient
-      )({
-        timeoutMs: 1_000,
-        startOptions: {
-          transport: scenario.transport,
-          command: "codex",
-          args: scenario.args ? [...scenario.args] : ["app-server"],
-          headers: {},
-          ...(scenario.transport === "websocket" ? { url: "ws://127.0.0.1:8123" } : {}),
-          ...(scenario.transport === "unix" ? { url: "unix:///tmp/synthetic-codex.sock" } : {}),
-        },
-      });
-      await sendInitializeResult(harness, "openclaw/0.151.0 (Linux; test)");
-      const client = await acquire;
-      if (!scenario.allowed) {
-        const writes = harness.writes.length;
-        expect(() => captureCodexAppServerClientLifetime(client, "native-process")).toThrow(
-          "reconnect through managed local stdio",
-        );
-        expect(harness.writes).toHaveLength(writes);
-        expect(client.getCloseError()).toBeUndefined();
-      } else {
-        const assertCurrent = captureCodexAppServerClientLifetime(client, "native-process");
-        expect(assertCurrent).not.toThrow();
-        client.close();
-        expect(assertCurrent).toThrow(CodexAdoptedThreadActiveError);
-      }
-      if ("shared" in scenario) {
-        releaseLeasedSharedCodexAppServerClient(client);
-      }
-      client.close();
-    },
+    (error) => mocks.applyCodexAppServerAuthProfile.mockRejectedValue(error),
   );
-
-  it("captures registered client lifetime independently of lease counts", async () => {
-    const harness = createClientHarness();
-    vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-    expect(() => captureCodexAppServerClientLifetime(harness.client, "connection")).toThrow(
-      CodexAdoptedThreadActiveError,
-    );
-    const acquire = getLeasedSharedCodexAppServerClient({ timeoutMs: 1_000 });
-    await sendInitializeResult(harness, "openclaw/0.151.0 (Linux; test)");
-    const client = await acquire;
-    const assertCurrent = captureCodexAppServerClientLifetime(client, "native-process");
-    const retained = retainSharedCodexAppServerClientByInstanceId(client.getInstanceId());
-    expect(assertCurrent).not.toThrow();
-    retained?.release();
-    expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-    expect(assertCurrent).not.toThrow();
-    const catalogCurrent = captureSharedCodexAppServerCatalogLifetime(client);
-    const configWrite = client.request("config/batchWrite", { edits: [], reloadUserConfig: false });
-    const written = JSON.parse(harness.writes.at(-1)!);
-    harness.send({ id: written.id, result: {} });
-    await configWrite;
-    expect(catalogCurrent()).toBe(false);
-    expect(assertCurrent).not.toThrow();
-    client.close();
-    expect(assertCurrent).toThrow(CodexAdoptedThreadActiveError);
-  });
-
-  it.each(["websocket", "unix", "proxy"] as const)(
-    "preserves supervised connection lifetime over %s without claiming its native process",
-    async (transport) => {
-      const harness = createClientHarness();
-      vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-      const acquire = getLeasedSharedCodexAppServerClient({
-        timeoutMs: 1_000,
-        startOptions: {
-          transport: transport === "proxy" ? "stdio" : transport,
-          command: "codex",
-          args: transport === "proxy" ? ["app-server", "proxy"] : ["app-server"],
-          headers: {},
-          ...(transport === "websocket" ? { url: "ws://127.0.0.1:8123" } : {}),
-          ...(transport === "unix" ? { url: "unix:///tmp/synthetic-codex.sock" } : {}),
-        },
-      });
-      await sendInitializeResult(harness, "openclaw/0.151.0 (Linux; test)");
-      const client = await acquire;
-      try {
-        const assertCurrent = captureCodexAppServerClientLifetime(client, "connection");
-        expect(assertCurrent).not.toThrow();
-        const release = retainSharedCodexAppServerClientIfCurrent(client);
-        expect(assertCurrent).not.toThrow();
-        release?.();
-        expect(assertCurrent).not.toThrow();
-        expect(captureCodexAppServerClientLifetime(client, "connection")).not.toThrow();
-      } finally {
-        releaseLeasedSharedCodexAppServerClient(client);
-        client.close();
-      }
-    },
-  );
-
-  it.each(["acquire", "retain"] as const)(
-    "preserves captured client lifetime after a completed sibling %s",
-    async (operation) => {
-      const harness = createClientHarness();
-      vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-      const options = {
-        timeoutMs: 1_000,
-        config: {},
-        startOptions: {
-          transport: "stdio",
-          homeScope: "agent",
-          command: "codex",
-          args: ["app-server"],
-          headers: {},
-        } satisfies CodexAppServerStartOptions,
-      };
-      const acquire = getLeasedSharedCodexAppServerClient(options);
-      await sendInitializeResult(harness, "openclaw/0.149.0 (Linux; test)");
-      const client = await acquire;
-      const assertCurrent = captureCodexAppServerClientLifetime(client, "native-process");
-      if (operation === "acquire") {
-        expect(await getLeasedSharedCodexAppServerClient(options)).toBe(client);
-        expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-      } else {
-        retainSharedCodexAppServerClientIfCurrent(client)?.();
-      }
-
-      expect(assertCurrent).not.toThrow();
-      expect(captureCodexAppServerClientLifetime(client, "native-process")).not.toThrow();
-      expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-    },
-  );
-
-  it("preserves client lifetime while an unleased acquire is pending", async () => {
-    const harness = createClientHarness();
-    vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-    const acquire = getLeasedSharedCodexAppServerClient({ timeoutMs: 1_000 });
-    await sendInitializeResult(harness, "openclaw/0.149.0 (Linux; test)");
-    const client = await acquire;
-    const assertCurrent = captureCodexAppServerClientLifetime(client, "native-process");
-    let observedPendingAcquire = false;
-    await getSharedCodexAppServerClient({
-      timeoutMs: 1_000,
-      onStartedClient: () => {
-        observedPendingAcquire = true;
-        expect(captureCodexAppServerClientLifetime(client, "native-process")).not.toThrow();
-        expect(assertCurrent).not.toThrow();
-      },
-    });
-
-    expect(observedPendingAcquire).toBe(true);
-    expect(assertCurrent).not.toThrow();
-    expect(captureCodexAppServerClientLifetime(client, "native-process")).not.toThrow();
-    expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-  });
-
-  it("revokes configuration ownership when its physical client is retired", async () => {
-    const harness = createClientHarness();
-    vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-    const acquire = getLeasedSharedCodexAppServerClient({ timeoutMs: 1_000 });
-    await sendInitializeResult(harness, "openclaw/0.149.0 (Linux; test)");
-    const client = await acquire;
-    const assertExclusive = captureCodexAppServerClientLifetime(client, "native-process");
-    retireSharedCodexAppServerClientIfCurrent(client);
-
-    expect(assertExclusive).toThrow(CodexAdoptedThreadActiveError);
-    expect(() => captureCodexAppServerClientLifetime(client, "native-process")).toThrow(
-      CodexAdoptedThreadActiveError,
-    );
-    expect(harness.stdinDestroyed).toBe(false);
-    expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-    expect(harness.stdinDestroyed).toBe(true);
-  });
 
   it.each(["fails", "succeeds"])(
     "preserves a co-lease when selection replacement acquisition %s",
@@ -992,9 +769,11 @@ describe("shared Codex app-server client", () => {
     ).toBeUndefined();
     expect(pluginLocal.process.stdin.destroyed).toBe(false);
     expect(startSpy).toHaveBeenCalledTimes(2);
-    const retained = retainSharedCodexAppServerClientByInstanceId(firstClient.getInstanceId());
+    const retained = await retainSharedCodexAppServerClientByInstanceId(
+      firstClient.getInstanceId(),
+    );
     expect(retained?.client).toBe(firstClient);
-    retained?.release();
+    await retained?.release();
     expect(startSpy.mock.calls[0]?.[0]).toMatchObject({
       command: "/Applications/Codex.app/Contents/Resources/codex",
       commandSource: "resolved-managed",
@@ -1170,25 +949,7 @@ describe("shared Codex app-server client", () => {
     });
   });
 
-  it("fails capture-mode WebSocket startup before opening a client", async () => {
-    const startSpy = vi.spyOn(CodexAppServerClient, "start");
-    const startOptions: CodexAppServerStartOptions = {
-      transport: "websocket",
-      command: "codex",
-      commandSource: "config",
-      args: ["app-server"],
-      url: "ws://127.0.0.1:1234",
-      headers: {},
-    };
-
-    await expect(
-      getLeasedSharedCodexAppServerClient({
-        startOptions,
-        runtimeArtifactMode: "capture",
-      }),
-    ).rejects.toThrow("WebSocket attestation is unsupported");
-    expect(startSpy).not.toHaveBeenCalled();
-  });
+  registerSharedClientConnectionArtifactTests();
 
   it("detects persisted Computer Use enabled after managed client startup", async () => {
     await withTempDir("openclaw-codex-managed-selection-", async (root) => {
@@ -1380,6 +1141,39 @@ describe("shared Codex app-server client", () => {
     },
   );
 
+  it.each(["shared", "isolated"] as const)(
+    "preserves the elapsed startup budget across a wall-clock jump for a %s client",
+    async (kind) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const harness = createInitializingClientHarness();
+      vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
+      const entered = createDeferred<void>();
+      const released = createDeferred<void>();
+      mocks.resolveManagedCodexAppServerStartOptions.mockImplementationOnce(
+        async (startOptions) => {
+          entered.resolve();
+          await released.promise;
+          return startOptions;
+        },
+      );
+      const acquire =
+        kind === "shared" ? getSharedCodexAppServerClient : createIsolatedCodexAppServerClient;
+      const pending = acquire({ timeoutMs: 1_000 });
+      const accepted = expect(pending).resolves.toBe(harness.client);
+      try {
+        await entered.promise;
+        vi.setSystemTime(Date.now() + 300_100);
+        released.resolve();
+        await accepted;
+        expect(harness.process.stdin.destroyed).toBe(false);
+      } finally {
+        released.resolve();
+        vi.useRealTimers();
+        await harness.client.closeAndWait();
+      }
+    },
+  );
+
   it("closes and clears a shared app-server when initialize times out", async () => {
     vi.useFakeTimers();
     const first = createClientHarness();
@@ -1402,6 +1196,7 @@ describe("shared Codex app-server client", () => {
     );
     await firstStarted;
     await vi.advanceTimersByTimeAsync(5);
+    first.emitExit();
     await firstRejection;
     expect(first.process.stdin.destroyed).toBe(true);
 
@@ -1519,6 +1314,7 @@ describe("shared Codex app-server client", () => {
     const rejection = expect(client).rejects.toThrow("codex app-server initialize timed out");
     await started;
     await vi.advanceTimersByTimeAsync(5);
+    harness.emitExit();
     await rejection;
     expect(harness.process.stdin.destroyed).toBe(true);
   });
@@ -1563,7 +1359,7 @@ describe("shared Codex app-server client", () => {
     const harness = createClientHarness();
     vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
     let now = 0;
-    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(performance, "now").mockImplementation(() => now);
 
     const clientPromise = createIsolatedCodexAppServerClient({ timeoutMs: 100 });
     await vi.waitFor(() => expect(harness.writes.length).toBeGreaterThanOrEqual(1));
@@ -2510,134 +2306,6 @@ describe("shared Codex app-server client", () => {
     expect(second.process.stdin.destroyed).toBe(true);
   });
 
-  it("keeps a retired one-shot client alive until native subagent completion", async () => {
-    const harness = createClientHarness();
-    vi.spyOn(CodexAppServerClient, "start").mockResolvedValueOnce(harness.client);
-
-    const clientPromise = getLeasedSharedCodexAppServerClient({ timeoutMs: 1000 });
-    await sendInitializeResult(harness, "openclaw/0.149.0 (Linux; test)");
-    const client = await clientPromise;
-    const deliverCompletion = vi.fn(async () => ({ delivered: true, path: "direct" as const }));
-    const task: AgentHarnessTaskRecord = {
-      taskId: "child-thread",
-      runId: "codex-thread:child-thread",
-      runtime: "subagent",
-      taskKind: "codex-native",
-      ownerKey: "agent:main:main",
-      requesterSessionKey: "agent:main:main",
-      scopeKind: "session",
-      task: "inspect the repo",
-      status: "running",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
-      createdAt: Date.now(),
-    };
-    let created = false;
-    const createTask = vi.fn(() => {
-      created = true;
-      return task;
-    });
-    const taskRuntime: AgentHarnessTaskRuntime = {
-      createRunningTaskRun: createTask,
-      tryCreateRunningTaskRun: createTask,
-      recordTaskRunProgressByRunId: vi.fn(() => []),
-      finalizeTaskRunByRunId: vi.fn((params) => {
-        task.status = params.status;
-        task.endedAt = params.endedAt;
-        task.terminalSummary = params.terminalSummary ?? undefined;
-        return [task];
-      }),
-      listTaskRecords: vi.fn(() => (created ? [task] : [])),
-      setDetachedTaskDeliveryStatusByRunId: vi.fn((params) => {
-        task.deliveryStatus = params.deliveryStatus;
-        return [task];
-      }),
-    };
-    const retainClient = vi.fn(() => retainSharedCodexAppServerClientIfCurrent(client));
-    const monitor = new codexNativeSubagentMonitorRuntime.Monitor(
-      client,
-      {
-        createAgentHarnessTaskRuntime: vi.fn(() => taskRuntime),
-        deliverAgentHarnessTaskCompletion: deliverCompletion,
-      },
-      { retainClient },
-    );
-    monitor.registerParent({
-      parentThreadId: "parent-thread",
-      requesterSessionKey: "agent:main:main",
-      taskRuntimeScope: { requesterSessionKey: "agent:main:main" },
-      agentId: "main",
-    });
-
-    harness.send({
-      method: "thread/started",
-      params: {
-        thread: {
-          id: "child-thread",
-          parentThreadId: "parent-thread",
-          preview: "inspect the repo",
-          source: {
-            subAgent: {
-              thread_spawn: {
-                parent_thread_id: "parent-thread",
-                depth: 1,
-                agent_path: "child-thread",
-              },
-            },
-          },
-        },
-      },
-    });
-    await vi.waitFor(() => expect(retainClient).toHaveBeenCalledTimes(1));
-
-    expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-    expect(retireSharedCodexAppServerClientIfCurrent(client)).toEqual({
-      activeLeases: 1,
-      closed: false,
-    });
-    expect(harness.process.stdin.destroyed).toBe(false);
-
-    // The ordinary lease is gone, but native completion still explicitly owns
-    // the detached process and repeated cleanup must not close that owner.
-    expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(false);
-    expect(retireSharedCodexAppServerClientIfCurrent(client)).toEqual({
-      activeLeases: 1,
-      closed: false,
-    });
-    expect(harness.process.stdin.destroyed).toBe(false);
-
-    harness.send({
-      method: "turn/completed",
-      params: {
-        threadId: "child-thread",
-        turn: {
-          id: "child-turn",
-          status: "completed",
-          items: [
-            {
-              id: "child-final",
-              type: "agentMessage",
-              phase: "final_answer",
-              text: "child final result",
-            },
-          ],
-          error: null,
-        },
-      },
-    });
-
-    await vi.waitFor(() => expect(deliverCompletion).toHaveBeenCalledTimes(1));
-    expect(deliverCompletion).toHaveBeenCalledWith(
-      expect.objectContaining({ childSessionId: "child-thread", result: "child final result" }),
-    );
-    expect(task).toMatchObject({
-      status: "succeeded",
-      deliveryStatus: "delivered",
-      terminalSummary: "child final result",
-    });
-    expect(harness.process.stdin.destroyed).toBe(true);
-  });
-
   it("leases shared app-server clients before returning concurrent acquirers", async () => {
     const first = createClientHarness();
     vi.spyOn(CodexAppServerClient, "start").mockResolvedValueOnce(first.client);
@@ -3397,32 +3065,6 @@ describe("shared Codex app-server client", () => {
     },
   );
 
-  it("generation-binds an explicit desktop client while Computer Use is disabled", async () => {
-    const generation = { epoch: 1, fingerprint: "desktop-x" };
-    mocks.desktopGeneration = generation;
-    const harness = createClientHarness();
-    vi.spyOn(CodexAppServerClient, "start").mockResolvedValueOnce(harness.client);
-
-    const clientPromise = getLeasedSharedCodexAppServerClient({
-      config: {},
-      pluginConfig: { computerUse: { enabled: false } },
-      agentDir: "/tmp/openclaw-agent",
-      startOptions: {
-        transport: "stdio",
-        homeScope: "agent",
-        command: "/Applications/ChatGPT.app/Contents/Resources/codex",
-        commandSource: "config",
-        args: ["app-server"],
-        headers: {},
-      },
-    });
-    await sendInitializeResult(harness, "openclaw/0.149.0 (macOS; test)");
-    const client = await clientPromise;
-
-    expect(readCodexAppServerClientDesktopGeneration(client)).toEqual(generation);
-    expect(releaseLeasedSharedCodexAppServerClient(client)).toBe(true);
-  });
-
   it("binds a package-first acquisition when its actual fallback is a desktop app", async () => {
     const generationX = { epoch: 1, fingerprint: "desktop-x" };
     const generationY = { epoch: 2, fingerprint: "desktop-y" };
@@ -3594,8 +3236,8 @@ describe("shared Codex app-server client", () => {
   );
 
   it("closes shared transports despite a failing close observer and reopens admission", async () => {
-    const first = createAutoInitializingClientHarness();
-    const second = createAutoInitializingClientHarness();
+    const first = createInitializingClientHarness();
+    const second = createInitializingClientHarness();
     vi.spyOn(CodexAppServerClient, "start")
       .mockResolvedValueOnce(first.client)
       .mockResolvedValueOnce(second.client);
@@ -3626,9 +3268,9 @@ describe("shared Codex app-server client", () => {
   });
 
   it("joins sibling transports before reporting a close failure and reopening admission", async () => {
-    const first = createAutoInitializingClientHarness();
-    const second = createAutoInitializingClientHarness();
-    const replacement = createAutoInitializingClientHarness();
+    const first = createInitializingClientHarness();
+    const second = createInitializingClientHarness();
+    const replacement = createInitializingClientHarness();
     vi.spyOn(CodexAppServerClient, "start")
       .mockResolvedValueOnce(first.client)
       .mockResolvedValueOnce(second.client)

@@ -25,6 +25,7 @@ import {
 import { VERSION } from "../../../version.js";
 import { listDoctorConfiguredChannelIds } from "./configured-channel-ids.js";
 import { collectConfiguredProviderPluginIds } from "./configured-provider-plugin-installs.js";
+import { collectBlockedPluginIds as collectBlockedPluginIdSet } from "./missing-configured-plugin-install.ids.js";
 import { repairMissingPluginInstallsForIds } from "./missing-configured-plugin-install.js";
 import { shouldDeferConfiguredPluginInstallRepair } from "./update-phase.js";
 
@@ -50,23 +51,7 @@ function isDenied(cfg: OpenClawConfig, pluginId: string): boolean {
 }
 
 function collectBlockedPluginIds(cfg: OpenClawConfig): string[] {
-  const ids = new Set<string>();
-  const deny = cfg.plugins?.deny;
-  if (Array.isArray(deny)) {
-    for (const pluginId of deny) {
-      const normalized = normalizeId(pluginId);
-      if (normalized) {
-        ids.add(normalized);
-      }
-    }
-  }
-  const entries = asNullableRecord(cfg.plugins?.entries);
-  for (const [pluginId, entry] of Object.entries(entries ?? {})) {
-    if (asNullableRecord(entry)?.enabled === false && pluginId.trim()) {
-      ids.add(pluginId.trim());
-    }
-  }
-  return [...ids].toSorted((left, right) => left.localeCompare(right));
+  return [...collectBlockedPluginIdSet(cfg)].toSorted((left, right) => left.localeCompare(right));
 }
 
 function isPluginEntryDisabled(cfg: OpenClawConfig, pluginId: string): boolean {
@@ -376,7 +361,10 @@ export async function maybeRunConfiguredPluginInstallReleaseStep(params: {
     };
   }
   if (configured.pluginIds.length === 0 && configured.channelIds.length === 0) {
-    return { changes: [], warnings: [], completed: true, touchedConfig: !updateInProgress };
+    // No configured plugins or channels means no backfill happened, so there is nothing to stamp.
+    // The Doctor state runner persists config whenever touchedConfig is true, which would rewrite
+    // an operator's authored file - or create one that never existed - for zero repair work.
+    return { changes: [], warnings: [], completed: true, touchedConfig: false };
   }
   const repaired = await repairMissingPluginInstallsForIds({
     cfg: params.cfg,

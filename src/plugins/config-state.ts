@@ -39,6 +39,7 @@ const RETIRED_PLUGIN_IDS = new Set([
   "google-antigravity-auth",
   "google-gemini-cli-auth",
   "skill-workshop",
+  "webhooks",
 ]);
 
 /** Normalizes user/config plugin ids into the canonical lowercase key form. */
@@ -101,7 +102,9 @@ export function normalizePluginTargetConfig(
   if (hasTargetEntry) {
     const { config: pluginConfig, ...entry } = normalized.entries[normalizedId] ?? {};
     entries[normalizedId] = {
-      ...entry,
+      // Auth/setup compares this authored candidate after it is persisted as JSON.
+      // Absent optional runtime fields must not become non-round-trippable own keys.
+      ...Object.fromEntries(Object.entries(entry).filter(([, value]) => value !== undefined)),
       ...(isRecord(pluginConfig) ? { config: pluginConfig } : {}),
     };
   }

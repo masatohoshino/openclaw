@@ -1,4 +1,3 @@
-// Channel setup flow configures channels, auth, and workspace bindings.
 import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { getBundledChannelSetupPlugin } from "../channels/plugins/bundled.js";
 import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
@@ -29,7 +28,7 @@ import { hasConfiguredCommandOwners } from "../commands/doctor-command-owner.js"
 import type { ChannelChoice } from "../commands/onboard-types.js";
 import { isChannelConfigured } from "../config/channel-configured.js";
 import { createConfigIO } from "../config/io.factory.js";
-import { createManagedRuntimeEnvBase } from "../config/io.read-helpers.js";
+import { createManagedRuntimeEnvBase } from "../config/io.runtime-env.js";
 import { formatConfigIssueSummary } from "../config/issue-format.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -42,10 +41,12 @@ import type { RuntimeEnv } from "../runtime.js";
 import { t } from "../wizard/i18n/index.js";
 import { createPluginCapabilityConsentPrompter } from "../wizard/plugin-capability-consent.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
+import { noteDisabledBeforeSetup } from "./channel-setup-fallback.js";
 import {
   ensureChannelSetupPluginInstalledWithNavigation as runPluginInstallWithNavigation,
   runScopedChannelStep as runNavigationScope,
 } from "./channel-setup-navigation.js";
+import { createChannelSetupDisabledHints } from "./channel-setup.disabled.js";
 import {
   formatAccountLabel,
   maybeConfigureCommandOwner,
@@ -150,8 +151,6 @@ export function createChannelOnboardingPostWriteHook(params: {
       }),
   };
 }
-
-// Channel-specific prompts moved into setup flow adapters.
 
 export async function setupChannels(
   cfg: OpenClawConfig,
@@ -344,50 +343,12 @@ export async function setupChannels(
     }
   };
 
-  const resolveConfigDisabledHint = (channel: ChannelChoice): string | undefined => {
-    if (next.plugins?.enabled === false) {
-      return "plugins disabled";
-    }
-    if (next.plugins?.entries?.[channel]?.enabled === false) {
-      return "plugin disabled";
-    }
-    if (
-      typeof (next.channels as Record<string, { enabled?: boolean }> | undefined)?.[channel]
-        ?.enabled === "boolean"
-    ) {
-      return (next.channels as Record<string, { enabled?: boolean }>)[channel]?.enabled === false
-        ? "disabled"
-        : undefined;
-    }
-    return undefined;
-  };
-
-  const resolveAccountDisabledHint = (
-    channel: ChannelChoice,
-    accountId?: string,
-  ): string | undefined => {
-    const plugin = getVisibleChannelPlugin(channel);
-    if (!plugin) {
-      return undefined;
-    }
-    const account = plugin.config.resolveAccount(
-      next,
-      accountId ?? resolveChannelDefaultAccountId({ plugin, cfg: next }),
-    );
-    let enabled: boolean | undefined;
-    if (plugin.config.isEnabled) {
-      enabled = plugin.config.isEnabled(account, next);
-    } else if (typeof (account as { enabled?: boolean })?.enabled === "boolean") {
-      enabled = (account as { enabled?: boolean }).enabled;
-    }
-    return enabled === false ? "disabled" : undefined;
-  };
-  const resolveDisabledHint = (channel: ChannelChoice): string | undefined => {
-    const configDisabledHint = resolveConfigDisabledHint(channel);
-    return configDisabledHint || deferStatusUntilSelection
-      ? configDisabledHint
-      : resolveAccountDisabledHint(channel);
-  };
+  const { resolveConfigDisabledHint, resolveAccountDisabledHint, resolveDisabledHint } =
+    createChannelSetupDisabledHints({
+      getConfig: () => next,
+      getPlugin: getVisibleChannelPlugin,
+      deferStatusUntilSelection,
+    });
 
   const getChannelEntries = () => {
     const resolved = resolveVisibleChannelEntries();
@@ -398,17 +359,7 @@ export async function setupChannels(
     };
   };
 
-  // Decorates the runtime status map with synthetic `selectionHint` entries for
-  // installable catalog channels (e.g. WeCom shipped via npm). In QuickStart we
-  // run with `deferStatusUntilSelection`, which leaves `statusByChannel` empty
-  // until the user picks a channel — without this overlay the selection menu
-  // would render those options without any "download from <npm-spec>" hint.
-  //
-  // Bundled channels (Signal / Tlon / Twitch / Slack ...) reach this code path
-  // too whenever their plugin is not yet enabled, because they share the same
-  // "installable catalog" bucket. For those we must NOT show "download from
-  // <npm-spec>" — the plugin already lives under `extensions/<id>` and the
-  // hint would mislead users into thinking the plugin is missing.
+  // Deferred setup has no runtime status yet; only external catalog entries need download hints.
   const buildStatusByChannelForSelection = (
     catalogById: ReturnType<typeof getChannelEntries>["catalogById"],
   ): Map<ChannelChoice, ChannelSetupStatus> => {
@@ -436,12 +387,18 @@ export async function setupChannels(
   };
 
   const resolveSelectionContributions = () =>
-    withCommandPluginMetadata({ config: next, workspaceDir: resolveWorkspaceDir() }, () => {
+    withCommandPluginMetadata({ config: next, workspaceDir: resolveWorkspaceDir() }, async () => {
       const { entries, catalogById } = getChannelEntries();
+      const disabledHints = new Map<ChannelChoice, string | undefined>();
+      for (const entry of entries) {
+        if (shouldShowChannelInSetup(entry.meta)) {
+          disabledHints.set(entry.id, await resolveDisabledHint(entry.id));
+        }
+      }
       return resolveChannelSetupSelectionContributions({
         entries,
         statusByChannel: buildStatusByChannelForSelection(catalogById),
-        resolveDisabledHint,
+        resolveDisabledHint: (channel) => disabledHints.get(channel),
       });
     });
 
@@ -565,11 +522,9 @@ export async function setupChannels(
     channel: ChannelChoice,
     result: ChannelSetupConfiguredResult,
   ) => {
-    if (result === "skip") {
-      return false;
+    if (result !== "skip") {
+      await applySetupResult(channel, result);
     }
-    await applySetupResult(channel, result);
-    return true;
   };
   const runScopedChannelStep = async <T>(
     runner: (prompter: WizardPrompter, options: SetupChannelsOptions) => Promise<T>,
@@ -750,6 +705,28 @@ export async function setupChannels(
       }
       return "retry_selection";
     };
+    const installCatalogEntry = async (
+      entry: Parameters<typeof runPluginInstallWithNavigation>[0]["install"]["entry"],
+    ): Promise<"retry_selection" | undefined> => {
+      const installOutcome = await ensureChannelSetupPluginInstalledWithNavigation(channel, {
+        cfg: next,
+        entry,
+        runtime,
+        workspaceDir: resolveWorkspaceDir(),
+        autoConfirmSingleSource: true,
+      });
+      if (installOutcome.status === "back") {
+        return returnToSelection();
+      }
+      next = installOutcome.value.cfg;
+      if (!installOutcome.value.installed) {
+        return "retry_selection";
+      }
+      if (installOutcome.persistentEffectStarted) {
+        cfgOnBack = next;
+      }
+      return undefined;
+    };
     let deferredDisabledHint = deferStatusUntilSelection
       ? resolveConfigDisabledHint(channel)
       : undefined;
@@ -805,24 +782,12 @@ export async function setupChannels(
         }
         resumingDisabledChannel = true;
       } else {
-        await prompter.note(
-          t("wizard.channels.disabledBeforeSetup", {
-            channel,
-            hint: deferredDisabledHint,
-          }),
-          t("wizard.channels.setupTitle"),
-        );
+        await noteDisabledBeforeSetup(prompter, channel, deferredDisabledHint);
         return "done";
       }
       deferredDisabledHint = resolveConfigDisabledHint(channel);
       if (deferredDisabledHint) {
-        await prompter.note(
-          t("wizard.channels.disabledBeforeSetup", {
-            channel,
-            hint: deferredDisabledHint,
-          }),
-          t("wizard.channels.setupTitle"),
-        );
+        await noteDisabledBeforeSetup(prompter, channel, deferredDisabledHint);
         return "done";
       }
     }
@@ -830,66 +795,24 @@ export async function setupChannels(
     const catalogEntry = catalogById.get(channel);
     const installedCatalogEntry = installedCatalogById.get(channel);
     if (catalogEntry) {
-      const workspaceDir = resolveWorkspaceDir();
-      const installOutcome = await ensureChannelSetupPluginInstalledWithNavigation(channel, {
-        cfg: next,
-        entry: catalogEntry,
-        runtime,
-        workspaceDir,
-        autoConfirmSingleSource: true,
-      });
-      if (installOutcome.status === "back") {
-        return returnToSelection();
-      }
-      const result = installOutcome.value;
-      next = result.cfg;
-      if (!result.installed) {
-        return "retry_selection";
-      }
-      if (installOutcome.persistentEffectStarted) {
-        cfgOnBack = next;
+      const installExit = await installCatalogEntry(catalogEntry);
+      if (installExit) {
+        return installExit;
       }
       await refreshStatus(channel);
     } else if (installedCatalogEntry) {
       let plugin = await loadScopedChannelPlugin(channel, installedCatalogEntry.pluginId);
       if (!plugin && installedCatalogEntry.install?.npmSpec) {
-        // The channel is recorded in the user's config (e.g. a stale
-        // `channels.<id>` entry left over from a previous install) but the
-        // plugin runtime cannot be loaded from disk — typically because the
-        // externalized npm package was uninstalled or pruned during an
-        // upgrade. Rather than dead-ending with "plugin not available", fall
-        // back to the catalog-driven install flow so onboard can recover by
-        // reinstalling the official external plugin.
-        //
-        // Preserve the same disabled-config guard used by
-        // `enableBundledPluginForSetup` so an operator-disabled channel
-        // cannot be silently reinstalled/re-enabled through this path.
+        // Recover retained channel config after its external package disappears,
+        // while respecting the same disabled policy as bundled setup.
         const disabledHint = resolveConfigDisabledHint(channel);
         if (disabledHint) {
-          await prompter.note(
-            t("wizard.channels.disabledBeforeSetup", { channel, hint: disabledHint }),
-            t("wizard.channels.setupTitle"),
-          );
+          await noteDisabledBeforeSetup(prompter, channel, disabledHint);
           return "done";
         }
-        const workspaceDir = resolveWorkspaceDir();
-        const installOutcome = await ensureChannelSetupPluginInstalledWithNavigation(channel, {
-          cfg: next,
-          entry: installedCatalogEntry,
-          runtime,
-          workspaceDir,
-          autoConfirmSingleSource: true,
-        });
-        if (installOutcome.status === "back") {
-          return returnToSelection();
-        }
-        const result = installOutcome.value;
-        next = result.cfg;
-        if (!result.installed) {
-          return "retry_selection";
-        }
-        if (installOutcome.persistentEffectStarted) {
-          cfgOnBack = next;
+        const installExit = await installCatalogEntry(installedCatalogEntry);
+        if (installExit) {
+          return installExit;
         }
         plugin = getVisibleChannelPlugin(channel);
       }
@@ -902,59 +825,28 @@ export async function setupChannels(
       }
       await refreshStatus(channel);
     } else {
-      // Neither discovery bucket yielded an entry for this channel. This can
-      // happen when `channels.<id>` in user config carries stale fields (e.g.
-      // `appId`, tokens) left over from a previous install: `isStatically-
-      // ChannelConfigured` returns true, which removes the channel from the
-      // `installableCatalogEntries` bucket, while a missing/pruned plugin on
-      // disk keeps it out of `installedCatalogEntries`. Before falling back
-      // to the bundled-plugin enable path, consult the catalog directly so
-      // users with a stale config entry for an externalized channel (qqbot,
-      // imessage, discord, whatsapp, ...) still get auto-install instead
-      // of a dead-end "plugin not available" note.
+      // Discovery omits loaded catalog plugins from both buckets. Reuse them
+      // without reinstalling or enabling by channel ID: the plugin owner may
+      // have a different ID. Non-catalog setup plugins still need activation.
       const fallbackCatalogEntry = getTrustedChannelPluginCatalogEntry(channel, {
         cfg: next,
         workspaceDir: resolveWorkspaceDir(),
       });
       if (fallbackCatalogEntry?.install?.npmSpec) {
-        // Preserve the same disabled-config guard used by
-        // `enableBundledPluginForSetup` so an operator-disabled channel
-        // cannot be silently reinstalled/re-enabled through this path. This
-        // mirrors the guard that was previously enforced inside the
-        // bundled-enable fallback.
         const disabledHint = resolveConfigDisabledHint(channel);
         if (disabledHint) {
-          await prompter.note(
-            t("wizard.channels.disabledBeforeSetup", { channel, hint: disabledHint }),
-            t("wizard.channels.setupTitle"),
-          );
+          await noteDisabledBeforeSetup(prompter, channel, disabledHint);
           return "done";
         }
-        const workspaceDir = resolveWorkspaceDir();
-        const installOutcome = await ensureChannelSetupPluginInstalledWithNavigation(channel, {
-          cfg: next,
-          entry: fallbackCatalogEntry,
-          runtime,
-          workspaceDir,
-          autoConfirmSingleSource: true,
-        });
-        if (installOutcome.status === "back") {
-          return returnToSelection();
-        }
-        const result = installOutcome.value;
-        next = result.cfg;
-        if (!result.installed) {
-          return "retry_selection";
-        }
-        if (installOutcome.persistentEffectStarted) {
-          cfgOnBack = next;
+        if (!getVisibleChannelPlugin(channel)) {
+          const installExit = await installCatalogEntry(fallbackCatalogEntry);
+          if (installExit) {
+            return installExit;
+          }
         }
         await refreshStatus(channel);
-      } else {
-        const enabled = await enableBundledPluginForSetup(channel);
-        if (!enabled) {
-          return "done";
-        }
+      } else if (!(await enableBundledPluginForSetup(channel))) {
+        return "done";
       }
     }
 
@@ -983,28 +875,15 @@ export async function setupChannels(
         return returnToSelection();
       }
       const custom = outcome.value;
-      const applied = await withCommandPluginMetadata(
-        { config: next, workspaceDir: resolveWorkspaceDir() },
-        () => applyCustomSetupResult(channel, custom),
+      await withCommandPluginMetadata({ config: next, workspaceDir: resolveWorkspaceDir() }, () =>
+        applyCustomSetupResult(channel, custom),
       );
-      if (!applied) {
-        return "done";
-      }
       return "done";
     }
-    if (configured) {
-      const outcome = await runScopedChannelStep(
-        async (scopedPrompter, scopedOptions) =>
-          await handleConfiguredChannel(channel, label, scopedPrompter, scopedOptions),
-      );
-      if (outcome.status === "back") {
-        return returnToSelection();
-      }
-      return "done";
-    }
-    const outcome = await runScopedChannelStep(
-      async (scopedPrompter, scopedOptions) =>
-        await configureChannel(channel, scopedPrompter, scopedOptions),
+    const outcome = await runScopedChannelStep(async (scopedPrompter, scopedOptions) =>
+      configured
+        ? await handleConfiguredChannel(channel, label, scopedPrompter, scopedOptions)
+        : await configureChannel(channel, scopedPrompter, scopedOptions),
     );
     if (outcome.status === "back") {
       return returnToSelection();
@@ -1109,7 +988,7 @@ export async function setupChannels(
         try {
           if (
             resolveConfigDisabledHint(id) ||
-            resolveAccountDisabledHint(id, accountIdsByChannel.get(id))
+            (await resolveAccountDisabledHint(id, accountIdsByChannel.get(id)))
           ) {
             continue;
           }

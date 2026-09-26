@@ -1,11 +1,14 @@
+import assert from "node:assert/strict";
 import path from "node:path";
-import { Worker } from "node:worker_threads";
+import type { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { trackSqliteStatementExecutions } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { closeCachedOpenClawAgentDatabase } from "../../state/openclaw-agent-db-lifecycle.js";
 import {
   closeOpenClawAgentDatabaseByPath,
+  closeOpenClawAgentDatabaseByPathAsync,
   closeOpenClawAgentDatabasesAsync,
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -33,7 +36,13 @@ import {
   waitForSessionTranscriptIndexReconcile,
   waitForSessionTranscriptProjection,
 } from "./session-transcript-reconcile.js";
+import { useReconcileWorkerObserver } from "./session-transcript-reconcile.test-support.js";
 
+vi.mock("node:worker_threads", async () =>
+  (await import("./session-transcript-reconcile.test-support.js")).createObservedWorkerThreads(),
+);
+
+const observer = useReconcileWorkerObserver();
 const archiveMaterializationHook = vi.hoisted(() => ({
   afterMaterialize: undefined as (() => void) | undefined,
 }));
@@ -306,7 +315,7 @@ describe("SQLite session handle lifecycle", () => {
       sessionKeys: [scope.sessionKey],
       includeLabelOwners: "Renamed",
       update: async ([snapshot]) => {
-        expect(closeOpenClawAgentDatabaseByPath(databasePath)).toBe(true);
+        expect(await closeOpenClawAgentDatabaseByPathAsync(databasePath)).toBe(true);
         return {
           result: undefined,
           replacements: [
@@ -333,7 +342,8 @@ describe("SQLite session handle lifecycle", () => {
     startSessionTranscriptIndexReconcile(databaseOptions);
     try {
       const ready = waitForSessionTranscriptProjection(scope);
-      expect(closeOpenClawAgentDatabaseByPath(database.path)).toBe(true);
+      closeCachedOpenClawAgentDatabase(database);
+      expect(database.db.isOpen).toBe(false);
       await ready;
       expect(
         readSessionTranscriptMessageEventPage(scope, { maxMessages: 0, offset: 0 }).totalMessages,
@@ -352,37 +362,39 @@ describe("SQLite session handle lifecycle", () => {
     const database = openOpenClawAgentDatabase(databaseOptions);
     database.db.prepare("UPDATE session_transcript_index_state SET needs_rebuild = 1").run();
     let stalledWorker: Worker | undefined;
-    startSessionTranscriptIndexReconcile({
-      ...databaseOptions,
-      createWorker: (filename, options) => {
-        // Stall the planner only; let its recovery worker finish real cleanup.
-        if (stalledWorker) {
-          return new Worker(filename, options);
-        }
-        stalledWorker = new Worker("setInterval(() => {}, 1_000)", { eval: true });
-        return stalledWorker;
-      },
-    });
+    const workerStarted = createDeferred();
+    observer.beforeCreate = (filename, options) =>
+      stalledWorker
+        ? { filename, options }
+        : { filename: "setInterval(() => {}, 1_000)", options: { eval: true } };
+    observer.onTask = ({ worker }) => {
+      stalledWorker ??= worker;
+      workerStarted.resolve();
+    };
+    startSessionTranscriptIndexReconcile(databaseOptions);
     const controller = new AbortController();
     const abortReason = new Error("cancel stalled projection wait");
 
     try {
-      const ready = waitForSessionTranscriptProjection(scope, controller.signal);
-      await vi.waitFor(() => expect(stalledWorker).toBeDefined());
+      const ready = waitForSessionTranscriptProjection(scope, controller.signal).then(
+        () => ({ kind: "resolved" as const }),
+        (error: unknown) => ({ kind: "rejected" as const, error }),
+      );
+      await workerStarted.promise;
       controller.abort(abortReason);
       const outcome = await Promise.race([
-        ready.then(
-          () => ({ kind: "resolved" as const }),
-          (error: unknown) => ({ kind: "rejected" as const, error }),
-        ),
+        ready,
         new Promise<{ kind: "still-waiting" }>((resolve) => {
           setTimeout(() => resolve({ kind: "still-waiting" }), 250);
         }),
       ]);
-      expect(outcome).toMatchObject({
-        kind: "rejected",
-        error: { name: "AbortError", cause: abortReason },
-      });
+      assert(outcome.kind === "rejected", "Projection wait must reject after cancellation");
+      // Status reads keep the reason; native timer cancellation wraps it.
+      if (outcome.error !== abortReason) {
+        assert(outcome.error instanceof Error);
+        expect(outcome.error.name).toBe("AbortError");
+        expect(outcome.error.cause).toBe(abortReason);
+      }
     } finally {
       await stalledWorker?.terminate();
       await waitForSessionTranscriptIndexReconcile(databaseOptions);

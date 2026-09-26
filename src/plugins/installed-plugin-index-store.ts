@@ -100,6 +100,9 @@ const PluginDiagnosticSchema = z.object({
   pluginId: z.string().optional(),
   source: z.string().optional(),
   code: z.string().optional(),
+  configDisposition: z.literal("preserve").optional(),
+  errorCode: z.string().optional(),
+  fixHint: z.string().optional(),
 });
 
 const InstalledPluginIndexSchema = z.object({
@@ -137,6 +140,11 @@ export function parseInstalledPluginIndex(value: unknown): InstalledPluginIndex 
     : extractPluginInstallRecordsFromInstalledPluginIndex(parsed as InstalledPluginIndex);
   if (!installRecords) {
     return null;
+  }
+  for (const diagnostic of parsed.diagnostics) {
+    if (diagnostic.level === "warn" && diagnostic.code === "explicit-config-plugin-selection") {
+      diagnostic.level = "info";
+    }
   }
   return {
     version: parsed.version,

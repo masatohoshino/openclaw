@@ -30,7 +30,6 @@ import type { RuntimeEnv } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import type { SystemAgentConfiguredRoute } from "./inference-route.js";
-import type { probeLocalCommand } from "./probes.js";
 import type {
   SetupInferenceAuthOption,
   SetupInferenceManualProvider,
@@ -69,6 +68,7 @@ export type SetupInferenceKind =
   | SavedAuthSetupInferenceKind;
 
 export type SetupInferenceCandidate = {
+  modelTarget?: "utility";
   kind: SetupInferenceKind;
   /** Canonical provider identity for clients with bundled brand artwork. */
   brandId?: string;
@@ -98,6 +98,10 @@ export type SetupInferenceUnavailableCandidate = {
 };
 
 export type SetupInferenceDetection = {
+  /** Effective explicit utility selection, independent of ordinary primary readiness. */
+  utilityModel?: string;
+  /** Explicit utility inference available to setup while no regular primary is configured. */
+  setupModel?: string;
   candidates: SetupInferenceCandidate[];
   /** Installed integrations that cannot safely run the tool-free setup probe. */
   unavailableCandidates: SetupInferenceUnavailableCandidate[];
@@ -126,6 +130,7 @@ export type SetupInferenceStatus = "ok" | SetupInferenceFailureStatus;
 export type ActivateSetupInferenceResult =
   | {
       ok: true;
+      modelTarget?: "utility";
       modelRef: string;
       latencyMs: number;
       lines: string[];
@@ -162,6 +167,7 @@ export class SetupInferenceOwnerDriftError extends Error {
 export type VerifySetupInferenceResult =
   | {
       ok: true;
+      modelTarget?: "utility";
       modelRef: string;
       latencyMs: number;
     }
@@ -178,6 +184,7 @@ export type CompleteSetupInferenceResult =
 export type BoundVerifySetupInferenceResult =
   | {
       ok: true;
+      modelTarget?: "utility";
       modelRef: string;
       latencyMs: number;
       binding: SystemAgentVerifiedInferenceBinding;
@@ -186,6 +193,8 @@ export type BoundVerifySetupInferenceResult =
 
 export type ActivateSetupInferenceParams = {
   kind: SetupInferenceKind | "api-key" | "provider-auth";
+  /** Acknowledge utility-only activation; older clients must not promote it as primary-ready. */
+  modelTarget?: "utility";
   /** Configured agent that owns the route being tested and persisted. */
   agentId?: string;
   /** Exact explicit model to probe and persist instead of the route's starter model. */
@@ -244,6 +253,9 @@ export async function waitForProviderAuth<T>(
     return await promise;
   }
   if (signal.aborted) {
+    // The provider can cancel synchronously while constructing this already-started promise.
+    // Retain its rejection handler even though cancellation wins immediately.
+    void promise.catch(() => {});
     throw new SetupInferenceCancelledError();
   }
   let rejectAborted: ((reason: unknown) => void) | undefined;
@@ -259,17 +271,9 @@ export async function waitForProviderAuth<T>(
   }
 }
 
-type SetupInferenceRunEmbeddedAgent = (
-  params: Parameters<typeof import("../agents/embedded-agent.js").runEmbeddedAgent>[0] & {
-    onSuccessfulAuthBinding?: (binding: AgentExecutionAuthBinding) => void;
-    authProfileStateMode?: "read-write" | "read-only";
-    preparedModelRuntimeMode?: "isolated-read-only";
-  },
-) => ReturnType<typeof import("../agents/embedded-agent.js").runEmbeddedAgent>;
-
 export type ActivateSetupInferenceDeps = {
   readConfigFileSnapshot?: typeof import("../config/config.js").readConfigFileSnapshot;
-  runEmbeddedAgent?: SetupInferenceRunEmbeddedAgent;
+  runEmbeddedAgent?: typeof import("../agents/embedded-agent.js").runEmbeddedAgent;
   runCliAgent?: typeof import("../agents/cli-runner.js").runCliAgent;
   ensureCodexRuntimePlugin?: typeof import("../commands/codex-runtime-plugin-install.js").ensureCodexRuntimePluginForModelSelection;
   transformConfigWithPendingPluginInstalls?: typeof import("../plugins/install-record-commit.js").transformConfigWithPendingPluginInstalls;
@@ -298,7 +302,6 @@ export type DetectSetupInferenceDeps = {
   /** Supplies prepared setup choices before native or provider discovery starts. */
   onPartial?: (detection: SetupInferenceDetection) => void;
   detectInferenceBackends?: typeof detectInferenceBackends;
-  probeLocalCommand?: typeof probeLocalCommand;
   resolveManifestProviderAuthChoices?: typeof resolveManifestProviderAuthChoices;
   resolvePluginProviders?: typeof resolvePluginProvidersCore;
   enablePluginInConfig?: typeof enablePluginInConfig;
@@ -313,18 +316,7 @@ export function toSavedAuthSetupKind(profileId: string): SavedAuthSetupInference
 }
 
 export function parseSavedAuthSetupProfileId(kind: string): string | undefined {
-  if (!kind.startsWith(SAVED_AUTH_SETUP_KIND_PREFIX)) {
-    return undefined;
-  }
-  const encoded = kind.slice(SAVED_AUTH_SETUP_KIND_PREFIX.length);
-  if (!encoded) {
-    return undefined;
-  }
-  try {
-    return decodeURIComponent(encoded) || undefined;
-  } catch {
-    return undefined;
-  }
+  return parseEncodedSetupKind(kind, SAVED_AUTH_SETUP_KIND_PREFIX);
 }
 
 export function parseInferenceRef(modelRef: string): { provider: string; model: string } {
@@ -335,15 +327,15 @@ export function parseInferenceRef(modelRef: string): { provider: string; model: 
 }
 
 export function parseProviderAutoSetupChoiceId(kind: string): string | undefined {
-  if (!kind.startsWith(PROVIDER_AUTO_SETUP_KIND_PREFIX)) {
-    return undefined;
-  }
-  const encoded = kind.slice(PROVIDER_AUTO_SETUP_KIND_PREFIX.length);
-  if (!encoded) {
+  return parseEncodedSetupKind(kind, PROVIDER_AUTO_SETUP_KIND_PREFIX);
+}
+
+function parseEncodedSetupKind(kind: string, prefix: string): string | undefined {
+  if (!kind.startsWith(prefix)) {
     return undefined;
   }
   try {
-    return decodeURIComponent(encoded) || undefined;
+    return decodeURIComponent(kind.slice(prefix.length)) || undefined;
   } catch {
     return undefined;
   }
@@ -561,6 +553,7 @@ export async function resolveSetupInferenceWinnerError(
 
 export type StagedCandidate = {
   modelRef: string;
+  modelTarget?: "utility";
   agentRuntimeId?: string;
   authProfileId?: string;
   pluginId?: string;
@@ -568,6 +561,19 @@ export type StagedCandidate = {
   pendingPluginInstalls?: Record<string, PluginInstallRecord>;
 };
 export type StageFailure = { error: string };
+export function validateSetupModelTarget(
+  expected: "utility" | undefined,
+  requested: "utility" | undefined,
+): StageFailure | undefined {
+  return expected === requested
+    ? undefined
+    : {
+        error:
+          expected === "utility"
+            ? "This model is for setup and utility tasks. Update this client and select utility setup; it cannot be activated as a regular agent model."
+            : "The requested setup model role does not match this provider choice. Refresh setup and choose again.",
+      };
+}
 export type StageContext = {
   params: ActivateSetupInferenceParams;
   deps: ActivateSetupInferenceDeps;

@@ -61,6 +61,7 @@ type PromptActiveSession = (
 type SteeringLease = {
   leaseId: string;
   runIds: readonly string[];
+  isCurrent: () => boolean;
 };
 
 type TrajectoryRecorder = ReturnType<typeof createTrajectoryRuntimeRecorder>;
@@ -99,6 +100,15 @@ export async function submitEmbeddedAttemptPrompt(input: {
   transcriptPrompt: string;
 }): Promise<void> {
   const { activeSession, attempt } = input;
+  let pendingSteering = input.leasedSteering;
+  const assertSteeringCurrent = () => {
+    if (pendingSteering && !pendingSteering.isCurrent()) {
+      throw new Error(
+        "The queued child results lost authority before requester prompt submission.",
+      );
+    }
+  };
+  assertSteeringCurrent();
   const userTurnRecorder = attempt.userTurnTranscriptRecorder;
   const persistedUserIdempotencyKey =
     attempt.skipPreparedUserTurnMessage !== true && userTurnRecorder?.hasPersisted() === true
@@ -109,8 +119,16 @@ export async function submitEmbeddedAttemptPrompt(input: {
     const baseStreamFn = activeSession.agent.streamFn;
     const persistThenStream: StreamFn = async (model, context, options) => {
       await input.persistToolResultProjections();
+      // Runtime admission queues behind the user append; join it outside that write lane.
+      await userTurnRecorder?.waitForRuntimePersistence();
       options?.signal?.throwIfAborted();
-      return baseStreamFn(model, context, options);
+      assertSteeringCurrent();
+      const stream = await baseStreamFn(model, context, options);
+      // Pre-prompt compaction has not consumed the deferred answer.
+      if (captureCurrentPromptForModel) {
+        pendingSteering = undefined;
+      }
+      return stream;
     };
     const providerPromptStreamFn = wrapStreamFnWithMessageTransform(
       persistThenStream,
@@ -264,7 +282,7 @@ export async function handleEmbeddedAttemptPromptError(input: {
   activeSession: AgentSession;
   attempt: PromptErrorAttempt;
   error: unknown;
-  handleMidTurnPrecheckRequest: (request: MidTurnPrecheckRequest) => void;
+  handleMidTurnPrecheckRequest: (request: MidTurnPrecheckRequest) => Promise<void>;
   markYieldAborted: () => void;
   releaseLeasedSteering: (error?: unknown) => void;
   withOwnedTranscriptWrite: WithOwnedTranscriptWrite;

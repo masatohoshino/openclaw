@@ -1,13 +1,14 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { sessionChanges } from "../../sessions/session-row-changes.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "../../state/openclaw-state-db-contract.js";
 import {
-  closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
   type OpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
+import { closeStateDatabaseForTest } from "../../test-utils/database-cleanup.js";
 import { createWorkerPlacementMoveService } from "./placement-move-service.js";
 import type { WorkerSessionPlacementIdentity } from "./placement-record.js";
 import {
@@ -36,12 +37,12 @@ describe("worker session placement moves", () => {
   });
 
   afterEach(async () => {
-    closeOpenClawStateDatabaseForTest();
+    await closeStateDatabaseForTest();
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  function advanceToActive() {
-    let placement = store.startDispatch(SESSION);
+  async function advanceToActive() {
+    let placement = await store.startDispatch(SESSION);
     placement = store.transition({
       sessionId: SESSION.sessionId,
       from: "requested",
@@ -93,7 +94,7 @@ describe("worker session placement moves", () => {
     seedAttachedPlacementEnvironment(database, input);
   }
 
-  it("lazily begins one exact-source move in the drain transaction", () => {
+  it("lazily begins one exact-source move in the drain transaction", async () => {
     database.db.exec("DROP TABLE worker_session_placement_moves");
     expect(
       database.db
@@ -101,14 +102,26 @@ describe("worker session placement moves", () => {
         .get("worker_session_placement_moves"),
     ).toBeUndefined();
     expect(store.listPlacementMoves()).toEqual([]);
+    expect(await store.readProjection([SESSION.sessionId])).toEqual({
+      placements: new Map(),
+      moves: new Map(),
+      environments: new Map(),
+      workspaceResultReconcilingSessionIds: new Set(),
+      workspaceRecoveryPendingSessionIds: new Set(),
+    });
+    expect(
+      database.db
+        .prepare("SELECT 1 AS ok FROM sqlite_schema WHERE type = 'table' AND name = ?")
+        .get("worker_session_placement_moves"),
+    ).toBeUndefined();
 
-    const active = advanceToActive();
+    const active = await advanceToActive();
     seedAttachedEnvironment({
       environmentId: active.environmentId,
       sessionId: active.sessionId,
       ownerEpoch: active.activeOwnerEpoch,
     });
-    const workerClaim = store.claimTurn({
+    const workerClaim = await store.claimTurn({
       ...SESSION,
       owner: {
         kind: "worker",
@@ -150,6 +163,11 @@ describe("worker session placement moves", () => {
       user_version: OPENCLAW_STATE_SCHEMA_VERSION,
     });
     expect(store.getPlacementMove(SESSION.sessionId)).toEqual(begun.intent);
+    expect(await store.readProjection([SESSION.sessionId])).toMatchObject({
+      placements: new Map([[SESSION.sessionId, begun.placement]]),
+      moves: new Map([[SESSION.sessionId, begun.intent]]),
+      workspaceResultReconcilingSessionIds: new Set(),
+    });
     expect(store.getPlacementMoves([SESSION.sessionId, "missing"])).toEqual(
       new Map([[SESSION.sessionId, begun.intent]]),
     );
@@ -178,8 +196,8 @@ describe("worker session placement moves", () => {
     ).toThrow("already has a conflicting placement move");
   });
 
-  it("persists explicit abandonment and atomically completes its exact failed source", () => {
-    const active = advanceToActive();
+  it("persists explicit abandonment and atomically completes its exact failed source", async () => {
+    const active = await advanceToActive();
     seedAttachedEnvironment({
       environmentId: active.environmentId,
       sessionId: active.sessionId,
@@ -228,14 +246,14 @@ describe("worker session placement moves", () => {
     expect(store.getPlacementMove(active.sessionId)).toBeUndefined();
   });
 
-  it("permits draining an active placement with a pending workspace result when abandoning source", () => {
-    const active = advanceToActive();
+  it("permits draining an active placement with a pending workspace result when abandoning source", async () => {
+    const active = await advanceToActive();
     seedAttachedEnvironment({
       environmentId: active.environmentId,
       sessionId: active.sessionId,
       ownerEpoch: active.activeOwnerEpoch,
     });
-    const claim = store.claimTurn({
+    const claim = await store.claimTurn({
       ...SESSION,
       owner: {
         kind: "worker",
@@ -279,8 +297,8 @@ describe("worker session placement moves", () => {
 
   it.each([undefined, "os-a"])(
     "persists profile choices with OS %s and joins only the exact target",
-    (targetOs) => {
-      const active = advanceToActive();
+    async (targetOs) => {
+      const active = await advanceToActive();
       seedAttachedEnvironment({
         environmentId: active.environmentId,
         sessionId: active.sessionId,
@@ -338,8 +356,8 @@ describe("worker session placement moves", () => {
 
   it.each(["target_machine_class", "target_os"])(
     "rejects %s stored for a non-profile target",
-    (column) => {
-      const active = advanceToActive();
+    async (column) => {
+      const active = await advanceToActive();
       seedAttachedEnvironment({
         environmentId: active.environmentId,
         sessionId: active.sessionId,
@@ -405,9 +423,9 @@ describe("worker session placement moves", () => {
     },
   );
 
-  it("keeps invalid move attempts from creating optional storage", () => {
+  it("keeps invalid move attempts from creating optional storage", async () => {
     database.db.exec("DROP TABLE worker_session_placement_moves");
-    const active = advanceToActive();
+    const active = await advanceToActive();
     database.db
       .prepare("DELETE FROM worker_environments WHERE environment_id = ?")
       .run(active.environmentId);
@@ -434,8 +452,8 @@ describe("worker session placement moves", () => {
     });
   });
 
-  it("fences move errors and Gateway completion by operation id", () => {
-    const active = advanceToActive();
+  it("fences move errors and Gateway completion by operation id", async () => {
+    const active = await advanceToActive();
     seedAttachedEnvironment({
       environmentId: active.environmentId,
       sessionId: active.sessionId,
@@ -451,6 +469,14 @@ describe("worker session placement moves", () => {
       target: { kind: "gateway" },
     });
 
+    const observed: Array<string | null | undefined> = [];
+    onTestFinished(
+      sessionChanges.subscribe((change) => {
+        if ("all" in change && change.scope === "worker-placements") {
+          observed.push(store.getPlacementMove(SESSION.sessionId)?.lastError);
+        }
+      }),
+    );
     expect(
       store.recordPlacementMoveError({
         operationId: "move:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -458,6 +484,7 @@ describe("worker session placement moves", () => {
         error: "stale move failed",
       }),
     ).toBe(false);
+    expect(observed).toEqual([]);
     expect(
       store.recordPlacementMoveError({
         operationId: begun.intent.operationId,
@@ -468,6 +495,7 @@ describe("worker session placement moves", () => {
     expect(store.getPlacementMove(SESSION.sessionId)?.lastError).toBe(
       "workspace reconciliation is waiting",
     );
+    expect(observed).toEqual(["workspace reconciliation is waiting"]);
 
     const reconciling = store.startReconcile({
       sessionId: SESSION.sessionId,
@@ -491,10 +519,11 @@ describe("worker session placement moves", () => {
       }),
     ).toMatchObject({ state: "local", generation: reconciling.generation + 1 });
     expect(store.getPlacementMove(SESSION.sessionId)).toBeUndefined();
+    expect(observed).toEqual(["workspace reconciliation is waiting", undefined]);
   });
 
-  it("completes a worker move only against the exact attached destination", () => {
-    const source = advanceToActive();
+  it("completes a worker move only against the exact attached destination", async () => {
+    const source = await advanceToActive();
     seedAttachedEnvironment({
       environmentId: source.environmentId,
       sessionId: source.sessionId,
@@ -531,7 +560,7 @@ describe("worker session placement moves", () => {
         "UPDATE worker_environments SET state = 'destroyed', attached_session_ids_json = '[]'",
       )
       .run();
-    const destination = advanceToActive();
+    const destination = await advanceToActive();
     database.db
       .prepare(
         `UPDATE worker_environments
@@ -559,7 +588,7 @@ describe("worker session placement moves", () => {
   });
 
   it("completes a persisted abandonment only after a later sweep makes its placement local", async () => {
-    const active = advanceToActive();
+    const active = await advanceToActive();
     seedAttachedEnvironment({
       environmentId: active.environmentId,
       sessionId: active.sessionId,
@@ -627,7 +656,7 @@ describe("worker session placement moves", () => {
   });
 
   it("completes an ordinary reconciled move with one durable Gateway placement", async () => {
-    const active = advanceToActive();
+    const active = await advanceToActive();
     seedAttachedEnvironment({
       environmentId: active.environmentId,
       sessionId: active.sessionId,
@@ -669,7 +698,7 @@ describe("worker session placement moves", () => {
   });
 
   it("fails a pending profile move after restart loses request authority", async () => {
-    const source = advanceToActive();
+    const source = await advanceToActive();
     seedAttachedEnvironment({
       environmentId: source.environmentId,
       sessionId: source.sessionId,

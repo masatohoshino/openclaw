@@ -1,4 +1,5 @@
 // Sandbox command tests cover browser/container status formatting and sandbox diagnostics.
+import { CANCEL_SYMBOL } from "@clack/prompts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SandboxBrowserInfo, SandboxContainerInfo } from "../agents/sandbox.js";
 
@@ -19,7 +20,8 @@ vi.mock("../agents/sandbox.js", () => ({
   removeSandboxBrowserContainer: mocks.removeSandboxBrowserContainer,
 }));
 
-vi.mock("@clack/prompts", () => ({
+vi.mock("@clack/prompts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@clack/prompts")>()),
   confirm: mocks.clackConfirm,
 }));
 
@@ -233,7 +235,9 @@ describe("sandboxRecreateCommand", () => {
     it("should filter by session", async () => {
       const match = createContainer({ sessionKey: "target-session" });
       const noMatch = createContainer({ sessionKey: "other-session" });
-      mocks.listSandboxContainers.mockResolvedValue([match, noMatch]);
+      mocks.listSandboxContainers.mockImplementation(async (matches) =>
+        [match, noMatch].filter(matches),
+      );
 
       await sandboxRecreateCommand(
         { session: "target-session", all: false, browser: false, force: true },
@@ -242,13 +246,16 @@ describe("sandboxRecreateCommand", () => {
 
       expect(mocks.removeSandboxContainer).toHaveBeenCalledTimes(1);
       expect(mocks.removeSandboxContainer).toHaveBeenCalledWith(match.containerName);
+      expect(mocks.listSandboxBrowsers).not.toHaveBeenCalled();
     });
 
     it("should filter by agent (exact + subkeys)", async () => {
       const agent = createContainer({ sessionKey: "agent:work" });
       const agentSub = createContainer({ sessionKey: "agent:work:subtask" });
       const other = createContainer({ sessionKey: "test-session" });
-      mocks.listSandboxContainers.mockResolvedValue([agent, agentSub, other]);
+      mocks.listSandboxContainers.mockImplementation(async (matches) =>
+        [agent, agentSub, other].filter(matches),
+      );
 
       await sandboxRecreateCommand(
         { agent: "work", all: false, browser: false, force: true },
@@ -282,6 +289,7 @@ describe("sandboxRecreateCommand", () => {
 
       expect(mocks.removeSandboxBrowserContainer).toHaveBeenCalledTimes(2);
       expect(mocks.removeSandboxContainer).not.toHaveBeenCalled();
+      expect(mocks.listSandboxContainers).not.toHaveBeenCalled();
     });
   });
 
@@ -311,7 +319,7 @@ describe("sandboxRecreateCommand", () => {
     });
 
     it("should cancel on clack cancel symbol", async () => {
-      await runCancelledConfirmation(Symbol("clack:cancel"));
+      await runCancelledConfirmation(CANCEL_SYMBOL);
 
       expect(runtime.log).toHaveBeenCalledWith("Cancelled.");
       expect(mocks.removeSandboxContainer).not.toHaveBeenCalled();

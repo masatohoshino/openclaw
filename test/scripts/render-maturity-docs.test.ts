@@ -9,13 +9,11 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   buildQaOccurrenceEvidenceSummary,
   createQaEvidenceInvocation,
-  validateQaEvidenceSummaryJson,
-  type QaEvidenceOccurrence,
-} from "../../extensions/qa-lab/api.js";
-import {
   qaMaturityTaxonomyIdentity,
   qaProfileEvidencePlan,
   readQaMaturityTaxonomySource,
+  validateQaEvidenceSummaryJson,
+  type QaEvidenceOccurrence,
 } from "../../extensions/qa-lab/test-api.js";
 import { createDocsMarkdown, parseDocsDocument } from "../../scripts/lib/docs-markdown.mjs";
 import { createTempDirTracker } from "../helpers/temp-dir.js";
@@ -976,6 +974,27 @@ describe("maturity docs renderer CLI", () => {
         id,
       ).toHaveLength(1);
     }
+    for (const [current, legacy] of [
+      [
+        "community-channel-cohort",
+        "mattermost-line-irc-nextcloud-talk-nostr-twitch-tlon-synology-chat",
+      ],
+      [
+        "regional-channel-cohort",
+        "feishu-qq-bot-wechat-yuanbao-zalo-zalo-personal-regional-channels",
+      ],
+    ]) {
+      for (const id of [current, legacy]) {
+        expect(
+          taxonomyDocument.ids.filter((candidate: string) => candidate === id),
+          id,
+        ).toHaveLength(1);
+      }
+    }
+    expect(taxonomy).toContain(
+      "**Current catalog members:** [Buzz](/channels/buzz), [ClickClack](/channels/clickclack)",
+    );
+    expect(taxonomy).toContain("[WeChat](/channels/wechat), [WeCom](/channels/wecom)");
     for (const id of [
       "chromeos-raspberry-pi-and-small-linux-devices",
       "raspberry-pi-and-small-linux-devices",
