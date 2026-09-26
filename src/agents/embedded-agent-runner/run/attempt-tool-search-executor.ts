@@ -40,6 +40,9 @@ export function createSubscribedToolSearchExecutor(params: {
   return async (toolParams) => {
     const runSignal = params.runSignal;
     const signal = AbortSignal.any([toolParams.signal ?? runSignal, runSignal]);
+    const input = toolParams.tool.prepareArguments
+      ? toolParams.tool.prepareArguments(toolParams.input)
+      : toolParams.input;
     const yieldRunSignal = toolParams.toolName === "sessions_yield" ? runSignal : undefined;
     const startedAt = Date.now();
     const startOrder = nestedStartOrder++;
@@ -58,7 +61,7 @@ export function createSubscribedToolSearchExecutor(params: {
         toolName: toolParams.toolName,
         toolCallId: toolParams.toolCallId,
         parentToolCallId: toolParams.parentToolCallId,
-        args: toolParams.input,
+        args: input,
         replaySafe: toolParams.replaySafe ?? params.isReplaySafeTool(toolParams.tool),
         hideFromChannelProgress:
           "hideFromChannelProgress" in toolParams.tool &&
@@ -116,14 +119,14 @@ export function createSubscribedToolSearchExecutor(params: {
                   // SAFETY: toClientToolDefinitions pre-binds client dispatch to the native execution contract.
                   return await (toolParams.tool as AnyAgentTool).execute(
                     toolParams.toolCallId,
-                    toolParams.input,
+                    input,
                     signal,
                     toolParams.onUpdate,
                   );
                 }
                 const prepared = await preparer({
                   toolCallId: toolParams.toolCallId,
-                  args: toolParams.input,
+                  args: input,
                   signal,
                   onUpdate: toolParams.onUpdate,
                 });
