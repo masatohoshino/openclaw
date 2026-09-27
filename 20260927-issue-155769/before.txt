@@ -1,0 +1,30 @@
+# before: isolated profile, loopback Gateway, managed llama.cpp embedding server (memory.search.provider=local), chat model on a local GPU (Ollama qwen3.5:9b)
+# steps: agent turn with memory_search -> gateway restart --safe (in-process) -> append a memory note -> agent turn -> memory status
+== da2bcd699bc 
+== turn b3-pre 06:53:11
+I found this information directly in the MEMORY.md file that was loaded as part of your workspace context.
+== memory status after-first-turn: memoryDirty=False sessionFiles=10 sessionChunks=9 embeddingCache=24
+== safe restart 06:53:43
+safe restart requested; gateway will restart momentarily
+== llama-server after-restart: 801817/ppid=801182/up=00:23 801841/ppid=801817/up=00:23 
+== turn b3-post 06:53:49
+The codeword is: **amber-lantern-42**
+== llama-server end: 801817/ppid=801182/up=00:49 801841/ppid=801817/up=00:49 
+== memory status after-restart-turn: memoryDirty=True sessionFiles=10 sessionChunks=9 embeddingCache=24
+== memory sync failures after restart:
+2026-09-28T06:53:50.673+09:00 [memory] sync failed (watch): Error: database is not open
+2026-09-28T06:53:52.176+09:00 [memory] sync failed (session-startup-catchup): Error: Memory sync aborted: embedding provider "local" is configured but unavailable. Refusing to run sync in fts-only fallback mode to protect existing vector index (current model: 
+2026-09-28T06:53:57.282+09:00 [memory] sync failed (session update): Error: Memory sync aborted: embedding provider "local" is configured but unavailable. Refusing to run sync in fts-only fallback mode to protect existing vector index (current model: hf:ggml-o
+3
+== SIGTERM gateway pid 801182
+== llama-server after-gateway-stop: 
+
+# Gateway log, memory and local-service lines:
+2026-09-28T06:53:26.458+09:00 [provider-local-service] starting llama-cpp local service: <state>/.openclaw-gpuq/tools/llama.cpp/b10809/linux-x64/llama-server
+2026-09-28T06:53:26.723+09:00 [provider-local-service] llama-cpp local service ready: pid=801817 spawnMs=10 readyMs=264
+2026-09-28T06:53:45.118+09:00 [gateway] received SIGUSR2; restarting
+2026-09-28T06:53:45.276+09:00 [gateway] restart mode: in-process restart (unmanaged: use in-process restart to keep custom supervisor PID tracking stable)
+2026-09-28T06:53:50.673+09:00 [memory] sync failed (watch): Error: database is not open
+2026-09-28T06:53:52.176+09:00 [memory] sync failed (session-startup-catchup): Error: Memory sync aborted: embedding provider "local" is configured but unavailable. Refusing to run sync in fts-only fallback mode to protect existing vector index (current model: hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-
+2026-09-28T06:53:57.282+09:00 [memory] sync failed (session update): Error: Memory sync aborted: embedding provider "local" is configured but unavailable. Refusing to run sync in fts-only fallback mode to protect existing vector index (current model: hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf
+2026-09-28T06:54:33.285+09:00 [provider-local-service] llama-cpp local service exited: code=0
