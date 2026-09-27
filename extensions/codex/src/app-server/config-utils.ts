@@ -98,9 +98,12 @@ export function resolveArgs(configArgs: unknown, envArgs: string | undefined): s
   }
   // v2026.9.1 string overrides preserve backslashes and accept unfinished quotes;
   // applying shell escaping or strict quote validation would change existing argv.
-  return splitCommandArgs(typeof configArgs === "string" ? configArgs : (envArgs ?? ""), {
+  const args = splitCommandArgs(typeof configArgs === "string" ? configArgs : (envArgs ?? ""), {
     allowUnclosedQuotes: true,
   });
+  // Shipped strings dropped quoted empty arguments, so an override of only
+  // empty quotes selected the default argv; keep that for existing configs.
+  return args.some((arg) => arg.length > 0) ? args : [];
 }
 
 export function hashSecretForKey(value: string | undefined, label: string): string | null {
