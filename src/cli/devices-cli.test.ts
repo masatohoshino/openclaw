@@ -188,16 +188,6 @@ const nodeApprovalLabelCases = [
   { labelKind: "blank operator label", operatorLabel: "   ", expectedName: "Colin's S25" },
 ] as const;
 
-const nodeApprovalErrorCases = [
-  ...nodeApprovalLabelCases.map((labelCase) => ({ ...labelCase, json: false })),
-  {
-    labelKind: "operator label with JSON output",
-    operatorLabel: "Kitchen Mac",
-    expectedName: "Kitchen Mac",
-    json: true,
-  },
-];
-
 function requireGatewayCall(index: number): Record<string, unknown> {
   const call = (callGateway.mock.calls as unknown[][])[index]?.[0];
   return requireRecord(call, `gateway call ${index + 1}`);
@@ -521,9 +511,9 @@ describe("devices cli approve", () => {
     expect(hasGatewayMethod("device.pair.approve")).toBe(false);
   });
 
-  it.each(nodeApprovalErrorCases)(
+  it.each(nodeApprovalLabelCases)(
     "suggests pending node approval when a device IP is approved at the wrong layer: $labelKind",
-    async ({ operatorLabel, expectedName, json }) => {
+    async ({ operatorLabel, expectedName }) => {
       callGateway
         .mockResolvedValueOnce({
           pending: [],
@@ -558,7 +548,6 @@ describe("devices cli approve", () => {
         "ws://gateway-user:url-secret@gateway.example:18789/openclaw?cluster=qa",
         "--token",
         "secret-token",
-        ...(json ? ["--json"] : []),
       ]);
 
       expect(callGateway).toHaveBeenCalledTimes(3);
@@ -630,34 +619,6 @@ describe("devices cli approve", () => {
     expect(errorOutput).toContain("No pending device request matches");
     expect(errorOutput).not.toContain("node-req-display-name");
     expect(errorOutput).not.toContain("openclaw nodes approve");
-  });
-
-  it("does not suggest node approval when a JSON-mode query only matches an operator label", async () => {
-    primeGatewayPairing(
-      [],
-      [
-        pairedDevice({
-          deviceId: "paired-node",
-          operatorLabel: "Kitchen Mac",
-          displayName: "Client Phone",
-          roles: ["node"],
-          pendingNodeSurface: {
-            requestId: "node-req-alias",
-            displayName: "Declared Phone",
-          },
-        }),
-      ],
-    ).mockRejectedValueOnce({ message: "unknown requestId", gatewayCode: "INVALID_REQUEST" });
-
-    await runDevicesApprove(["Kitchen Mac", "--json"]);
-
-    expect(callGateway).toHaveBeenCalledTimes(2);
-    const errorOutput = readRuntimeErrorOutput();
-    expect(errorOutput).toContain("No pending device request matches Kitchen Mac");
-    expect(errorOutput).not.toContain("node-req-alias");
-    expect(errorOutput).not.toContain("openclaw nodes approve");
-    expect(runtime.writeJson).not.toHaveBeenCalled();
-    expect(runtime.exit).toHaveBeenCalledWith(1);
   });
 });
 

@@ -715,6 +715,16 @@ function formatAuthFlagReminder(opts: DevicesRpcOpts): string {
   return `Reuse the same ${flags.join("/")} option${flags.length === 1 ? "" : "s"} when rerunning.`;
 }
 
+// JSON mode leaves a failure to the root CLI owner, which writes the failure envelope.
+function failDevicesCommand(opts: { json?: boolean }, lines: string | readonly string[]): void {
+  const messages = typeof lines === "string" ? [lines] : lines;
+  if (opts.json) {
+    throw new Error(messages.join("\n"));
+  }
+  messages.forEach((message) => defaultRuntime.error(message));
+  defaultRuntime.exit(1);
+}
+
 function resolveRequiredDeviceRole(
   opts: DevicesRpcOpts,
 ): { deviceId: string; role: string } | null {
@@ -723,10 +733,10 @@ function resolveRequiredDeviceRole(
   if (deviceId && role) {
     return { deviceId, role };
   }
-  defaultRuntime.error(
+  failDevicesCommand(
+    opts,
     `--device and --role are required. Run ${formatCliCommand("openclaw devices list")} to choose a paired device.`,
   );
-  defaultRuntime.exit(1);
   return null;
 }
 
@@ -860,11 +870,10 @@ export async function runDevicesRemoveCommand(
 ): Promise<void> {
   const trimmed = deviceId.trim();
   if (!trimmed) {
-    defaultRuntime.error(
+    return failDevicesCommand(
+      opts,
       `deviceId is required. Run ${formatCliCommand("openclaw devices list")} to choose a paired device.`,
     );
-    defaultRuntime.exit(1);
-    return;
   }
   const result = await callGatewayCli("device.pair.remove", opts, { deviceId: trimmed });
   if (opts.json) {
@@ -876,9 +885,7 @@ export async function runDevicesRemoveCommand(
 
 export async function runDevicesClearCommand(opts: DevicesRpcOpts): Promise<void> {
   if (!opts.yes) {
-    defaultRuntime.error("Refusing to clear pairing table without --yes");
-    defaultRuntime.exit(1);
-    return;
+    return failDevicesCommand(opts, "Refusing to clear pairing table without --yes");
   }
   const list = parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));
   const removedDeviceIds: string[] = [];
@@ -932,9 +939,7 @@ export async function runDevicesApproveCommand(
     resolvedRequestId = selectedRequest?.requestId?.trim();
   }
   if (!resolvedRequestId) {
-    defaultRuntime.error("No pending device pairing requests to approve");
-    defaultRuntime.exit(1);
-    return;
+    return failDevicesCommand(opts, "No pending device pairing requests to approve");
   }
   if (usingImplicitSelection) {
     // Keep implicit selection preview-only. A second command with the exact
@@ -1007,28 +1012,23 @@ export async function runDevicesApproveCommand(
     result = await approvePairingWithFallback(opts, resolvedRequestId, approvalContext);
   } catch (error) {
     if (isScopeUpgradePendingApproval(error)) {
-      defaultRuntime.error(
+      return failDevicesCommand(
+        opts,
         "This device can't approve its own scope upgrade. Approve it from the Control UI or another authorized device.",
       );
-      defaultRuntime.exit(1);
-      return;
     }
     throw error;
   }
   if (!result) {
-    defaultRuntime.error(
-      `No pending device request matches ${sanitizeForLog(resolvedRequestId)}. Run ${formatCliCommand("openclaw devices list")} and retry with the current request ID.`,
-    );
     const nodeApprovalNotices = findQueryPendingNodeApprovalNotices(
       opts,
       approvalContext.pairingList?.paired,
       resolvedRequestId,
     );
-    for (const notice of nodeApprovalNotices) {
-      defaultRuntime.error(formatNodeApprovalNotice(notice));
-    }
-    defaultRuntime.exit(1);
-    return;
+    return failDevicesCommand(opts, [
+      `No pending device request matches ${sanitizeForLog(resolvedRequestId)}. Run ${formatCliCommand("openclaw devices list")} and retry with the current request ID.`,
+      ...nodeApprovalNotices.map(formatNodeApprovalNotice),
+    ]);
   }
   if (opts.json) {
     defaultRuntime.writeJson(result);
@@ -1051,11 +1051,10 @@ export async function runDevicesRejectCommand(
 ): Promise<void> {
   const normalizedRequestId = normalizeOptionalString(requestId);
   if (!normalizedRequestId) {
-    defaultRuntime.error(
+    return failDevicesCommand(
+      opts,
       `requestId is required. Run ${formatCliCommand("openclaw devices list")} to choose a pending request.`,
     );
-    defaultRuntime.exit(1);
-    return;
   }
   const result = await callGatewayCli("device.pair.reject", opts, {
     requestId: normalizedRequestId,
@@ -1072,11 +1071,10 @@ export async function runDevicesRenameCommand(opts: DevicesRpcOpts): Promise<voi
   const deviceId = normalizeStringifiedOptionalString(opts.device) ?? "";
   const label = normalizeStringifiedOptionalString(opts.name) ?? "";
   if (!deviceId || !label) {
-    defaultRuntime.error(
+    return failDevicesCommand(
+      opts,
       `--device and --name are required. Run ${formatCliCommand("openclaw devices list")} to choose a paired device.`,
     );
-    defaultRuntime.exit(1);
-    return;
   }
   const result = await callGatewayCli("device.pair.rename", opts, { deviceId, label });
   if (opts.json) {
