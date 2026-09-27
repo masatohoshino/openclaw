@@ -30,6 +30,8 @@ export const runtimeProcessEntrypoints = {
   authProfileInlineUsage: runtimeProcessEntrypoint("agents/auth-profiles/inline-usage.worker"),
   agentDatabaseExecution: runtimeProcessEntrypoint("state/openclaw-agent-execution.worker"),
   workspaceMemory: runtimeProcessEntrypoint("worker/memory-worker-entry"),
+  localAgentAvatar: runtimeProcessEntrypoint("agents/identity-avatar-file.worker"),
+  identityFile: runtimeProcessEntrypoint("agents/identity-file.worker"),
   workspaceSkills: runtimeProcessEntrypoint("worker/skills-worker-entry"),
   boardStore: runtimeProcessEntrypoint("boards/sqlite-board-store.worker"),
   sessionSharingStore: runtimeProcessEntrypoint("config/sessions/session-sharing-store.worker"),
@@ -45,6 +47,9 @@ export const runtimeProcessEntrypoints = {
   sqliteSourceRevision: runtimeProcessEntrypoint("infra/sqlite-source-revision.worker"),
   sqliteIntegrity: runtimeProcessEntrypoint("infra/sqlite-integrity.worker"),
   preparedModelCatalog: runtimeProcessEntrypoint("agents/prepared-model-catalog.worker"),
+  providerPromptState: runtimeProcessEntrypoint(
+    "agents/embedded-agent-runner/provider-prompt-state.worker",
+  ),
   updateRepair: runtimeProcessEntrypoint("infra/update-repair.worker"),
   updateMigratedFinalize: runtimeProcessEntrypoint("infra/update-migrated-finalize.worker"),
   updateCandidateState: runtimeProcessEntrypoint("infra/update-candidate-state.worker"),

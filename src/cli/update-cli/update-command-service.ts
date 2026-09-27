@@ -58,10 +58,9 @@ import {
 } from "./update-command-verification.js";
 
 export {
-  maybeResumeWindowsTaskAutoStartAfterPackageUpdate,
   maybeStopManagedServiceBeforeMutableUpdate,
   revalidateManagedGatewayServiceAfterUpdate,
-  shouldBlockMutableUpdateFromGatewayServiceEnv,
+  mutableUpdateGatewayServiceBlock,
   UpdateCommandAbort,
   type PreManagedServiceStop,
   type UpdateCommandRecoveryState,
@@ -297,7 +296,6 @@ export async function maybeRestartService(params: {
       serviceEnv: activation.serviceEnv,
       gatewayPort: activation.gatewayPort,
       timeoutMs: activation.timeoutMs,
-      nodeRunner: activation.nodeRunner,
       expectedVersion: expectedGatewayVersion,
       expectedBuildId: expectedGatewayBuildId,
       requireRunningService: opts.requireRunningService,
