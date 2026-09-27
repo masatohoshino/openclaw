@@ -23,7 +23,7 @@ import {
 import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
 import { resolveStorePath } from "openclaw/plugin-sdk/session-store-paths";
 import { listMemorySessionTombstones } from "../memory-entry-origins.js";
-import { runInMemoryBackgroundContext } from "./background-context.js";
+import { resolveMemoryBackgroundContext } from "./background-context.js";
 import { shouldSyncSessionsForReindex } from "./manager-session-reindex.js";
 import {
   isMemorySessionIndexable,
@@ -132,8 +132,9 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
     if (!this.sources.has("sessions") || this.sessionUnsubscribe) {
       return;
     }
+    const runInBackground = resolveMemoryBackgroundContext();
     this.sessionUnsubscribe = this.subscribeSessionTranscriptUpdates((update) =>
-      runInMemoryBackgroundContext(() => {
+      runInBackground(() => {
         if (this.closing || this.closed) {
           return;
         }
