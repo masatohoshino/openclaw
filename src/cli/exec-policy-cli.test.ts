@@ -809,6 +809,19 @@ describe("exec-policy CLI", () => {
     expect(mocks.defaultRuntime.exit).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    [["exec-policy", "preset", "bogus", "--json"], "Unknown exec-policy preset: bogus"],
+    [
+      ["exec-policy", "set", "--json"],
+      "Provide at least one of --host, --security, --ask, or --ask-fallback.",
+    ],
+  ])("leaves %j failures to the root JSON failure envelope", async (args, message) => {
+    await expect(runExecPolicyCommand(args)).rejects.toThrow(message);
+
+    expect(mocks.defaultRuntime.error).not.toHaveBeenCalled();
+    expect(mocks.defaultRuntime.exit).not.toHaveBeenCalled();
+  });
+
   it("rejects host=node for the local-only sync path", async () => {
     await expect(runExecPolicyCommand(["exec-policy", "set", "--host", "node"])).rejects.toThrow(
       "__exit__:1",

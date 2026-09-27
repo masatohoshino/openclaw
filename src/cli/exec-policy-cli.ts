@@ -109,11 +109,19 @@ function formatExecPolicyError(err: unknown): string {
   return sanitizeExecPolicyMessage(err instanceof Error ? err.message : String(err));
 }
 
-async function runExecPolicyAction(action: () => Promise<void>): Promise<void> {
+async function runExecPolicyAction(
+  opts: { json?: boolean },
+  action: () => Promise<void>,
+): Promise<void> {
   try {
     await action();
   } catch (err) {
-    defaultRuntime.error(formatExecPolicyError(err));
+    const message = formatExecPolicyError(err);
+    // JSON mode leaves the failure to the root CLI owner, which writes the documented envelope.
+    if (opts.json) {
+      throw new Error(message, { cause: err });
+    }
+    defaultRuntime.error(message);
     defaultRuntime.exit(1);
   }
 }
@@ -448,7 +456,7 @@ export function registerExecPolicyCli(program: Command) {
       .option("--verbose", "Include policy sources and all command approval scopes", false)
       .option("--json", "Output as JSON", false),
   ).action(async (opts: ExecPolicyShowOptions, command: Command) => {
-    await runExecPolicyAction(async () => {
+    await runExecPolicyAction(opts, async () => {
       const payload = await buildLocalExecPolicyShowPayload(
         resolveGatewayRpcOptionsWithLocalPort(opts, command),
       );
@@ -514,7 +522,7 @@ export function registerExecPolicyCli(program: Command) {
     .description('Apply a synchronized preset: "yolo", "cautious", or "deny-all"')
     .option("--json", "Output as JSON", false)
     .action(async (name: string, opts: { json?: boolean }) => {
-      await runExecPolicyAction(async () => {
+      await runExecPolicyAction(opts, async () => {
         if (!Object.hasOwn(EXEC_POLICY_PRESETS, name)) {
           failExecPolicy(`Unknown exec-policy preset: ${sanitizeExecPolicyMessage(name)}`);
         }
@@ -546,7 +554,7 @@ export function registerExecPolicyCli(program: Command) {
         askFallback?: string;
         json?: boolean;
       }) => {
-        await runExecPolicyAction(async () => {
+        await runExecPolicyAction(opts, async () => {
           const policy = resolveExecPolicyInput(opts);
           if (Object.keys(policy).length === 0) {
             failExecPolicy("Provide at least one of --host, --security, --ask, or --ask-fallback.");
