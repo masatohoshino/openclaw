@@ -2,7 +2,6 @@ import { resolveCommandAuthorizedFromAuthorizers } from "openclaw/plugin-sdk/com
 import { isDangerousNameMatchingEnabled } from "openclaw/plugin-sdk/dangerous-name-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { resolveOpenProviderRuntimeGroupPolicy } from "openclaw/plugin-sdk/runtime-group-policy";
-import type { DiscordComponentEntry } from "../components.js";
 import { resolveInteractionContextWithDmAuth } from "./agent-components-dm-auth.js";
 import { resolveAgentComponentPolicyContext } from "./agent-components-live-policy.js";
 import { replySilently } from "./agent-components-reply.js";
