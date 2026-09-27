@@ -241,6 +241,18 @@ downtime through convergence and final verification, plus verification
 results. See
 [Validation and activation](/cli/update#validation-and-activation) for the checks.
 
+Source updates also admit build-artifact ownership and runtime staging access in
+the installed checkout before stopping the Gateway. A retained
+`.artifacts/dist-artifacts.lock` refuses the update with the recorded owner,
+timestamp, and exact recovery command while the serving Gateway stays running.
+Verify that all associated build/check processes, including detached descendants,
+have stopped before releasing that lock; a dead owner PID alone is insufficient.
+The updater keeps that ownership until its work has settled and carries the
+prepared runtime result into completion. Already-current repairs reuse the admitted
+ownership; promoted runtime outputs do not need regeneration. Published updaters
+that pass the source build-cache location, including 2026.9.6, also receive the
+installed-checkout check during candidate builds.
+
 The canary uses a temporary loopback Gateway port and suppresses background
 listeners, including the MCP Apps sandbox, browser control, and channel services.
 This lets validation run while the serving Gateway keeps its configured ports.
@@ -498,11 +510,9 @@ not execute them in the shell of the Gateway hosting its session. A missing
 owner permission requires owner setup, and an externally supervised installation
 uses its deployment owner's update workflow.
 
-Chat, CLI, Control UI, and automatic updates share a durable run ID. Use
-`openclaw update status` to read the active or latest report, including after a
-restart; `--json` exposes the `activeRun` and `lastRun` records. See
-[Run history and reports](/cli/update#run-history-and-reports) for Gateway history
-queries.
+For installations updated by OpenClaw itself, chat, CLI, Control UI, and automatic updates share a durable run ID.
+Use `openclaw update status` to read the active or latest report, including after a restart; `--json` exposes the `activeRun` and `lastRun` records.
+See [Run history and reports](/cli/update#run-history-and-reports) for Gateway history queries.
 
 The sender must be in [`commands.ownerAllowFrom`](/tools/slash-commands#configuration)
 or have a [verified channel link to a current Gateway administrator](/concepts/user-model#channel-identity-links).

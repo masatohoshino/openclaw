@@ -138,7 +138,7 @@ const mattermostSecurityAdapter = createRestrictSendersChannelSecurity<ResolvedM
   findingTitle: "Mattermost security warning",
   policyPathSuffix: "dmPolicy",
   classifyEntryAuthentication: identityEntryAuthenticationClassifier(mattermostIngressIdentity),
-  normalizeDmEntry: (raw) => normalizeAllowEntry(raw),
+  normalizeDmEntry: normalizeAllowEntry,
 });
 
 function listEnabledMattermostAccounts({
@@ -227,10 +227,7 @@ function resolveMattermostAutoThreadId(params: {
   const replyToId = normalizeOptionalString(params.replyToId);
   const context = params.toolContext;
   const currentThreadId = normalizeOptionalString(context?.currentThreadTs);
-  const currentMessageId =
-    typeof context?.currentMessageId === "number"
-      ? String(context.currentMessageId)
-      : normalizeOptionalString(context?.currentMessageId);
+  const currentMessageId = normalizeMattermostThreadId(context?.currentMessageId);
   const currentTarget = normalizeMattermostThreadTarget(context?.currentChannelId);
   if (currentThreadId && currentTarget === normalizeMattermostThreadTarget(params.to)) {
     if (replyToId === currentMessageId) {
@@ -353,9 +350,7 @@ const mattermostMessageActions: ChannelMessageActionAdapter = {
         : {}),
     };
   },
-  supportsAction: ({ action }) => {
-    return action === "react" || action === "read";
-  },
+  supportsAction: ({ action }) => action === "react" || action === "read",
   handleAction: async (ctx) => {
     const { action, params, cfg, accountId, conversationReadOrigin } = ctx;
     if (action === "read") {
@@ -679,7 +674,7 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = create
           ? { to: `channel:${parent}`, threadId: child }
           : { to: normalizeMattermostMessagingTarget(`channel:${child}`) };
       },
-      resolveOutboundSessionRoute: (params) => resolveMattermostOutboundSessionRoute(params),
+      resolveOutboundSessionRoute: resolveMattermostOutboundSessionRoute,
       targetResolver: {
         looksLikeId: looksLikeMattermostTargetId,
         hint: "<channelId|user:ID|channel:ID>",
@@ -771,14 +766,14 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = create
     text: {
       idLabel: "mattermostUserId",
       message: "OpenClaw: your access has been approved.",
-      normalizeAllowEntry: (entry) => normalizeAllowEntry(entry),
+      normalizeAllowEntry,
       notify: createLoggedPairingApprovalNotifier(
         ({ id }) => `[mattermost] User ${id} approved for pairing`,
       ),
     },
   },
   threading: {
-    buildToolContext: (params) => buildMattermostThreadingToolContext(params),
+    buildToolContext: buildMattermostThreadingToolContext,
     scopedAccountReplyToMode: {
       resolveAccount: (cfg, accountId) =>
         resolveMattermostAccount({
@@ -793,10 +788,8 @@ export const mattermostPlugin: ChannelPlugin<ResolvedMattermostAccount> = create
             : "channel",
         ),
     },
-    resolveAutoThreadId: ({ to, replyToId, toolContext }) =>
-      resolveMattermostAutoThreadId({ to, replyToId, toolContext }),
-    matchesToolContextTarget: ({ target, toolContext }) =>
-      matchesMattermostToolContextTarget({ target, toolContext }),
+    resolveAutoThreadId: resolveMattermostAutoThreadId,
+    matchesToolContextTarget: matchesMattermostToolContextTarget,
     resolveReplyTransport: ({ threadId, replyToId, replyToIsExplicit, replyDelivery }) => {
       const ambientThreadId = threadId != null ? String(threadId) : undefined;
       // Direct chats stay flat when their effective mode is off. Opted-in DMs

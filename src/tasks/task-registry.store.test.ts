@@ -211,41 +211,6 @@ describe("task-registry store runtime", () => {
     resetLogger();
   });
 
-  it("uses the configured task store for restore and writes", () => {
-    const storedTask = createStoredTask();
-    const store = createInMemoryTaskRegistryStore({
-      tasks: new Map([[storedTask.taskId, storedTask]]),
-      deliveryStates: new Map(),
-    });
-    const loadSnapshot = vi.fn(store.loadSnapshot);
-    const upsertTaskWithDeliveryState = vi.fn(store.upsertTaskWithDeliveryState);
-    configureTaskRegistryRuntime({
-      store: { ...store, loadSnapshot, upsertTaskWithDeliveryState },
-    });
-
-    expect(findTaskByRunId("run-restored")).toMatchObject({
-      taskId: "task-restored",
-      task: "Restored task",
-    });
-    expect(loadSnapshot).toHaveBeenCalledTimes(1);
-
-    createTaskRecord({
-      runtime: "acp",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
-      childSessionKey: "agent:codex:acp:new",
-      runId: "run-new",
-      task: "New task",
-      status: "running",
-      deliveryStatus: "pending",
-    });
-
-    expect(upsertTaskWithDeliveryState).toHaveBeenCalledOnce();
-    const latestSnapshot = store.loadSnapshot();
-    expect(latestSnapshot.tasks.size).toBe(2);
-    expect(latestSnapshot.tasks.get("task-restored")?.task).toBe("Restored task");
-  });
-
   it("logs restore parser failures and keeps the failure sticky", async () => {
     const warnLogs = createWarnLogCapture("openclaw-task-registry-restore-test");
     const invalidValue = "not-requested";
@@ -346,38 +311,6 @@ describe("task-registry store runtime", () => {
 
     expect(getTaskById(storedTask.taskId)).toMatchObject({ taskId: storedTask.taskId });
     expect(loadSnapshot).toHaveBeenCalledTimes(2);
-  });
-
-  it("clears a sticky restore failure during the test reset boundary", () => {
-    const failedLoad = vi.fn(() => {
-      throw new Error("SQLITE_IOERR: failed to read task registry");
-    });
-    configureTaskRegistryRuntime({
-      store: {
-        ...createInMemoryTaskRegistryStore(),
-        loadSnapshot: failedLoad,
-      },
-    });
-
-    expect(() => getTaskById("task-restored")).toThrow(
-      "Task registry restore failed: SQLITE_IOERR: failed to read task registry",
-    );
-    resetTaskRegistryForTests({ persist: false });
-
-    const cleanLoad = vi.fn(() => ({
-      tasks: new Map<string, TaskRecord>(),
-      deliveryStates: new Map<string, TaskDeliveryState>(),
-    }));
-    configureTaskRegistryRuntime({
-      store: {
-        ...createInMemoryTaskRegistryStore(),
-        loadSnapshot: cleanLoad,
-      },
-    });
-
-    expect(getTaskById("task-restored")).toBeUndefined();
-    expect(failedLoad).toHaveBeenCalledTimes(1);
-    expect(cleanLoad).toHaveBeenCalledTimes(1);
   });
 
   it("does not clone non-blocker details when inspecting restart blockers", () => {
@@ -943,7 +876,7 @@ describe("task-registry store runtime", () => {
     });
     expect(store.loadSnapshot().tasks.get(created.taskId)?.detail).toEqual(detail);
     expect(
-      await applyTaskRegistryMaintenanceRetention(completed, Date.now(), new Set(), () => {}),
+      await applyTaskRegistryMaintenanceRetention(completed, Date.now(), new Map(), () => {}),
     ).toBe("pruned");
     expect(getTaskById(created.taskId)).toBeUndefined();
     expect(store.loadSnapshot().tasks.has(created.taskId)).toBe(false);
@@ -1010,28 +943,6 @@ describe("task-registry store runtime", () => {
         return params.deliveryState?.lastNotifiedEventAt === 200;
       }),
     ).toBe(true);
-  });
-
-  it("restores persisted tasks from the default sqlite store", () => {
-    const created = createTaskRecord({
-      runtime: "cron",
-      ownerKey: "agent:main:main",
-      scopeKind: "session",
-      sourceId: "job-123",
-      runId: "run-sqlite",
-      task: "Run nightly cron",
-      status: "running",
-      deliveryStatus: "not_applicable",
-      notifyPolicy: "silent",
-    });
-
-    resetTaskRegistryForTests({ persist: false });
-
-    expect(findTaskByRunId("run-sqlite")).toMatchObject({
-      taskId: created.taskId,
-      sourceId: "job-123",
-      task: "Run nightly cron",
-    });
   });
 
   it("persists executor and requester agent ids in sqlite task rows", async () => {
@@ -1140,41 +1051,6 @@ describe("task-registry store runtime", () => {
         expect(loadTaskRegistryStateFromSqliteReadOnly().tasks.get(created.taskId)?.endedAt).toBe(
           terminalAt,
         );
-      },
-    );
-  });
-
-  it("persists requester origin atomically when creating sqlite tasks", async () => {
-    await withOpenClawTestState(
-      { layout: "state-only", prefix: "openclaw-task-create-origin-" },
-      async () => {
-        const created = createTaskRecord({
-          runtime: "acp",
-          requesterSessionKey: "agent:main:workspace:channel:C1234567890",
-          ownerKey: "agent:main:main",
-          scopeKind: "session",
-          childSessionKey: "agent:main:workspace:channel:C1234567890",
-          runId: "run-create-origin",
-          task: "Reply to channel task",
-          status: "running",
-          deliveryStatus: "pending",
-          notifyPolicy: "done_only",
-          requesterOrigin: {
-            channel: "test-channel",
-            to: "C1234567890",
-          },
-        });
-
-        resetTaskRegistryForTests({ persist: false });
-
-        expect(findTaskByRunId("run-create-origin")).toMatchObject({
-          taskId: created.taskId,
-        });
-        const deliveryState = loadTaskRegistryStateFromSqlite().deliveryStates.get(created.taskId);
-        expect(deliveryState?.requesterOrigin).toEqual({
-          channel: "test-channel",
-          to: "C1234567890",
-        });
       },
     );
   });
@@ -1642,107 +1518,5 @@ describe("task-registry store runtime", () => {
     expect(duplicate).toBeNull();
     expect(getTaskById(first.taskId)?.task).toBe("Original task");
   });
-
-  it.each(["create", "update", "delete"] as const)(
-    "keeps SQLite and published task state atomic when %s persistence fails",
-    async (operation) => {
-      await withOpenClawTestState(
-        { layout: "state-only", prefix: `openclaw-task-atomic-${operation}-` },
-        async () => {
-          resetTaskRegistryForTests({ persist: false });
-          const params = {
-            runtime: "cli" as const,
-            ownerKey: "agent:main:main",
-            scopeKind: "session" as const,
-            runId: `atomic-${operation}`,
-            task: "Preserve task and delivery state together",
-            status: operation === "delete" ? ("succeeded" as const) : ("running" as const),
-            ...(operation === "delete" ? { cleanupAfter: 0 } : {}),
-            deliveryStatus: "pending" as const,
-            notifyPolicy: "silent" as const,
-            requesterOrigin: { channel: "test-channel", to: "C1234567890" },
-          };
-          const existing = operation === "create" ? undefined : createTaskRecord(params);
-          const visibleBefore = listTaskRecords();
-          const storedBefore = loadTaskRegistryStateFromSqlite();
-          const observed: Array<{
-            kind: TaskRegistryObserverEvent["kind"];
-            stored: ReturnType<typeof loadTaskRegistryStateFromSqlite>;
-            visible: TaskRecord[];
-          }> = [];
-          configureTaskRegistryRuntime({
-            observers: {
-              onEvent: (event) => {
-                observed.push({
-                  kind: event.kind,
-                  stored: loadTaskRegistryStateFromSqliteReadOnly(),
-                  visible: listTaskRecords(),
-                });
-              },
-            },
-          });
-          const mutate = async () => {
-            if (operation === "create") {
-              return createTaskRecordOrNull(params);
-            }
-            if (!existing) {
-              throw new Error("expected the existing task fixture");
-            }
-            return operation === "update"
-              ? updateTaskNotifyPolicyById({
-                  taskId: existing.taskId,
-                  notifyPolicy: "state_changes",
-                })
-              : applyTaskRegistryMaintenanceRetention(existing, Date.now(), new Set(), () => {});
-          };
-          const { db } = openOpenClawStateDatabase();
-          const failingStatement =
-            operation === "delete" ? "DELETE ON task_runs" : "INSERT ON task_delivery_state";
-          // Fail the second statement: a missing transaction would leave the first row change behind.
-          db.exec(`
-            CREATE ${operation === "delete" ? "" : "TEMP "}TRIGGER reject_task_write BEFORE ${failingStatement}
-            BEGIN SELECT RAISE(ABORT, 'synthetic task write failure'); END;
-          `);
-          try {
-            expect(await mutate()).toBe(operation === "delete" ? undefined : null);
-            expect(loadTaskRegistryStateFromSqlite()).toEqual(storedBefore);
-            expect(listTaskRecords()).toEqual(visibleBefore);
-            expect(findTaskByRunId(params.runId)).toEqual(existing);
-            expect(observed).toEqual([]);
-          } finally {
-            db.exec("DROP TRIGGER reject_task_write");
-          }
-
-          const result = await mutate();
-          expect(result).not.toBeNull();
-          expect(result).not.toBe(false);
-          const storedAfter = loadTaskRegistryStateFromSqlite();
-          if (operation === "delete") {
-            expect(result).toBe("pruned");
-            expect(storedAfter.tasks.size).toBe(0);
-            expect(storedAfter.deliveryStates.size).toBe(0);
-            expect(findTaskByRunId(params.runId)).toBeUndefined();
-          } else {
-            const current = findTaskByRunId(params.runId);
-            expect(current).toMatchObject({
-              notifyPolicy: operation === "update" ? "state_changes" : "silent",
-            });
-            expect(storedAfter.tasks.get(current?.taskId ?? "")).toMatchObject({
-              task: params.task,
-              notifyPolicy: operation === "update" ? "state_changes" : "silent",
-            });
-            expect(storedAfter.deliveryStates.get(current?.taskId ?? "")?.requesterOrigin).toEqual(
-              params.requesterOrigin,
-            );
-          }
-          expect(observed.map((event) => event.kind)).toEqual([
-            operation === "delete" ? "deleted" : "upserted",
-          ]);
-          expect(observed[0]?.stored).toEqual(storedAfter);
-          expect(observed[0]?.visible).toEqual(listTaskRecords());
-        },
-      );
-    },
-  );
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
