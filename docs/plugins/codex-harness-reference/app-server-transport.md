@@ -133,8 +133,10 @@ args: ["app-server", "--listen", "stdio://", "-c", "log_dir=/tmp/openclaw\\logs"
 
 The `\\` in JSON5 encodes one backslash. Array entries preserve embedded quotes
 and backslashes, but surrounding whitespace is trimmed and empty entries are
-omitted. Strings preserve quoted empty arguments. Account for these limits
-before converting existing strings to arrays.
+omitted. Strings preserve quoted empty arguments, except that a string made
+only of empty quoted arguments (for example `""`) still selects the default
+`app-server --listen stdio://` arguments. Account for these limits before
+converting existing strings to arrays.
 
 `appServer.serviceTier` is used only when no shared Fast-mode run control is
 supplied. On Codex harness turns, shared Fast on sends `priority`, Fast off
