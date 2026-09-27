@@ -1,0 +1,27 @@
+# after: isolated profile, loopback Gateway, managed llama.cpp embedding server (memory.search.provider=local), chat model on a local GPU (Ollama qwen3.5:9b)
+# steps: agent turn with memory_search -> gateway restart --safe (in-process) -> append a memory note -> agent turn -> memory status
+== 8d436a6cf14 fix/memory-background-context-reload
+== turn a5-pre 06:54:51
+The proof fixture codeword is **amber-lantern-42**.
+== llama-server after-first-turn: 804174/ppid=803613/up=00:08 804198/ppid=804174/up=00:08 
+== memory status after-first-turn: memoryDirty=False sessionFiles=12 sessionChunks=11 embeddingCache=27
+== safe restart 06:55:19
+safe restart requested; gateway will restart momentarily
+== llama-server after-restart: 804174/ppid=803613/up=00:32 804198/ppid=804174/up=00:32 
+== turn a5-post 06:55:26
+The proof fixture codeword is `amber-lantern-42`. The owner of this fixture prefers tea over coffee.
+== llama-server end: 804174/ppid=803613/up=00:58 804198/ppid=804174/up=00:58 
+== memory status after-restart-turn: memoryDirty=False sessionFiles=13 sessionChunks=12 embeddingCache=29
+== memory sync failures after restart:
+2026-09-28T06:55:27.615+09:00 [memory] sync failed (watch): Error: database is not open
+1
+== SIGTERM gateway pid 803613
+== llama-server after-gateway-stop: 
+
+# Gateway log, memory and local-service lines:
+2026-09-28T06:54:54.554+09:00 [provider-local-service] starting llama-cpp local service: <state>/.openclaw-gpuq/tools/llama.cpp/b10809/linux-x64/llama-server
+2026-09-28T06:54:54.821+09:00 [provider-local-service] llama-cpp local service ready: pid=804174 spawnMs=9 readyMs=268
+2026-09-28T06:55:22.062+09:00 [gateway] received SIGUSR2; restarting
+2026-09-28T06:55:22.221+09:00 [gateway] restart mode: in-process restart (unmanaged: use in-process restart to keep custom supervisor PID tracking stable)
+2026-09-28T06:55:27.615+09:00 [memory] sync failed (watch): Error: database is not open
+2026-09-28T06:56:10.881+09:00 [provider-local-service] llama-cpp local service exited: code=0
