@@ -21,7 +21,7 @@ import {
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
 import { listMemorySessionTombstones } from "../memory-entry-origins.js";
-import { runInMemoryBackgroundContext } from "./background-context.js";
+import { resolveMemoryBackgroundContext } from "./background-context.js";
 import { readMemoryTranscriptStatsInWorker } from "./manager-cpu-worker-runtime.js";
 import { shouldSyncSessionsForReindex } from "./manager-session-reindex.js";
 import {
@@ -124,8 +124,9 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
     if (!this.sources.has("sessions") || this.sessionUnsubscribe) {
       return;
     }
+    const runInBackground = resolveMemoryBackgroundContext();
     this.sessionUnsubscribe = this.subscribeSessionTranscriptUpdates((update) =>
-      runInMemoryBackgroundContext(() => {
+      runInBackground(() => {
         if (this.closing || this.closed) {
           return;
         }
