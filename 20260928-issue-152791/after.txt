@@ -1,0 +1,14 @@
+$ openclaw --version
+OpenClaw 2026.9.6 (a2eb1cf)
+$ openclaw config get meta.lastTouchedVersion
+2026.9.99
+
+$ OPENCLAW_SERVICE_MARKER=openclaw OPENCLAW_ALLOW_OLDER_BINARY_DESTRUCTIVE_ACTIONS=1 openclaw gateway run --port 41811
+Your OpenClaw config was written by version 2026.9.99, but this command is running 2026.9.6.
+Check: `openclaw --version`, `which openclaw`, and `openclaw gateway status --deep`.
+If unexpected, update PATH so `openclaw` points to the version you want, or reinstall the Gateway service from that same OpenClaw install.
+Refusing to start the gateway service because this OpenClaw binary (2026.9.6) is older than the config last written by OpenClaw 2026.9.99.
+Run the newer openclaw binary on PATH, or reinstall the intended gateway service from the newer install.
+For an intentional downgrade, restore a verified pre-update backup with its matching OpenClaw release: https://docs.openclaw.ai/install/updating/rollback-and-recovery#downgrade
+OPENCLAW_ALLOW_OLDER_BINARY_DESTRUCTIVE_ACTIONS does not apply to gateway service startup.
+exit=78
