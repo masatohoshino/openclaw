@@ -9,6 +9,7 @@ import {
   getNodeSqliteKysely,
   sqliteStringSet,
 } from "../../infra/kysely-sync.js";
+import { getAdmittedSqliteSchemaFacts } from "../../infra/sqlite-schema-facts.js";
 import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
 import { toAgentStoreSessionKey } from "../../routing/session-key.js";
 import type { OpenClawAgentDatabaseOptions } from "../../state/openclaw-agent-db-contract.js";
@@ -19,7 +20,6 @@ import {
   resolveOpenClawAgentSqlitePath,
 } from "../../state/openclaw-agent-db.paths.js";
 import { SESSION_TRANSCRIPT_ARCHIVES_TABLE } from "../../state/openclaw-agent-session-transcript-archive-schema.js";
-import { tableExists } from "../../state/openclaw-state-db-schema-helpers.js";
 import { truncateUtf16Safe } from "../../utils.js";
 import {
   captureLifecycleDatabaseScope,
@@ -152,9 +152,9 @@ export function searchSessionTranscriptsReadOnlySync(
           // Deletion and reset keep a recovery archive but drop the window and its
           // index rows, so those transcripts can never match. Count them in the same
           // key scope so an empty result is not read as "never happened". The archive
-          // table is optional until the first archive write.
-          const deletedTranscriptsExcluded = tableExists(
-            database.db,
+          // table is optional until the first archive write; its presence comes from the
+          // read handle's admitted schema facts, never from a per-search catalog query.
+          const deletedTranscriptsExcluded = getAdmittedSqliteSchemaFacts(database.db)?.tables.has(
             SESSION_TRANSCRIPT_ARCHIVES_TABLE,
           )
             ? (executeSqliteQueryTakeFirstSync(
