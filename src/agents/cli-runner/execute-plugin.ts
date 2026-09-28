@@ -256,7 +256,13 @@ function createPluginToolPermissionHandler(params: {
           (outcome.reason === "user"
             ? `OpenClaw user denied native tool use (${toolName}).`
             : outcome.reason === "policy-oversized"
-              ? `OpenClaw denied native tool use (${toolName}): the input is too long to show in full in an approval prompt, so no approval request was created. This is not a user denial. Retry with a shorter command, or ask the operator to add its executables to this agent's exec allowlist.`
+              ? `OpenClaw denied native tool use (${toolName}): the input is too long to show in full in an approval prompt, so no approval request was created. This is not a user denial. ${
+                  // ask "always" prompts even for allowlisted commands, so an
+                  // allowlist entry cannot admit an oversized command there.
+                  permission.ask === "on-miss"
+                    ? "Retry with a shorter command, or ask the operator to add its executables to this agent's exec allowlist."
+                    : "Retry with a shorter command."
+                }`
               : `OpenClaw approval was not granted for native tool use (${toolName}).`),
       );
     }

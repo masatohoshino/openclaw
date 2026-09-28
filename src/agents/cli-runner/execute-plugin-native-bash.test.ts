@@ -66,18 +66,19 @@ describe("native Bash execution policy", () => {
   );
 
   it.each([
-    ["allowlisted", "gog", "allow"],
-    ["unlisted", "unlisted-tool", "deny"],
+    ["allowlisted", "gog", "on-miss", "allow"],
+    ["unlisted", "unlisted-tool", "on-miss", "deny"],
+    ["allowlisted", "gog", "always", "deny"],
   ] as const)(
-    "decides an %s native Bash command too long for a complete approval prompt",
-    async (_label, executable, behavior) => {
+    "decides an %s native Bash command (%s) too long for a complete approval prompt with ask=%s",
+    async (_label, executable, ask, behavior) => {
       vi.useFakeTimers({ toFake: ["Date"] });
       const dir = makeExecApprovalsTempDir();
       vi.stubEnv("OPENCLAW_STATE_DIR", dir);
       const binary = makeExecutable(dir, "gog");
       saveExecApprovals({ version: 1, agents: { main: { allowlist: [{ pattern: binary }] } } });
       const { context } = await createExecution({
-        config: { tools: { exec: { security: "allowlist", ask: "on-miss", pathPrepend: [dir] } } },
+        config: { tools: { exec: { security: "allowlist", ask, pathPrepend: [dir] } } },
         nativeTools: ["Bash"],
       });
       // Longer than any approval description can show in full, so only the
@@ -98,6 +99,11 @@ describe("native Bash execution policy", () => {
           ? { behavior, updatedInput: { command: expect.stringContaining(binary) } }
           : { behavior, message: expect.stringContaining("too long to show in full") },
       );
+      // ask "always" prompts even for allowlisted commands, so allowlist advice
+      // there would name a step that cannot admit the command.
+      if (decision?.behavior === "deny") {
+        expect(decision.message.includes("exec allowlist")).toBe(ask === "on-miss");
+      }
     },
   );
 });
