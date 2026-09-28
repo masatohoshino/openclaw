@@ -585,9 +585,13 @@ function buildLogger(): TsLogger<LogObj> {
         const nextActiveFile = resolveActiveLogFileWithMode(settings.file, settings.rolling);
         if (nextActiveFile !== activeFile) {
           activeFile = nextActiveFile;
-          ensureLogDirectorySync(path.dirname(activeFile));
-          if (settings.rolling) {
-            pruneOldRollingLogs(path.dirname(activeFile));
+          try {
+            ensureLogDirectorySync(path.dirname(activeFile));
+            if (settings.rolling) {
+              pruneOldRollingLogs(path.dirname(activeFile));
+            }
+          } catch {
+            // Still enqueue: the failed append reports this record through the transport warning.
           }
         }
         const time = formatTimestamp(logObj.date ?? new Date(), { style: "long" });

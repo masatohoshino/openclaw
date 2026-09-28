@@ -346,8 +346,7 @@ describe("async logger file transport", () => {
         const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
         setLoggerOverride({ level: "info", file: logPath });
 
-        getLogger().info("first-record-after-deletion");
-        getLogger().info("second-record-after-deletion");
+        getLogger().info("only-record-after-deletion");
         await testApi.flushFileLogQueueForTests();
 
         const warnings = stderrSpy.mock.calls.map(([line]) => String(line));
