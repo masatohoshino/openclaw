@@ -1851,13 +1851,10 @@ describe("modelsAuthLoginCommand", () => {
     expect(mocks.resolveDefaultAgentId).not.toHaveBeenCalled();
     expect(mocks.upsertAuthProfileWithLock).toHaveBeenCalledWith({
       profileId: "openai:manual",
-      credential: {
-        type: "api_key",
-        provider: "openai",
-        key: "sk-openai-chatgpt-api-key-value",
-      },
+      credential: { type: "api_key", provider: "openai", key: "sk-openai-chatgpt-api-key-value" },
       agentDir: "/tmp/openclaw/agents/coder",
       preserveApiKeyMetadata: true,
+      resetFailureState: true,
       validateCurrentCredential: expect.any(Function),
     });
     expect(lastUpdatedConfig?.auth?.profiles?.["openai:manual"]).toEqual({
@@ -1885,13 +1882,10 @@ describe("modelsAuthLoginCommand", () => {
     expect(mocks.clackPassword).not.toHaveBeenCalled();
     expect(mocks.upsertAuthProfileWithLock).toHaveBeenCalledWith({
       profileId: "openai:manual",
-      credential: {
-        type: "api_key",
-        provider: "openai",
-        key: "sk-openai-chatgpt-api-key-value",
-      },
+      credential: { type: "api_key", provider: "openai", key: "sk-openai-chatgpt-api-key-value" },
       agentDir: "/tmp/openclaw/agents/main",
       preserveApiKeyMetadata: true,
+      resetFailureState: true,
       validateCurrentCredential: expect.any(Function),
     });
     expect(lastUpdatedConfig?.auth?.profiles?.["openai:manual"]).toEqual({
@@ -1910,13 +1904,10 @@ describe("modelsAuthLoginCommand", () => {
     expect(mocks.clackPassword).not.toHaveBeenCalled();
     expect(mocks.upsertAuthProfileWithLock).toHaveBeenCalledWith({
       profileId: "openai:manual",
-      credential: {
-        type: "api_key",
-        provider: "openai",
-        key: "sk-openai-chat-api-key-value",
-      },
+      credential: { type: "api_key", provider: "openai", key: "sk-openai-chat-api-key-value" },
       agentDir: "/tmp/openclaw/agents/main",
       preserveApiKeyMetadata: true,
+      resetFailureState: true,
       validateCurrentCredential: expect.any(Function),
     });
     expect(lastUpdatedConfig?.auth?.profiles?.["openai:manual"]).toEqual({
