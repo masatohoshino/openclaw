@@ -77,10 +77,13 @@ export function createControlUiChatHistoryMessage(
   };
 }
 
-export function createControlUiSessionFixtures(input: {
-  rows: ControlUiSessionFixture[];
-  mainKey: string;
-}) {
+export function createControlUiSessionFixtures(
+  input: {
+    rows: ControlUiSessionFixture[];
+    mainKey: string;
+  },
+  isRecord: (value: unknown) => value is Record<string, unknown>,
+) {
   const records = new Map<
     string,
     { row: ControlUiSessionFixture; changed: Set<string>; lastRunEventSequence?: number }
@@ -126,6 +129,11 @@ export function createControlUiSessionFixtures(input: {
     listed.add(key);
   }
   const read = (key: string) => ({ ...record(key).row });
+  // Match Gateway projection clocks so a cached descriptor cannot outrank a fresh list.
+  const sample = <T extends Record<string, unknown>>(row: T, now: number) => ({
+    ...row,
+    snapshotAt: row.snapshotAt ?? now,
+  });
   const patch = (key: string, fields: Record<string, unknown>) => {
     const value = record(key);
     const next = { ...value.row };
@@ -187,6 +195,12 @@ export function createControlUiSessionFixtures(input: {
       );
       set("pinned", next.pinnedAt !== undefined);
     }
+    // Advance the fixture's synthetic timeline without making its later events stale.
+    const latestUpdatedAt = Math.max(
+      0,
+      ...[...records.values()].map(({ row }) => row.updatedAt ?? 0),
+    );
+    set("updatedAt", latestUpdatedAt + 1);
     value.row = next;
     for (const field of changed) {
       value.changed.add(field);
@@ -249,6 +263,11 @@ export function createControlUiSessionFixtures(input: {
         ? [...new Set([...activeRunIds, runId])]
         : activeRunIds.filter((id) => id !== runId);
     const fields = {
+      // Like the Gateway projection, a newly started sole run has no execution
+      // model until it publishes one; the previous fallback is not evidence.
+      ...(outcome === "running" && activeRunIds.length === 0
+        ? { activeModel: undefined, activeModelProvider: undefined }
+        : {}),
       activeRunIds: remaining,
       hasActiveRun: remaining.length > 0,
       status: remaining.length > 0 ? "running" : outcome,
@@ -262,11 +281,18 @@ export function createControlUiSessionFixtures(input: {
       value.changed.add(field);
     }
   };
-  const abortRuns = (inputKey: string, runId?: string, confirmedRunIds?: string[]) => {
+  const abortRuns = (
+    inputKey: string,
+    runId: string | undefined,
+    response: Record<string, unknown>,
+  ) => {
+    const confirmedRunIds = Array.isArray(response.runIds)
+      ? response.runIds.filter((id): id is string => typeof id === "string")
+      : undefined;
     const key = canonicalKey(inputKey);
     const value = confirmedRunIds?.length ? record(inputKey) : records.get(key);
     if (!value) {
-      return { aborted: false, runIds: [] as string[] };
+      return { ...response, aborted: false, runIds: [] as string[] };
     }
     const activeRunIds = Array.isArray(value.row.activeRunIds)
       ? value.row.activeRunIds.filter((id): id is string => typeof id === "string")
@@ -276,7 +302,7 @@ export function createControlUiSessionFixtures(input: {
     const runIds = runId ? candidates.filter((id) => id === runId) : candidates;
     const aborted = runIds.length > 0 || (!runId && value.row.hasActiveRun === true);
     if (!aborted) {
-      return { aborted: false, runIds };
+      return { ...response, aborted: false, runIds };
     }
     const sequence = ++runEventSequence;
     for (const id of runIds) {
@@ -297,7 +323,7 @@ export function createControlUiSessionFixtures(input: {
     for (const field of Object.keys(fields)) {
       value.changed.add(field);
     }
-    return { aborted, runIds };
+    return { ...response, aborted, runIds };
   };
   const materialize = (key: string, fields: Partial<ControlUiSessionFixture>) => {
     const value = record(key);
@@ -332,6 +358,92 @@ export function createControlUiSessionFixtures(input: {
       ...[...materialized].filter((key) => !keys.has(key)).map(read),
     ];
   };
+  function listResponse(
+    response: unknown,
+    params: unknown,
+    options: {
+      renames: readonly { from: string; to: string | null }[];
+      archiveFiltering: boolean;
+    },
+  ): unknown {
+    if (!isRecord(response) || !Array.isArray(response.sessions)) {
+      return response;
+    }
+    const archivedFilter =
+      isRecord(params) && params.archived === "all"
+        ? "all"
+        : isRecord(params) && params.archived === true
+          ? "archived"
+          : "active";
+    const now = Date.now();
+    const projectedSessions = list(response.sessions).map((row) => {
+      if (!isRecord(row)) {
+        return row;
+      }
+      const next = Object.assign({}, row);
+      // Replay group renames/deletes over static fixtures: the real gateway
+      // rewrites member categories server-side before the next sessions.list.
+      let category = typeof next.category === "string" ? next.category : undefined;
+      for (const rename of options.renames) {
+        if (category === rename.from) {
+          category = rename.to ?? undefined;
+        }
+      }
+      if (category === undefined) {
+        delete next.category;
+      } else {
+        next.category = category;
+      }
+      return sample(next, now);
+    });
+    const spawnedBy =
+      isRecord(params) && typeof params.spawnedBy === "string" ? params.spawnedBy.trim() : "";
+    const childSessions = spawnedBy
+      ? projectedSessions.filter((row) => {
+          if (!isRecord(row) || row.key === spawnedBy) {
+            return false;
+          }
+          const controller =
+            typeof row.controlOwnerSessionKey === "string" ? row.controlOwnerSessionKey.trim() : "";
+          // Fixtures declare current control and navigation lineage; they do not run a registry.
+          return [controller || row.spawnedBy, row.parentSessionKey].some(
+            (owner) => typeof owner === "string" && owner.trim() === spawnedBy,
+          );
+        })
+      : projectedSessions;
+    // A complete fixture becomes a complete child window after local projection.
+    // Partial pages retain their explicit server-owned pagination metadata.
+    const completeChildFixture =
+      childSessions.length !== projectedSessions.length &&
+      typeof response.totalCount === "number" &&
+      response.totalCount === response.sessions.length &&
+      (response.offset === undefined || response.offset === 0) &&
+      (!isRecord(params) || params.offset === undefined || params.offset === 0) &&
+      response.hasMore !== true &&
+      response.nextOffset == null;
+    if (!options.archiveFiltering) {
+      return {
+        ...response,
+        ...(completeChildFixture ? { totalCount: childSessions.length } : {}),
+        ...(childSessions.length !== projectedSessions.length || materializedSequence > 0
+          ? { count: childSessions.length }
+          : {}),
+        sessions: childSessions,
+      };
+    }
+    const filteredSessions = childSessions.filter(
+      (row) =>
+        isRecord(row) &&
+        (archivedFilter === "all" || (row.archived === true) === (archivedFilter === "archived")),
+    );
+    return {
+      ...response,
+      ...(completeChildFixture ? { totalCount: filteredSessions.length } : {}),
+      count: filteredSessions.length,
+      sessions: filteredSessions,
+    };
+  }
+
   const resolve = (params: {
     reference?: { key: string };
     key?: string;
@@ -385,12 +497,14 @@ export function createControlUiSessionFixtures(input: {
     resolve,
     // History publishes a full row replacement. An unseeded wire-only fixture
     // has no canonical metadata to publish until its caller declares the row.
-    sessionInfo: (key: string) => (listed.has(canonicalKey(key)) ? read(key) : undefined),
+    sessionInfo: (key: string) =>
+      listed.has(canonicalKey(key)) ? sample(read(key), Date.now()) : undefined,
     patch,
     abortRuns,
     trackRun,
     materialize,
     list,
+    listResponse,
     materializedCount: () => materializedSequence,
     replaceCanonicalList(rows: unknown[]) {
       const replacements: ControlUiSessionFixture[] = [];

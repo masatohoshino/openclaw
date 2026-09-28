@@ -7,11 +7,13 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
+import { setProcessTimeout } from "../process-deadline.js";
 import { createChildAdapter } from "./adapters/child.js";
 import { createPtyAdapter } from "./adapters/pty.js";
 import { GRACEFUL_CANCEL_TIMEOUT_MS } from "./cancellation-policy.js";
 import type {
   ManagedRun,
+  ProcessExtinctionResult,
   ProcessSupervisor,
   ProcessScopeCleanupPolicy,
   RunExit,
@@ -26,7 +28,7 @@ type OwnedRun = {
   terminationReason?: TerminationReason;
   cancel: (reason: TerminationReason) => void;
   pending?: Promise<ManagedRun>;
-  waitForExtinction?: () => Promise<void>;
+  waitForExtinction?: () => Promise<ProcessExtinctionResult>;
   cleanupOwners: ScopeCleanupOwner[];
 };
 
@@ -36,8 +38,8 @@ function requiresProcessTree(scope: ScopeCleanupOwner, external: boolean): boole
   return scope.processTree === "required-all" || (scope.processTree === "owned-only" && !external);
 }
 
-function recordScopeCleanupFailure(owner: OwnedRun, error: unknown): void {
-  for (const cleanupOwner of owner.cleanupOwners) {
+function recordScopeCleanupFailure(cleanupOwners: ScopeCleanupOwner[], error: unknown): void {
+  for (const cleanupOwner of cleanupOwners) {
     cleanupOwner.failure ??= { error };
   }
 }
@@ -84,26 +86,6 @@ function appendCapturedOutput(
 
 function isTimeoutReason(reason: TerminationReason) {
   return reason === "overall-timeout" || reason === "no-output-timeout";
-}
-
-function resolveElapsedTimeoutReason(params: {
-  nowMs: number;
-  overallTimeoutDeadlineMs: number | null;
-  noOutputTimeoutDeadlineMs: number | null;
-}): TerminationReason | null {
-  if (
-    params.overallTimeoutDeadlineMs !== null &&
-    params.nowMs >= params.overallTimeoutDeadlineMs &&
-    (params.noOutputTimeoutDeadlineMs === null ||
-      params.nowMs < params.noOutputTimeoutDeadlineMs ||
-      params.overallTimeoutDeadlineMs <= params.noOutputTimeoutDeadlineMs)
-  ) {
-    return "overall-timeout";
-  }
-  return params.noOutputTimeoutDeadlineMs !== null &&
-    params.nowMs >= params.noOutputTimeoutDeadlineMs
-    ? "no-output-timeout"
-    : null;
 }
 
 export function createProcessSupervisor(): ProcessSupervisor & {
@@ -207,9 +189,10 @@ export function createProcessSupervisor(): ProcessSupervisor & {
 
   const startRun = async (input: SpawnInput, owner: OwnedRun): Promise<ManagedRun> => {
     const external = input.cleanupOwnership === "external";
-    const requireProcessTree = owner.cleanupOwners.some((scope) =>
+    const treeCleanupOwners = owner.cleanupOwners.filter((scope) =>
       requiresProcessTree(scope, external),
     );
+    const requireProcessTree = treeCleanupOwners.length > 0;
     // A queued replacement must still own authority before stopping the surviving run.
     if (!owner.terminationReason) {
       input.assertCurrent?.();
@@ -226,7 +209,7 @@ export function createProcessSupervisor(): ProcessSupervisor & {
 
     const settleConstructionResult = (
       reason: TerminationReason,
-      cleanup?: Promise<void>,
+      cleanup?: Promise<ProcessExtinctionResult>,
       output?: { stdout: string; stderr: string; lastOutputAtMs: number },
     ): ManagedRun => {
       const exit: RunExit = {
@@ -328,11 +311,11 @@ export function createProcessSupervisor(): ProcessSupervisor & {
     const createDeadline = (reason: "overall-timeout" | "no-output-timeout", value?: number) => {
       const durationMs = normalizeTimeoutDuration(value);
       let deadlineMs: number | null = null;
-      let timer: NodeJS.Timeout | undefined;
+      let timer: ReturnType<typeof setProcessTimeout> | undefined;
       // Re-arm bounded intervals: a long deadline must not overflow Node's timer cap.
       const schedule = (remainingMs: number, deadline: number) => {
         const intervalMs = resolveTimerTimeoutMs(remainingMs, 1);
-        timer = setTimeout(() => {
+        timer = setProcessTimeout(() => {
           if (resultSettled) {
             return;
           }
@@ -352,11 +335,11 @@ export function createProcessSupervisor(): ProcessSupervisor & {
           if (!durationMs || resultSettled) {
             return;
           }
-          clearTimeout(timer);
+          timer?.clear();
           deadlineMs = performance.now() + durationMs;
           schedule(durationMs, deadlineMs);
         },
-        clear: () => clearTimeout(timer),
+        clear: () => timer?.clear(),
       };
     };
     const overallDeadline = createDeadline("overall-timeout", input.timeoutMs);
@@ -365,58 +348,61 @@ export function createProcessSupervisor(): ProcessSupervisor & {
       lastOutputAtMs = Date.now();
       outputDeadline.reset();
     };
+    const settleResult = (adapter?: SpawnProcessAdapter) => {
+      resultSettled = true;
+      outputCompletion.resolve();
+      overallDeadline.clear();
+      outputDeadline.clear();
+      detachOutput();
+      if (cleanupSettled) {
+        adapter?.dispose();
+      }
+    };
 
     try {
       // Reserve the join before construction: a timeout result does not release
       // resources acquired later, or hide cleanup when readiness rejects after spawn.
-      const cleanup = createDeferredCore();
+      const cleanup = createDeferredCore<ProcessExtinctionResult>();
       owner.waitForExtinction = () => cleanup.promise;
       void cleanup.promise.catch(() => undefined);
-      let constructionCleanup: Promise<void> | undefined;
+      let constructionCleanup: Promise<ProcessExtinctionResult> | undefined;
       let ownedAdapter: SpawnProcessAdapter | undefined;
-      const onSpawnCleanup = (promise: Promise<void>) => {
+      const onSpawnCleanup = (promise: Promise<ProcessExtinctionResult>) => {
         constructionCleanup = promise;
         void promise.catch(() => undefined);
       };
       overallDeadline.reset();
       outputDeadline.reset();
+      const construction = {
+        assertCurrent: input.assertCurrent,
+        beforeSpawn: input.beforeSpawn,
+        cwd: input.cwd,
+        env: input.env,
+        abortSignal: constructionAbort.signal,
+        onSpawnCleanup,
+      };
       const startupPromise =
         input.mode === "pty"
           ? createPtyAdapter({
-              assertCurrent: input.assertCurrent,
-              beforeSpawn: input.beforeSpawn,
+              ...construction,
               shell: expectDefined(input.argv[0], "spawn executable"),
               args: input.argv.slice(1),
-              cwd: input.cwd,
-              env: input.env,
-              abortSignal: constructionAbort.signal,
-              onSpawnCleanup,
             }).then((adapter) => ({ adapter, ready: Promise.resolve() }))
           : input.mode === "anchored-shell"
             ? createChildAdapter({
-                assertCurrent: input.assertCurrent,
-                beforeSpawn: input.beforeSpawn,
+                ...construction,
                 anchoredShellCommand: input.command,
-                cwd: input.cwd,
-                env: input.env,
-                abortSignal: constructionAbort.signal,
-                onSpawnCleanup,
               })
             : createChildAdapter({
-                assertCurrent: input.assertCurrent,
-                beforeSpawn: input.beforeSpawn,
+                ...construction,
                 ...(requireProcessTree && !external ? { ownProcessTree: true as const } : {}),
                 argv: resolvedArgs ? [...input.argv, ...resolvedArgs] : input.argv,
                 argv0: input.argv0,
-                cwd: input.cwd,
-                env: input.env,
                 exactEnv: input.exactEnv,
                 windowsVerbatimArguments: input.windowsVerbatimArguments,
                 input: input.input,
                 stdinMode: input.stdinMode,
                 secretInput: input.secretInput,
-                abortSignal: constructionAbort.signal,
-                onSpawnCleanup,
               });
       const nativeExtinctionPromise = startupPromise
         .then(
@@ -427,20 +413,9 @@ export function createProcessSupervisor(): ProcessSupervisor & {
             started.onError?.((error, source) => {
               if (source === "stdout" || source === "stderr") {
                 outputError ??= error;
-                recordScopeCleanupFailure(owner, error);
+                recordScopeCleanupFailure(owner.cleanupOwners, error);
               }
             });
-            if (external || !started.waitForExtinction) {
-              for (const scope of owner.cleanupOwners) {
-                if (requiresProcessTree(scope, external)) {
-                  scope.failure ??= {
-                    error: new Error(
-                      "process cleanup cannot confirm owned execution-tree settlement",
-                    ),
-                  };
-                }
-              }
-            }
             if (constructionAbort.signal.aborted) {
               started.kill("SIGKILL");
               // Drain a late adapter's output without reopening the terminal result.
@@ -449,10 +424,14 @@ export function createProcessSupervisor(): ProcessSupervisor & {
             // Child close can precede a descendant's private-input consumption.
             // Readiness failure is separate from the cleanup owner's outcome.
             await Promise.allSettled([ready]);
-            await (constructionCleanup ?? started.waitForExtinction?.() ?? started.wait());
+            const nativeCleanup = constructionCleanup ?? started.waitForExtinction?.();
+            if (nativeCleanup) {
+              return await nativeCleanup;
+            }
+            await started.wait();
           },
           async () => {
-            await constructionCleanup;
+            return await constructionCleanup;
           },
         )
         .finally(() => {
@@ -470,32 +449,42 @@ export function createProcessSupervisor(): ProcessSupervisor & {
       const extinctionPromise = Promise.all([
         nativeExtinctionPromise,
         outputCompletion.promise,
-      ]).then(() => {
+      ]).then(([outcome]) => {
         if (outputError) {
           throw outputError;
         }
+        return outcome;
       });
       void extinctionPromise.then(
-        () => {
+        (outcome) => {
+          if (requireProcessTree && outcome && outcome.status === "uncertain") {
+            recordScopeCleanupFailure(
+              treeCleanupOwners,
+              Object.assign(
+                new Error(`Process-tree cleanup is uncertain: ${outcome.reason}`, {
+                  cause: outcome,
+                }),
+                { reason: outcome.reason },
+              ),
+            );
+          } else if (ownedAdapter && (external || !ownedAdapter.waitForExtinction)) {
+            recordScopeCleanupFailure(
+              treeCleanupOwners,
+              new Error("process cleanup cannot confirm owned execution-tree settlement"),
+            );
+          }
           ownedRuns.delete(owner);
-          cleanup.resolve();
+          cleanup.resolve(outcome);
         },
         (error: unknown) => {
-          recordScopeCleanupFailure(owner, error);
+          recordScopeCleanupFailure(owner.cleanupOwners, error);
           cleanupFailure ??= { error };
           ownedRuns.delete(owner);
           cleanup.reject(error);
         },
       );
       const settleAbortedConstruction = (reason: TerminationReason) => {
-        resultSettled = true;
-        outputCompletion.resolve();
-        overallDeadline.clear();
-        outputDeadline.clear();
-        detachOutput();
-        if (cleanupSettled) {
-          ownedAdapter?.dispose();
-        }
+        settleResult(ownedAdapter);
         return settleConstructionResult(reason, cleanup.promise, { ...captured, lastOutputAtMs });
       };
       let startup: Awaited<typeof startupPromise>;
@@ -508,17 +497,6 @@ export function createProcessSupervisor(): ProcessSupervisor & {
         return settleAbortedConstruction(forcedReason);
       }
       const adapter = startup.adapter;
-
-      const settleResult = () => {
-        resultSettled = true;
-        outputCompletion.resolve();
-        overallDeadline.clear();
-        outputDeadline.clear();
-        detachOutput();
-        if (cleanupSettled) {
-          adapter.dispose();
-        }
-      };
 
       const withOutputFence =
         <Chunk>(deliver?: (chunk: Chunk) => void, recordsOutput = true) =>
@@ -560,7 +538,7 @@ export function createProcessSupervisor(): ProcessSupervisor & {
         if (error === constructionAbortError && forcedReason) {
           return settleAbortedConstruction(forcedReason);
         }
-        settleResult();
+        settleResult(adapter);
         throw error;
       }
 
@@ -601,35 +579,31 @@ export function createProcessSupervisor(): ProcessSupervisor & {
         forceKillTimer.unref?.();
       };
 
-      const waitPromise = (async (): Promise<RunExit> => {
-        const result = await adapter.wait();
-        const deadlineReason = resolveElapsedTimeoutReason({
-          nowMs: performance.now(),
-          overallTimeoutDeadlineMs: overallDeadline.deadlineMs,
-          noOutputTimeoutDeadlineMs: outputDeadline.deadlineMs,
-        });
-        const terminalReason = forcedReason ?? deadlineReason;
-        settleResult();
+      const waitOutcome = Promise.allSettled([
+        (async (): Promise<RunExit> => {
+          const result = await adapter.wait();
+          const terminalReason = forcedReason;
+          settleResult(adapter);
 
-        const reason: TerminationReason =
-          terminalReason ?? (result.signal != null ? ("signal" as const) : ("exit" as const));
-        const exit: RunExit = {
-          reason,
-          exitCode: result.code,
-          exitSignal: result.signal,
-          oomScoreWrapperSelected: adapter.oomScoreWrapperSelected === true,
-          durationMs: Date.now() - startedAtMs,
-          ...captured,
-          timedOut: isTimeoutReason(reason),
-          noOutputTimedOut: terminalReason === "no-output-timeout",
-        };
-        return exit;
-      })().catch((err: unknown) => {
-        if (!resultSettled) {
-          settleResult();
-        }
-        throw err;
-      });
+          const reason: TerminationReason =
+            terminalReason ?? (result.signal != null ? ("signal" as const) : ("exit" as const));
+          const exit: RunExit = {
+            reason,
+            exitCode: result.code,
+            exitSignal: result.signal,
+            oomScoreWrapperSelected: adapter.oomScoreWrapperSelected === true,
+            durationMs: Date.now() - startedAtMs,
+            ...captured,
+            timedOut: isTimeoutReason(reason),
+            noOutputTimedOut: terminalReason === "no-output-timeout",
+          };
+          return exit;
+        })().finally(() => {
+          if (!resultSettled) {
+            settleResult(adapter);
+          }
+        }),
+      ]);
 
       const managedRun: ManagedRun = {
         activity: Object.freeze({
@@ -649,7 +623,13 @@ export function createProcessSupervisor(): ProcessSupervisor & {
         pid: adapter.pid,
         startedAtMs,
         stdin: adapter.stdin,
-        wait: async () => await waitPromise,
+        wait: async () => {
+          const [outcome] = await waitOutcome;
+          if (outcome.status === "rejected") {
+            throw outcome.reason;
+          }
+          return outcome.value;
+        },
         ...(adapter.waitForExtinction && { waitForExtinction: () => cleanup.promise }),
         cancel: (reason = "manual-cancel") => {
           requestCancel(reason);
@@ -662,11 +642,7 @@ export function createProcessSupervisor(): ProcessSupervisor & {
       }
       return managedRun;
     } catch (err) {
-      resultSettled = true;
-      outputCompletion.resolve();
-      overallDeadline.clear();
-      outputDeadline.clear();
-      detachOutput();
+      settleResult();
       const { warnProcessSupervisorSpawnFailure } = await loadSupervisorLogRuntime();
       warnProcessSupervisorSpawnFailure(`spawn failed: runId=${runId} reason=${String(err)}`);
       throw err;

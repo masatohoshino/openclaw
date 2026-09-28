@@ -3,9 +3,8 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { preparePublishedModelRuntimeChoice } from "./model-runtime-choice.js";
-import { setPreparedModelRuntimeAuthStore } from "./prepared-model-runtime-auth.js";
+import { createModelRuntimeChoiceOwnerFixture } from "./model-runtime-choice.test-support.js";
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.types.js";
-import { AuthStorage, ModelRegistry } from "./sessions/index.js";
 
 const published = vi.hoisted((): { owner?: PreparedModelRuntimeSnapshot } => ({}));
 vi.mock("./prepared-model-catalog.js", () => ({
@@ -51,14 +50,7 @@ describe("colliding catalog display keys", () => {
         },
       });
     }
-    const owner: PreparedModelRuntimeSnapshot = {
-      config: harnessConfig,
-      observationConfig: harnessConfig,
-      catalogOwner: { agentId: "main", workspaceDir: "/tmp/runtime-choice" },
-      agentId: "main",
-      agentDir: "/tmp/runtime-choice/agent",
-      workspaceDir: "/tmp/runtime-choice",
-      activeProjectKeys: [],
+    published.owner = createModelRuntimeChoiceOwnerFixture(harnessConfig, () => true, {
       authModes: {
         "vendor-cli": { source: "native", mode: "oauth" },
         "vendor-plain": { source: "native", mode: "oauth" },
@@ -69,19 +61,9 @@ describe("colliding catalog display keys", () => {
           { id: "vendor-plain", providers: ["vendor"], syntheticAuthRefs: ["vendor-plain"] },
         ],
       }),
-      isCurrent: () => true,
-      allowGatewaySubagentBinding: false,
       modelCatalog: { entries: [...entries], routeVariants: [...entries] },
-      configuredRuntimeModels: [],
-      inlineProviderModels: [],
       pluginRegistry,
-      createStores() {
-        const authStorage = AuthStorage.inMemory({});
-        return { authStorage, modelRegistry: ModelRegistry.inMemory(authStorage) };
-      },
-    };
-    setPreparedModelRuntimeAuthStore(owner, { version: 1, profiles: {} });
-    published.owner = owner;
+    });
   }
 
   const select = (model: string, runtimeId: string) =>
@@ -122,4 +104,17 @@ describe("colliding catalog display keys", () => {
       });
     },
   );
+
+  it("resolves a provider-prefixed selection against the bare published row", async () => {
+    // `resolveSessionModelRef` keeps the self-provider prefix for a selection that
+    // was resolved through the catalog, so the display-key comparison stays the
+    // fallback when no literal row carries the prefixed id.
+    publishRows([plainRow]);
+    const choice = await select(`vendor/${plainRow.id}`, plainRow.nativeRuntime);
+    expect(choice.kind).toBe("ready");
+    if (choice.kind !== "ready") {
+      throw new Error("Expected the prefixed spelling to select the published row");
+    }
+    expect(choice.validate()).toBeUndefined();
+  });
 });
