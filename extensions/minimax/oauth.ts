@@ -6,7 +6,11 @@ import {
   resolvePositiveTimerTimeoutMs,
 } from "openclaw/plugin-sdk/number-runtime";
 import type { ProviderAuthContext } from "openclaw/plugin-sdk/plugin-entry";
-import { generatePkceVerifierChallenge, toFormUrlEncoded } from "openclaw/plugin-sdk/provider-auth";
+import {
+  generatePkceVerifierChallenge,
+  toFormUrlEncoded,
+  type OAuthCredential,
+} from "openclaw/plugin-sdk/provider-auth";
 import {
   readProviderJsonResponse,
   readResponseTextLimited,
@@ -189,7 +193,10 @@ async function pollOAuthToken(params: {
   }
 }
 
-async function parseMiniMaxOAuthTokenResponse(response: Response): Promise<TokenResult> {
+async function parseMiniMaxOAuthTokenResponse(
+  response: Response,
+  previousRefresh?: string,
+): Promise<TokenResult> {
   const text = await readResponseTextLimited(response, MINIMAX_OAUTH_ERROR_BODY_LIMIT_BYTES);
   let payload:
     | {
@@ -228,14 +235,19 @@ async function parseMiniMaxOAuthTokenResponse(response: Response): Promise<Token
   };
 
   if (tokenPayload.status === "error") {
-    return { status: "error", message: "An error occurred. Please try again later" };
+    return {
+      status: "error",
+      message: payload.base_resp?.status_msg || "An error occurred. Please try again later",
+    };
   }
 
   if (tokenPayload.status !== "success") {
     return { status: "pending", message: "current user code is not authorized" };
   }
 
-  if (!tokenPayload.access_token || !tokenPayload.refresh_token || !tokenPayload.expired_in) {
+  // A refresh response may omit refresh_token when the server does not rotate it.
+  const refresh = tokenPayload.refresh_token || previousRefresh;
+  if (!tokenPayload.access_token || !refresh || !tokenPayload.expired_in) {
     return { status: "error", message: "MiniMax OAuth returned incomplete token payload." };
   }
   const expires = normalizeOAuthExpires(tokenPayload.expired_in);
@@ -247,11 +259,82 @@ async function parseMiniMaxOAuthTokenResponse(response: Response): Promise<Token
     status: "success",
     token: {
       access: tokenPayload.access_token,
-      refresh: tokenPayload.refresh_token,
+      refresh,
       expires,
       resourceUrl: tokenPayload.resource_url,
       notification_message: tokenPayload.notification_message,
     },
+  };
+}
+
+function resolveMiniMaxRegionFromBaseUrl(baseUrl: string | undefined): MiniMaxRegion | undefined {
+  let hostname: string;
+  try {
+    hostname = new URL(baseUrl ?? "").hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  const regions: MiniMaxRegion[] = ["global", "cn"];
+  return regions.find(
+    (region) => new URL(MINIMAX_OAUTH_CONFIG[region].baseUrl).hostname === hostname,
+  );
+}
+
+/**
+ * Refresh a MiniMax Portal OAuth credential at the token endpoint of the region
+ * that login configured. Login records the region only as the provider base
+ * URL, so an unrecognized base URL is refused instead of sending the refresh
+ * token to a guessed region.
+ */
+export async function refreshMiniMaxPortalOAuthCredential(
+  credential: OAuthCredential,
+  providerBaseUrl: string | undefined,
+): Promise<OAuthCredential> {
+  const region = resolveMiniMaxRegionFromBaseUrl(providerBaseUrl);
+  if (!region) {
+    throw new Error(
+      `MiniMax OAuth refresh cannot tell the account region from models.providers.minimax-portal.baseUrl (${providerBaseUrl ?? "not set"}); expected ${MINIMAX_OAUTH_CONFIG.global.baseUrl} or ${MINIMAX_OAUTH_CONFIG.cn.baseUrl}. Run \`openclaw models auth login --provider minimax-portal\` to sign in again.`,
+    );
+  }
+  if (!credential.refresh) {
+    throw new Error(
+      "MiniMax OAuth credential has no refresh token. Run `openclaw models auth login --provider minimax-portal` to sign in again.",
+    );
+  }
+  ensureGlobalUndiciEnvProxyDispatcher();
+  const endpoints = getOAuthEndpoints(region);
+  const { response, release } = await fetchWithSsrFGuard({
+    url: endpoints.tokenEndpoint,
+    init: {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: toFormUrlEncoded({
+        grant_type: "refresh_token",
+        client_id: endpoints.clientId,
+        refresh_token: credential.refresh,
+      }),
+    },
+    timeoutMs: MINIMAX_OAUTH_FETCH_TIMEOUT_MS,
+    policy: { allowedHostnames: [endpoints.hostname] },
+    auditContext: "minimax.oauth.refresh",
+  });
+  let result: TokenResult;
+  try {
+    result = await parseMiniMaxOAuthTokenResponse(response, credential.refresh);
+  } finally {
+    await release();
+  }
+  if (result.status !== "success") {
+    throw new Error(`MiniMax OAuth refresh failed: ${result.message ?? "token not issued"}`);
+  }
+  return {
+    ...credential,
+    access: result.token.access,
+    refresh: result.token.refresh,
+    expires: result.token.expires,
   };
 }
 
