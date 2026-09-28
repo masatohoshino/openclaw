@@ -769,11 +769,12 @@ describe("runReplyAgent runtime config", () => {
   });
 
   it.each([
-    { source: "current", kept: true },
-    { source: "revoked during preflight", kept: false },
-  ])(
+    { source: "current", revokeDuring: undefined, kept: true },
+    { source: "revoked during preflight", revokeDuring: "preflight", kept: false },
+    { source: "revoked while the append awaits", revokeDuring: "persist", kept: false },
+  ] as const)(
     "keeps the user turn after a failed required preflight only for a $source source",
-    async ({ kept }) => {
+    async ({ revokeDuring, kept }) => {
       await withTestDir({ prefix: "openclaw-preflight-user-turn-" }, async (tempDir) => {
         const { replyParams, followupRun } = createDirectRuntimeReplyParams();
         const sessionKey = "agent:main:telegram:default:direct:test";
@@ -782,11 +783,20 @@ describe("runReplyAgent runtime config", () => {
         const scope = { agentId: "main", sessionId: sessionEntry.sessionId, sessionKey, storePath };
         await replaceSessionEntry(scope, sessionEntry);
         await appendTranscriptMessage(scope, { message: { role: "user", content: "earlier" } });
+        let revoked = false;
+        const input = {
+          text: "the turn that hit the failed preflight",
+          idempotencyKey: "source-1",
+        };
         followupRun.userTurnTranscriptRecorder = createUserTurnTranscriptRecorder({
-          input: { text: "the turn that hit the failed preflight", idempotencyKey: "source-1" },
+          input,
+          // Message resolution is the first await inside persistApproved().
+          resolveInput: async () => {
+            revoked ||= revokeDuring === "persist";
+            return input;
+          },
           target: { ...scope, sessionEntry, cwd: tempDir, config: {} },
         });
-        let revoked = false;
         followupRun.operatorAuthority = createAdmittedRunOperatorAuthority({
           profileId: "linked-admin",
           scopes: ["operator.admin"],
@@ -803,7 +813,7 @@ describe("runReplyAgent runtime config", () => {
         replyParams.sessionEntry = sessionEntry;
         replyParams.sessionStore = { [sessionKey]: sessionEntry };
         runSessionCompactionIfNeededMock.mockImplementation(async () => {
-          revoked = !kept;
+          revoked = revokeDuring === "preflight";
           throw new Error("Preflight compaction required but failed: summarization_failed");
         });
 

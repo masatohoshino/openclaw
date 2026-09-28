@@ -160,19 +160,24 @@ export async function executePreparedReplyAgentRun(
 
   // A failed required compaction answers with the "Context is too large" reply before
   // admission. Keep only the user's transcript entry (no recovery claim), as chat.send
-  // does for returned errors, and only while this run still holds its source authority.
+  // does for returned errors. Source authority is rechecked inside the guarded write,
+  // after message resolution and queueing, so revocation during those awaits wins.
   const persistUserTurnAfterFailedPreflight = async (error: unknown) => {
     const recorder = followupRun.userTurnTranscriptRecorder;
     if (!recorder || buildPreflightCompactionFailureText(formatErrorMessage(error)) === null) {
       return;
     }
     try {
-      replyOperation.abortSignal.throwIfAborted();
-      followupRun.operatorAuthority?.assertCurrent();
-      if (replyOperation.lifecycleGeneration) {
-        assertAgentRunLifecycleGenerationCurrent(replyOperation.lifecycleGeneration);
-      }
-      await recorder.persistApproved({ expectedSessionId: replyOperation.sessionId });
+      await recorder.persistApproved({
+        expectedSessionId: replyOperation.sessionId,
+        beforeFreshMessageCommit: () => {
+          replyOperation.abortSignal.throwIfAborted();
+          followupRun.operatorAuthority?.assertCurrent();
+          if (replyOperation.lifecycleGeneration) {
+            assertAgentRunLifecycleGenerationCurrent(replyOperation.lifecycleGeneration);
+          }
+        },
+      });
     } catch (persistError) {
       logVerbose(`user turn not kept after failed preflight: ${formatErrorMessage(persistError)}`);
     }
