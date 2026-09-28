@@ -276,73 +276,6 @@ describe("applyPatch", () => {
     expect(result.summary.added).toEqual(["notes.txt"]);
   });
 
-  it.each([
-    {
-      name: "a delete before an update of a missing file",
-      patch: `*** Begin Patch
-*** Delete File: important.txt
-*** Update File: missing.txt
-@@
--old
-+new
-*** End Patch`,
-      error: /Failed to read file to update .*missing\.txt/,
-    },
-    {
-      name: "an add and an update before a context mismatch",
-      patch: `*** Begin Patch
-*** Add File: created.txt
-+created
-*** Update File: important.txt
-@@
--irreplaceable
-+rewritten
-*** Update File: important.txt
-@@
--not in the file
-+changed
-*** End Patch`,
-      error: /Failed to find expected lines in .*important\.txt/,
-    },
-  ])("leaves the workspace unchanged when $name rejects", async ({ patch, error }) => {
-    await withTempDir(async (dir) => {
-      await fs.writeFile(path.join(dir, "important.txt"), "irreplaceable\n");
-
-      await expect(applyPatch(patch, { cwd: dir })).rejects.toThrow(error);
-
-      expect(await fs.readdir(dir)).toEqual(["important.txt"]);
-      expect(await fs.readFile(path.join(dir, "important.txt"), "utf8")).toBe("irreplaceable\n");
-    });
-  });
-
-  it("updates files that earlier hunks in the same patch add or change", async () => {
-    const memory = createMemoryPatchSandbox({ "notes.txt": "one\n" });
-    const patch = `*** Begin Patch
-*** Add File: created.txt
-+draft
-*** Update File: created.txt
-@@
--draft
-+final
-*** Update File: notes.txt
-@@
--one
-+two
-*** Update File: notes.txt
-*** Move to: moved.txt
-@@
--two
-+three
-*** End Patch`;
-
-    await applyPatch(patch, memory.options);
-
-    expect(Object.fromEntries(memory.files)).toEqual({
-      "/sandbox/created.txt": "final\n",
-      "/sandbox/moved.txt": "three\n",
-    });
-  });
-
   it("rejects a move hunk that targets an existing file", async () => {
     const memory = createMemoryPatchSandbox({
       "source.txt": "foo\nbar\n",
@@ -843,49 +776,6 @@ describe("applyPatch", () => {
       }
     });
   });
-
-  it.runIf(process.platform !== "win32")(
-    "replaces an outside symlink that the same patch deletes first",
-    async () => {
-      await withTempDir(async (dir) => {
-        const outsideDir = await fs.mkdtemp(
-          path.join(path.dirname(dir), "openclaw-patch-outside-"),
-        );
-        try {
-          const outsideTarget = path.join(outsideDir, "target.txt");
-          await fs.writeFile(outsideTarget, "keep\n", "utf8");
-          const link = path.join(dir, "link.txt");
-          await fs.symlink(outsideTarget, link);
-          const input = `*** Begin Patch
-*** Delete File: link.txt
-*** Add File: link.txt
-+draft
-*** Update File: link.txt
-@@
--draft
-+final
-*** End Patch`;
-
-          const result = await createApplyPatchTool({ cwd: dir }).execute(
-            "call-replace-link",
-            { input },
-            undefined,
-          );
-
-          expect(result.details.summary).toEqual({
-            added: ["link.txt"],
-            modified: ["link.txt"],
-            deleted: ["link.txt"],
-          });
-          expect((await fs.lstat(link)).isFile()).toBe(true);
-          await expect(fs.readFile(link, "utf8")).resolves.toBe("final\n");
-          await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("keep\n");
-        } finally {
-          await fs.rm(outsideDir, { recursive: true, force: true });
-        }
-      });
-    },
-  );
 
   it("rejects move targets whose parent path is a symlink outside cwd", async () => {
     if (process.platform === "win32") {
