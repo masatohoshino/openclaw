@@ -65,6 +65,8 @@ type MiniMaxOAuthToken = {
   expires: number;
   resourceUrl?: string;
   notification_message?: string;
+  /** Regional token endpoint that issued the credential; refresh is bound to it. */
+  tokenEndpoint?: string;
 };
 
 type TokenPending = { status: "pending"; message?: string };
@@ -280,26 +282,37 @@ function resolveMiniMaxRegionFromBaseUrl(baseUrl: string | undefined): MiniMaxRe
   );
 }
 
+const MINIMAX_SIGN_IN_AGAIN =
+  "Run `openclaw models auth login --provider minimax-portal` to sign in again.";
+
 /**
- * Refresh a MiniMax Portal OAuth credential at the token endpoint of the region
- * that login configured. Login records the region only as the provider base
- * URL, so an unrecognized base URL is refused instead of sending the refresh
- * token to a guessed region.
+ * Refresh a MiniMax Portal OAuth credential at the token endpoint its login
+ * recorded. The refresh token is only sent back to that regional endpoint:
+ * credentials without a recorded endpoint (saved before refresh existed) and
+ * credentials whose configured base URL now names the other region are refused
+ * before any request, since either could send the token across regions.
  */
 export async function refreshMiniMaxPortalOAuthCredential(
   credential: OAuthCredential,
   providerBaseUrl: string | undefined,
 ): Promise<OAuthCredential> {
-  const region = resolveMiniMaxRegionFromBaseUrl(providerBaseUrl);
+  const regions: MiniMaxRegion[] = ["global", "cn"];
+  const region = regions.find(
+    (candidate) => getOAuthEndpoints(candidate).tokenEndpoint === credential.tokenEndpoint,
+  );
   if (!region) {
     throw new Error(
-      `MiniMax OAuth refresh cannot tell the account region from models.providers.minimax-portal.baseUrl (${providerBaseUrl ?? "not set"}); expected ${MINIMAX_OAUTH_CONFIG.global.baseUrl} or ${MINIMAX_OAUTH_CONFIG.cn.baseUrl}. Run \`openclaw models auth login --provider minimax-portal\` to sign in again.`,
+      `MiniMax OAuth credential does not record the account region it was issued for. ${MINIMAX_SIGN_IN_AGAIN}`,
+    );
+  }
+  const configuredRegion = resolveMiniMaxRegionFromBaseUrl(providerBaseUrl);
+  if (configuredRegion && configuredRegion !== region) {
+    throw new Error(
+      `MiniMax OAuth credential was issued for the ${region === "cn" ? "CN" : "Global"} region, but models.providers.minimax-portal.baseUrl now points to ${MINIMAX_OAUTH_CONFIG[configuredRegion].baseUrl}. ${MINIMAX_SIGN_IN_AGAIN}`,
     );
   }
   if (!credential.refresh) {
-    throw new Error(
-      "MiniMax OAuth credential has no refresh token. Run `openclaw models auth login --provider minimax-portal` to sign in again.",
-    );
+    throw new Error(`MiniMax OAuth credential has no refresh token. ${MINIMAX_SIGN_IN_AGAIN}`);
   }
   ensureGlobalUndiciEnvProxyDispatcher();
   const endpoints = getOAuthEndpoints(region);
@@ -407,7 +420,7 @@ export async function loginMiniMaxPortalOAuth(params: {
     assertCurrent();
 
     if (result.status === "success") {
-      return result.token;
+      return { ...result.token, tokenEndpoint: getOAuthEndpoints(region).tokenEndpoint };
     }
 
     if (result.status === "error") {

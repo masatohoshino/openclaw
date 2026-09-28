@@ -21,6 +21,7 @@ vi.mock("./oauth.runtime.js", async (importOriginal) => ({
     refresh: "minimax-oauth-refresh-token",
     expires: Date.now() + 60_000,
     resourceUrl: "https://api.minimax.io/anthropic",
+    tokenEndpoint: "https://account.minimax.io/oauth2/token",
   })),
 }));
 
@@ -675,6 +676,7 @@ describe("minimax provider hooks", () => {
       type: "oauth",
       provider: "minimax-portal",
       authFlow: "device-code",
+      tokenEndpoint: "https://account.minimax.io/oauth2/token",
     });
   });
 
@@ -687,8 +689,12 @@ describe("minimax provider hooks", () => {
       baseUrl: "https://api.minimax.io/anthropic",
       tokenEndpoint: "https://account.minimax.io/oauth2/token",
     },
+    {
+      baseUrl: "https://proxy.example.com/anthropic",
+      tokenEndpoint: "https://account.minimax.io/oauth2/token",
+    },
   ])(
-    "refreshes expired portal OAuth at the region login configured ($baseUrl)",
+    "refreshes expired portal OAuth at the endpoint that issued it (base URL $baseUrl)",
     async ({ baseUrl, tokenEndpoint }) => {
       const { portalProvider } = await registeredProvidersWithPortalBaseUrl(baseUrl);
       vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
@@ -702,8 +708,10 @@ describe("minimax provider hooks", () => {
       );
       vi.stubGlobal("fetch", fetchMock);
 
-      await expect(portalProvider.refreshOAuth?.(expiredPortalCredential())).resolves.toEqual({
-        ...expiredPortalCredential(),
+      await expect(
+        portalProvider.refreshOAuth?.(expiredPortalCredential(tokenEndpoint)),
+      ).resolves.toEqual({
+        ...expiredPortalCredential(tokenEndpoint),
         access: "fresh-access",
         refresh: "rotated-refresh",
         expires: 1_700_007_200_000,
@@ -718,21 +726,35 @@ describe("minimax provider hooks", () => {
     },
   );
 
-  it("refuses portal OAuth refresh when the configured base URL does not name a region", async () => {
-    const { portalProvider } = await registeredProvidersWithPortalBaseUrl(
-      "https://proxy.example.com/anthropic",
-    );
+  it.each([
+    {
+      case: "a credential saved without its issuing endpoint",
+      baseUrl: "https://api.minimax.io/anthropic",
+      tokenEndpoint: undefined,
+    },
+    {
+      case: "a Global credential after the base URL moved to CN",
+      baseUrl: "https://api.minimaxi.com/anthropic",
+      tokenEndpoint: "https://account.minimax.io/oauth2/token",
+    },
+    {
+      case: "a CN credential after the base URL moved to Global",
+      baseUrl: "https://api.minimax.io/anthropic",
+      tokenEndpoint: "https://account.minimaxi.com/oauth2/token",
+    },
+  ])("refuses portal OAuth refresh before any request for $case", async (params) => {
+    const { portalProvider } = await registeredProvidersWithPortalBaseUrl(params.baseUrl);
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(portalProvider.refreshOAuth?.(expiredPortalCredential())).rejects.toThrow(
-      "openclaw models auth login --provider minimax-portal",
-    );
+    await expect(
+      portalProvider.refreshOAuth?.(expiredPortalCredential(params.tokenEndpoint)),
+    ).rejects.toThrow("openclaw models auth login --provider minimax-portal");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
-function expiredPortalCredential() {
+function expiredPortalCredential(tokenEndpoint: string | undefined) {
   return {
     type: "oauth" as const,
     provider: "minimax-portal",
@@ -740,6 +762,7 @@ function expiredPortalCredential() {
     refresh: "stored-refresh",
     expires: 1,
     authFlow: "device-code",
+    ...(tokenEndpoint ? { tokenEndpoint } : {}),
   };
 }
 

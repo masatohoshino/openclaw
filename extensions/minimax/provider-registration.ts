@@ -234,7 +234,7 @@ function createOAuthHandler(region: MiniMaxRegion) {
         access: result.access,
         refresh: result.refresh,
         expires: result.expires,
-        credentialExtra: { authFlow: "device-code" },
+        credentialExtra: { authFlow: "device-code", tokenEndpoint: result.tokenEndpoint },
         configPatch: {
           models: {
             providers: {
@@ -351,7 +351,7 @@ function buildMinimaxPortalProviderPlugin(readBaseUrl: () => string | undefined)
       }),
     },
     auth: [createMinimaxOAuthMethod("global"), createMinimaxOAuthMethod("cn")],
-    // The hook receives only the credential; the region lives in the base URL login wrote.
+    // The hook receives only the credential; the configured base URL is read to catch region changes.
     refreshOAuth: async (credential) => {
       const { refreshMiniMaxPortalOAuthCredential } = await import("./oauth.runtime.js");
       return await refreshMiniMaxPortalOAuthCredential(credential, readBaseUrl());
