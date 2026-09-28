@@ -69,7 +69,10 @@ it("fences apply_patch after a file read when permissions change", async () => {
           },
           generation.signal,
         ),
-      ).rejects.toThrow("Permission change");
+      ).rejects.toMatchObject({
+        name: "AbortError",
+        cause: expect.objectContaining({ message: "Permission change" }),
+      });
     } finally {
       read.mockRestore();
     }
@@ -271,6 +274,73 @@ describe("applyPatch", () => {
 
     expect(memory.files.get("/sandbox/notes.txt")).toBe("new\n");
     expect(result.summary.added).toEqual(["notes.txt"]);
+  });
+
+  it.each([
+    {
+      name: "a delete before an update of a missing file",
+      patch: `*** Begin Patch
+*** Delete File: important.txt
+*** Update File: missing.txt
+@@
+-old
++new
+*** End Patch`,
+      error: /Failed to read file to update .*missing\.txt/,
+    },
+    {
+      name: "an add and an update before a context mismatch",
+      patch: `*** Begin Patch
+*** Add File: created.txt
++created
+*** Update File: important.txt
+@@
+-irreplaceable
++rewritten
+*** Update File: important.txt
+@@
+-not in the file
++changed
+*** End Patch`,
+      error: /Failed to find expected lines in .*important\.txt/,
+    },
+  ])("leaves the workspace unchanged when $name rejects", async ({ patch, error }) => {
+    await withTempDir(async (dir) => {
+      await fs.writeFile(path.join(dir, "important.txt"), "irreplaceable\n");
+
+      await expect(applyPatch(patch, { cwd: dir })).rejects.toThrow(error);
+
+      expect(await fs.readdir(dir)).toEqual(["important.txt"]);
+      expect(await fs.readFile(path.join(dir, "important.txt"), "utf8")).toBe("irreplaceable\n");
+    });
+  });
+
+  it("updates files that earlier hunks in the same patch add or change", async () => {
+    const memory = createMemoryPatchSandbox({ "notes.txt": "one\n" });
+    const patch = `*** Begin Patch
+*** Add File: created.txt
++draft
+*** Update File: created.txt
+@@
+-draft
++final
+*** Update File: notes.txt
+@@
+-one
++two
+*** Update File: notes.txt
+*** Move to: moved.txt
+@@
+-two
++three
+*** End Patch`;
+
+    await applyPatch(patch, memory.options);
+
+    expect(Object.fromEntries(memory.files)).toEqual({
+      "/sandbox/created.txt": "final\n",
+      "/sandbox/moved.txt": "three\n",
+    });
   });
 
   it("rejects a move hunk that targets an existing file", async () => {

@@ -31,7 +31,6 @@ import { assertSandboxPath, markHostRootEscape } from "./sandbox-paths.js";
 import { resolveSandboxFileMutationQueueKey } from "./sandbox/file-mutation-identity.js";
 import {
   resolveFileMutationQueueKey,
-  withFileMutationQueueKeyResolution,
   withFileMutationQueueKeysResolution,
 } from "./sessions/tools/file-mutation-queue.js";
 
@@ -187,7 +186,99 @@ async function applyPatch(input: string, options: ApplyPatchOptions): Promise<Ap
     ...options,
     patchInputPaths: await resolvePatchInputPaths(parsed.hunks, options),
   };
+  // Targets resolve against the patch's initial filesystem snapshot, like its input paths.
+  const resolution = resolvePatchHunks(parsed.hunks, patchOptions);
+  // Hold every path the envelope touches for the whole run, so the preflight
+  // reads the same state the commit pass mutates.
+  return await withFileMutationQueueKeysResolution(
+    resolution.then((hunks) =>
+      hunks.flatMap(({ target, moveTarget }) =>
+        moveTarget ? [target.queueKey, moveTarget.queueKey] : [target.queueKey],
+      ),
+    ),
+    async () => {
+      const hunks = await resolution;
+      // Acquire only after queue admission, before the first read, so root I/O cannot
+      // reorder source calls. Retain the same owner across hunks.
+      const fileOps = await resolvePatchFileOps(patchOptions);
+      await preflightUpdateHunks(hunks, fileOps, patchOptions.signal);
+      return await commitPatchHunks(hunks, fileOps, patchOptions.signal);
+    },
+  );
+}
 
+type PatchTarget = Awaited<ReturnType<typeof resolvePatchPath>>;
+type ResolvedHunk = { hunk: Hunk; target: PatchTarget; moveTarget?: PatchTarget };
+
+async function resolvePatchHunks(
+  hunks: Hunk[],
+  options: ApplyPatchOptions,
+): Promise<ResolvedHunk[]> {
+  const resolved: ResolvedHunk[] = [];
+  for (const hunk of hunks) {
+    if (hunk.kind === "delete") {
+      const target = await resolvePatchPath(hunk.path, options, PATH_ALIAS_POLICIES.unlinkTarget);
+      resolved.push({ hunk, target });
+      continue;
+    }
+    const target = await resolvePatchPath(hunk.path, options);
+    const moveTarget =
+      hunk.kind === "update" && hunk.movePath
+        ? await resolvePatchPath(hunk.movePath, options)
+        : undefined;
+    resolved.push({ hunk, target, ...(moveTarget ? { moveTarget } : {}) });
+  }
+  return resolved;
+}
+
+/**
+ * Reject predictable update failures (missing file, context mismatch, invalid
+ * UTF-8) before any hunk mutates the workspace. Staged contents follow earlier
+ * adds and updates by physical identity; a path an earlier delete or move
+ * vacates is left to the commit pass, which stays authoritative.
+ */
+async function preflightUpdateHunks(
+  hunks: ResolvedHunk[],
+  fileOps: PatchFileOps,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  // undefined: read the file; null: state after an earlier hunk is not predicted.
+  const staged = new Map<string, string | null>();
+  for (const { hunk, target, moveTarget } of hunks) {
+    throwIfPatchAborted(signal);
+    if (hunk.kind !== "update") {
+      staged.set(target.queueKey, hunk.kind === "add" ? hunk.contents : null);
+      continue;
+    }
+    const current = staged.get(target.queueKey);
+    const applied =
+      current === null
+        ? null
+        : await applyUpdateHunk(
+            target.resolved,
+            hunk.chunks,
+            current === undefined ? fileOps : { readFile: async () => current },
+          );
+    if (moveTarget && moveTarget.queueKey !== target.queueKey) {
+      staged.set(target.queueKey, null);
+      staged.set(moveTarget.queueKey, applied);
+    } else {
+      staged.set(target.queueKey, applied);
+    }
+  }
+}
+
+function throwIfPatchAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) {
+    throw createAbortError("Aborted", { cause: signal.reason });
+  }
+}
+
+async function commitPatchHunks(
+  hunks: ResolvedHunk[],
+  fileOps: PatchFileOps,
+  signal: AbortSignal | undefined,
+): Promise<ApplyPatchResult> {
   const summary: ApplyPatchSummary = {
     added: [],
     modified: [],
@@ -199,99 +290,53 @@ async function applyPatch(input: string, options: ApplyPatchOptions): Promise<Ap
     deleted: new Set<string>(),
   };
   const noOpPaths = new Set<string>();
-  // Acquire only after queue admission, before the first read, so root I/O cannot
-  // reorder source calls or outlive a no-op. Retain the same owner across hunks.
-  let fileOpsPromise: Promise<PatchFileOps> | undefined;
-  const getFileOps = () => (fileOpsPromise ??= resolvePatchFileOps(patchOptions));
 
-  for (const hunk of parsed.hunks) {
-    if (patchOptions.signal?.aborted) {
-      throw createAbortError("Aborted");
-    }
+  for (const { hunk, target, moveTarget } of hunks) {
+    throwIfPatchAborted(signal);
 
     if (hunk.kind === "add") {
-      const targetResolution = resolvePatchPath(hunk.path, patchOptions);
-      await withFileMutationQueueKeyResolution(
-        targetResolution.then((target) => target.queueKey),
-        async () => {
-          const target = await targetResolution;
-          const fileOps = await getFileOps();
-          await ensureDir(target.resolved, fileOps);
-          await createPatchTarget({
-            target,
-            contents: hunk.contents,
-            ops: fileOps,
-            hint: `Use "*** Update File: ${target.display}" to change it, or delete it earlier in the same patch.`,
-          });
-        },
-      );
-      const target = await targetResolution;
+      await ensureDir(target.resolved, fileOps);
+      await createPatchTarget({
+        target,
+        contents: hunk.contents,
+        ops: fileOps,
+        hint: `Use "*** Update File: ${target.display}" to change it, or delete it earlier in the same patch.`,
+      });
       recordSummary(summary, seen, "added", target.display);
       continue;
     }
 
     if (hunk.kind === "delete") {
-      const targetResolution = resolvePatchPath(
-        hunk.path,
-        patchOptions,
-        PATH_ALIAS_POLICIES.unlinkTarget,
-      );
-      await withFileMutationQueueKeyResolution(
-        targetResolution.then((target) => target.queueKey),
-        async () => {
-          const target = await targetResolution;
-          const fileOps = await getFileOps();
-          await fileOps.remove(target.resolved);
-        },
-      );
-      const target = await targetResolution;
+      await fileOps.remove(target.resolved);
       recordSummary(summary, seen, "deleted", target.display);
       continue;
     }
 
-    const targetResolution = resolvePatchPath(hunk.path, patchOptions);
-    const moveTargetResolution = hunk.movePath
-      ? resolvePatchPath(hunk.movePath, patchOptions)
-      : undefined;
-    await withFileMutationQueueKeysResolution(
-      Promise.all([
-        targetResolution.then((target) => target.queueKey),
-        ...(moveTargetResolution
-          ? [moveTargetResolution.then((moveTarget) => moveTarget.queueKey)]
-          : []),
-      ]),
-      async () => {
-        const target = await targetResolution;
-        const moveTarget = moveTargetResolution ? await moveTargetResolution : undefined;
-        const fileOps = await getFileOps();
-        const applied = await applyUpdateHunk(target.resolved, hunk.chunks, fileOps);
-
-        if (hunk.movePath && moveTarget) {
-          await ensureDir(moveTarget.resolved, fileOps);
-        }
-        // Container aliases can name the same file; use the physical queue identity.
-        if (moveTarget && moveTarget.queueKey !== target.queueKey) {
-          noOpPaths.delete(target.display);
-          await createPatchTarget({
-            target: moveTarget,
-            contents: applied,
-            ops: fileOps,
-            hint: "Delete it earlier in the same patch to replace it.",
-          });
-          await fileOps.remove(target.resolved);
-          recordSummary(summary, seen, "modified", moveTarget.display);
-          return;
-        }
-        const existing = await fileOps.readFile(target.resolved);
-        if (normalizeUpdateComparison(existing) === normalizeUpdateComparison(applied)) {
-          noOpPaths.add(target.display);
-        } else {
-          noOpPaths.delete(target.display);
-          await fileOps.writeFile(target.resolved, applied);
-          recordSummary(summary, seen, "modified", target.display);
-        }
-      },
-    );
+    const applied = await applyUpdateHunk(target.resolved, hunk.chunks, fileOps);
+    if (moveTarget) {
+      await ensureDir(moveTarget.resolved, fileOps);
+    }
+    // Container aliases can name the same file; use the physical queue identity.
+    if (moveTarget && moveTarget.queueKey !== target.queueKey) {
+      noOpPaths.delete(target.display);
+      await createPatchTarget({
+        target: moveTarget,
+        contents: applied,
+        ops: fileOps,
+        hint: "Delete it earlier in the same patch to replace it.",
+      });
+      await fileOps.remove(target.resolved);
+      recordSummary(summary, seen, "modified", moveTarget.display);
+      continue;
+    }
+    const existing = await fileOps.readFile(target.resolved);
+    if (normalizeUpdateComparison(existing) === normalizeUpdateComparison(applied)) {
+      noOpPaths.add(target.display);
+    } else {
+      noOpPaths.delete(target.display);
+      await fileOps.writeFile(target.resolved, applied);
+      recordSummary(summary, seen, "modified", target.display);
+    }
   }
 
   const noOp = noOpPaths.size > 0 && Object.values(summary).every((paths) => paths.length === 0);
