@@ -202,33 +202,78 @@ async function applyPatch(input: string, options: ApplyPatchOptions): Promise<Ap
       // reorder source calls. Retain the same owner across hunks.
       const fileOps = await resolvePatchFileOps(patchOptions);
       await preflightUpdateHunks(hunks, fileOps, patchOptions.signal);
-      return await commitPatchHunks(hunks, fileOps, patchOptions.signal);
+      return await commitPatchHunks(hunks, fileOps, patchOptions);
     },
   );
 }
 
 type PatchTarget = Awaited<ReturnType<typeof resolvePatchPath>>;
-type ResolvedHunk = { hunk: Hunk; target: PatchTarget; moveTarget?: PatchTarget };
+type ResolvedHunk = {
+  hunk: Hunk;
+  target: PatchTarget;
+  moveTarget?: PatchTarget;
+  /** A target an earlier hunk vacates; strict admission repeats in commit order. */
+  readmit?: true;
+};
 
 async function resolvePatchHunks(
   hunks: Hunk[],
   options: ApplyPatchOptions,
 ): Promise<ResolvedHunk[]> {
   const resolved: ResolvedHunk[] = [];
+  // Queue identities an earlier delete or move unlinks.
+  const vacated = new Set<string>();
   for (const hunk of hunks) {
     if (hunk.kind === "delete") {
       const target = await resolvePatchPath(hunk.path, options, PATH_ALIAS_POLICIES.unlinkTarget);
+      vacated.add(target.queueKey);
       resolved.push({ hunk, target });
       continue;
     }
-    const target = await resolvePatchPath(hunk.path, options);
+    const target = await resolveOrderedPatchPath(hunk.path, options, vacated);
     const moveTarget =
       hunk.kind === "update" && hunk.movePath
-        ? await resolvePatchPath(hunk.movePath, options)
+        ? await resolveOrderedPatchPath(hunk.movePath, options, vacated)
         : undefined;
-    resolved.push({ hunk, target, ...(moveTarget ? { moveTarget } : {}) });
+    if (moveTarget && moveTarget.target.queueKey !== target.target.queueKey) {
+      vacated.add(target.target.queueKey);
+    }
+    resolved.push({
+      hunk,
+      target: target.target,
+      ...(moveTarget ? { moveTarget: moveTarget.target } : {}),
+      ...(target.readmit || moveTarget?.readmit ? { readmit: true } : {}),
+    });
   }
   return resolved;
+}
+
+/**
+ * Strict admission sees the snapshot, so a final link that an earlier hunk
+ * unlinks (for example `Delete File: link` then `Add File: link`) would still
+ * reject here. Hold that path's identity now; the commit pass repeats strict
+ * admission once the earlier hunk has run, so the link target is never used.
+ */
+async function resolveOrderedPatchPath(
+  rawFilePath: string,
+  options: ApplyPatchOptions,
+  vacated: ReadonlySet<string>,
+): Promise<{ target: PatchTarget; readmit?: true }> {
+  try {
+    return { target: await resolvePatchPath(rawFilePath, options) };
+  } catch (error) {
+    if (vacated.size > 0) {
+      const unlinked = await resolvePatchPath(
+        rawFilePath,
+        options,
+        PATH_ALIAS_POLICIES.unlinkTarget,
+      ).catch(() => undefined);
+      if (unlinked && vacated.has(unlinked.queueKey)) {
+        return { target: unlinked, readmit: true };
+      }
+    }
+    throw error;
+  }
 }
 
 /**
@@ -277,7 +322,7 @@ function throwIfPatchAborted(signal: AbortSignal | undefined) {
 async function commitPatchHunks(
   hunks: ResolvedHunk[],
   fileOps: PatchFileOps,
-  signal: AbortSignal | undefined,
+  options: ApplyPatchOptions,
 ): Promise<ApplyPatchResult> {
   const summary: ApplyPatchSummary = {
     added: [],
@@ -291,8 +336,10 @@ async function commitPatchHunks(
   };
   const noOpPaths = new Set<string>();
 
-  for (const { hunk, target, moveTarget } of hunks) {
-    throwIfPatchAborted(signal);
+  for (const entry of hunks) {
+    throwIfPatchAborted(options.signal);
+    const { hunk } = entry;
+    const { target, moveTarget } = entry.readmit ? await readmitPatchHunk(hunk, options) : entry;
 
     if (hunk.kind === "add") {
       await ensureDir(target.resolved, fileOps);
@@ -344,6 +391,18 @@ async function commitPatchHunks(
     summary,
     text: noOp ? `No changes made to ${Array.from(noOpPaths).join(", ")}.` : formatSummary(summary),
     ...(noOp ? { noOp: true } : {}),
+  };
+}
+
+async function readmitPatchHunk(
+  hunk: Hunk,
+  options: ApplyPatchOptions,
+): Promise<{ target: PatchTarget; moveTarget?: PatchTarget }> {
+  return {
+    target: await resolvePatchPath(hunk.path, options),
+    ...(hunk.kind === "update" && hunk.movePath
+      ? { moveTarget: await resolvePatchPath(hunk.movePath, options) }
+      : {}),
   };
 }
 

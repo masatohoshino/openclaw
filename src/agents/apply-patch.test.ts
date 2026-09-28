@@ -844,6 +844,49 @@ describe("applyPatch", () => {
     });
   });
 
+  it.runIf(process.platform !== "win32")(
+    "replaces an outside symlink that the same patch deletes first",
+    async () => {
+      await withTempDir(async (dir) => {
+        const outsideDir = await fs.mkdtemp(
+          path.join(path.dirname(dir), "openclaw-patch-outside-"),
+        );
+        try {
+          const outsideTarget = path.join(outsideDir, "target.txt");
+          await fs.writeFile(outsideTarget, "keep\n", "utf8");
+          const link = path.join(dir, "link.txt");
+          await fs.symlink(outsideTarget, link);
+          const input = `*** Begin Patch
+*** Delete File: link.txt
+*** Add File: link.txt
++draft
+*** Update File: link.txt
+@@
+-draft
++final
+*** End Patch`;
+
+          const result = await createApplyPatchTool({ cwd: dir }).execute(
+            "call-replace-link",
+            { input },
+            undefined,
+          );
+
+          expect(result.details.summary).toEqual({
+            added: ["link.txt"],
+            modified: ["link.txt"],
+            deleted: ["link.txt"],
+          });
+          expect((await fs.lstat(link)).isFile()).toBe(true);
+          await expect(fs.readFile(link, "utf8")).resolves.toBe("final\n");
+          await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("keep\n");
+        } finally {
+          await fs.rm(outsideDir, { recursive: true, force: true });
+        }
+      });
+    },
+  );
+
   it("rejects move targets whose parent path is a symlink outside cwd", async () => {
     if (process.platform === "win32") {
       return;
