@@ -3,6 +3,8 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-events.js";
+import { formatErrorMessage } from "../../infra/errors.js";
 import { withBeforeAgentReplyObserver } from "../../plugins/before-agent-reply.js";
 import { getGatewayContextResolver } from "../../plugins/runtime/gateway-request-scope.js";
 import { readPendingUserTurnTranscriptAdmission } from "../../sessions/user-turn-transcript-admission.js";
@@ -15,7 +17,10 @@ import {
   type RunReplyAgentParams,
 } from "./agent-runner-core.js";
 import { executeAgentTurn } from "./agent-runner-execution.js";
-import { markPostCompactionModelFailurePayload } from "./agent-runner-failure-reply.js";
+import {
+  buildPreflightCompactionFailureText,
+  markPostCompactionModelFailurePayload,
+} from "./agent-runner-failure-reply.js";
 import { runMemoryFlushIfNeeded, runSessionCompactionIfNeeded } from "./agent-runner-memory.js";
 import { accountAgentTurnCompaction } from "./agent-runner-result-accounting.js";
 import { finalizeReplyAgentRun } from "./agent-runner-result.js";
@@ -153,6 +158,26 @@ export async function executePreparedReplyAgentRun(
     return flushed.sessionEntry;
   };
 
+  // A failed required compaction answers with the "Context is too large" reply before
+  // admission. Keep only the user's transcript entry (no recovery claim), as chat.send
+  // does for returned errors, and only while this run still holds its source authority.
+  const persistUserTurnAfterFailedPreflight = async (error: unknown) => {
+    const recorder = followupRun.userTurnTranscriptRecorder;
+    if (!recorder || buildPreflightCompactionFailureText(formatErrorMessage(error)) === null) {
+      return;
+    }
+    try {
+      replyOperation.abortSignal.throwIfAborted();
+      followupRun.operatorAuthority?.assertCurrent();
+      if (replyOperation.lifecycleGeneration) {
+        assertAgentRunLifecycleGenerationCurrent(replyOperation.lifecycleGeneration);
+      }
+      await recorder.persistApproved({ expectedSessionId: replyOperation.sessionId });
+    } catch (persistError) {
+      logVerbose(`user turn not kept after failed preflight: ${formatErrorMessage(persistError)}`);
+    }
+  };
+
   const prePreflightCompactionCount = activeSessionEntry?.compactionCount ?? 0;
   try {
     activeSessionEntry = await traceAgentPhase("reply.preflight_compaction", () =>
@@ -170,18 +195,7 @@ export async function executePreparedReplyAgentRun(
       }),
     );
   } catch (error) {
-    // The run fails before admission, yet the user sent this turn: record only its
-    // transcript entry (no recovery claim), as chat.send does for returned errors.
-    const recorder = followupRun.userTurnTranscriptRecorder;
-    if (recorder && !replyOperation.abortSignal.aborted) {
-      await recorder
-        .persistApproved({ expectedSessionId: replyOperation.sessionId })
-        .catch((persistError: unknown) =>
-          logVerbose(
-            `user turn persistence after failed preflight failed: ${String(persistError)}`,
-          ),
-        );
-    }
+    await persistUserTurnAfterFailedPreflight(error);
     throw error;
   }
   setActiveSessionEntry(activeSessionEntry);

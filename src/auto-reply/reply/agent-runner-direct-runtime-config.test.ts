@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { createAdmittedRunOperatorAuthority } from "../../agents/admitted-run-context.js";
 import { OAuthRefreshFailureError } from "../../agents/auth-profiles/oauth-refresh-failure.js";
 import { FailoverError } from "../../agents/failover-error.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
@@ -767,41 +768,61 @@ describe("runReplyAgent runtime config", () => {
     expect(metadata?.deliverDespiteSourceReplySuppression).toBe(true);
   });
 
-  it("keeps the channel user turn in the transcript when required preflight fails", async () => {
-    await withTestDir({ prefix: "openclaw-preflight-user-turn-" }, async (tempDir) => {
-      const { replyParams, followupRun } = createDirectRuntimeReplyParams();
-      const sessionKey = "agent:main:telegram:default:direct:test";
-      const sessionEntry: SessionEntry = { sessionId: "session-1", updatedAt: 1 };
-      const storePath = join(tempDir, "sessions.json");
-      const scope = { agentId: "main", sessionId: sessionEntry.sessionId, sessionKey, storePath };
-      await replaceSessionEntry(scope, sessionEntry);
-      await appendTranscriptMessage(scope, { message: { role: "user", content: "earlier" } });
-      followupRun.userTurnTranscriptRecorder = createUserTurnTranscriptRecorder({
-        input: { text: "the turn that hit the failed preflight", idempotencyKey: "source-1" },
-        target: { ...scope, sessionEntry, cwd: tempDir, config: {} },
-      });
-      replyParams.sessionKey = sessionKey;
-      replyParams.storePath = storePath;
-      replyParams.sessionEntry = sessionEntry;
-      replyParams.sessionStore = { [sessionKey]: sessionEntry };
-      runSessionCompactionIfNeededMock.mockRejectedValue(
-        new Error("Preflight compaction required but failed: summarization_failed"),
-      );
+  it.each([
+    { source: "current", kept: true },
+    { source: "revoked during preflight", kept: false },
+  ])(
+    "keeps the user turn after a failed required preflight only for a $source source",
+    async ({ kept }) => {
+      await withTestDir({ prefix: "openclaw-preflight-user-turn-" }, async (tempDir) => {
+        const { replyParams, followupRun } = createDirectRuntimeReplyParams();
+        const sessionKey = "agent:main:telegram:default:direct:test";
+        const sessionEntry: SessionEntry = { sessionId: "session-1", updatedAt: 1 };
+        const storePath = join(tempDir, "sessions.json");
+        const scope = { agentId: "main", sessionId: sessionEntry.sessionId, sessionKey, storePath };
+        await replaceSessionEntry(scope, sessionEntry);
+        await appendTranscriptMessage(scope, { message: { role: "user", content: "earlier" } });
+        followupRun.userTurnTranscriptRecorder = createUserTurnTranscriptRecorder({
+          input: { text: "the turn that hit the failed preflight", idempotencyKey: "source-1" },
+          target: { ...scope, sessionEntry, cwd: tempDir, config: {} },
+        });
+        let revoked = false;
+        followupRun.operatorAuthority = createAdmittedRunOperatorAuthority({
+          profileId: "linked-admin",
+          scopes: ["operator.admin"],
+          gatewayAccessGrant: null,
+          source: {},
+          assertCurrent: () => {
+            if (revoked) {
+              throw new Error("operator access revoked");
+            }
+          },
+        });
+        replyParams.sessionKey = sessionKey;
+        replyParams.storePath = storePath;
+        replyParams.sessionEntry = sessionEntry;
+        replyParams.sessionStore = { [sessionKey]: sessionEntry };
+        runSessionCompactionIfNeededMock.mockImplementation(async () => {
+          revoked = !kept;
+          throw new Error("Preflight compaction required but failed: summarization_failed");
+        });
 
-      const result = await runReplyAgent(replyParams);
+        const result = await runReplyAgent(replyParams);
 
-      expect(result).toMatchObject({ text: expect.stringContaining("Context is too large") });
-      expect(executeAgentTurnMock).not.toHaveBeenCalled();
-      expect(SessionManager.open(scope).buildSessionContext().messages).toEqual([
-        expect.objectContaining({ role: "user", content: "earlier" }),
-        expect.objectContaining({
+        expect(result).toMatchObject({ text: expect.stringContaining("Context is too large") });
+        expect(executeAgentTurnMock).not.toHaveBeenCalled();
+        const failedTurn = expect.objectContaining({
           role: "user",
           content: "the turn that hit the failed preflight",
           idempotencyKey: "source-1",
-        }),
-      ]);
-    });
-  });
+        });
+        expect(SessionManager.open(scope).buildSessionContext().messages).toEqual([
+          expect.objectContaining({ role: "user", content: "earlier" }),
+          ...(kept ? [failedTurn] : []),
+        ]);
+      });
+    },
+  );
 
   it("does not resolve secrets before the enqueue-followup queue path", async () => {
     const { followupRun, resolvedQueue, replyParams } = createDirectRuntimeReplyParams({
