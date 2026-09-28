@@ -1,0 +1,23 @@
+# upgrade compatibility: one isolated state dir, loopback Gateway on port 19521, memory.search.provider=none (FTS), synthetic memory files
+# base build (merge base da2bcd699bc) creates and updates the memory index, then stops; branch build (8d436a6cf14) starts on the same state
+# searches go through the Gateway's /tools/invoke memory_search; status is 'openclaw memory status --json'
+== base: OpenClaw 2026.9.6 (da2bcd6)
+== Gateway health: {"ok":true,"status":"live"}
+memory status: files=0 chunks=0 dirty=True provider=none indexIdentity=missing automaticRebuildSeq=0
+Gateway memory_search "amber-lantern-42": ['MEMORY.md']
+Gateway memory_search "teal-harbor-17": ['memory/2026-09-27.md']
+Gateway memory_search "violet-anchor-8": ['memory/2026-09-27.md']
+== append memory note: copper-ridge-5
+memory status: files=3 chunks=3 dirty=False provider=none indexIdentity=valid automaticRebuildSeq=0
+Gateway memory_search "copper-ridge-5": ['memory/2026-09-28.md']
+== stop Gateway (SIGTERM)
+== branch: OpenClaw 2026.9.6 (8d436a6)
+== Gateway health: {"ok":true,"status":"live"}
+memory status: files=3 chunks=3 dirty=False provider=none indexIdentity=valid automaticRebuildSeq=0
+Gateway memory_search "amber-lantern-42": ['MEMORY.md']
+Gateway memory_search "teal-harbor-17": ['memory/2026-09-27.md']
+Gateway memory_search "violet-anchor-8": ['memory/2026-09-27.md']
+== append memory note: sage-meadow-9
+memory status: files=3 chunks=3 dirty=False provider=none indexIdentity=valid automaticRebuildSeq=0
+Gateway memory_search "sage-meadow-9": ['memory/2026-09-28.md']
+== stop Gateway (SIGTERM)
