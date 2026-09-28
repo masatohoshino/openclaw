@@ -16,6 +16,7 @@ import {
   clearMemoryPluginState,
   registerMemoryCapability,
 } from "../../plugins/memory-state.test-fixtures.js";
+import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import { withReplyDispatcher } from "../dispatch-dispatcher.js";
 import { getReplyPayloadMetadata } from "../reply-payload.js";
@@ -764,6 +765,42 @@ describe("runReplyAgent runtime config", () => {
     expect(result.text).toContain("/new");
     const metadata = getReplyPayloadMetadata(result);
     expect(metadata?.deliverDespiteSourceReplySuppression).toBe(true);
+  });
+
+  it("keeps the channel user turn in the transcript when required preflight fails", async () => {
+    await withTestDir({ prefix: "openclaw-preflight-user-turn-" }, async (tempDir) => {
+      const { replyParams, followupRun } = createDirectRuntimeReplyParams();
+      const sessionKey = "agent:main:telegram:default:direct:test";
+      const sessionEntry: SessionEntry = { sessionId: "session-1", updatedAt: 1 };
+      const storePath = join(tempDir, "sessions.json");
+      const scope = { agentId: "main", sessionId: sessionEntry.sessionId, sessionKey, storePath };
+      await replaceSessionEntry(scope, sessionEntry);
+      await appendTranscriptMessage(scope, { message: { role: "user", content: "earlier" } });
+      followupRun.userTurnTranscriptRecorder = createUserTurnTranscriptRecorder({
+        input: { text: "the turn that hit the failed preflight", idempotencyKey: "source-1" },
+        target: { ...scope, sessionEntry, cwd: tempDir, config: {} },
+      });
+      replyParams.sessionKey = sessionKey;
+      replyParams.storePath = storePath;
+      replyParams.sessionEntry = sessionEntry;
+      replyParams.sessionStore = { [sessionKey]: sessionEntry };
+      runSessionCompactionIfNeededMock.mockRejectedValue(
+        new Error("Preflight compaction required but failed: summarization_failed"),
+      );
+
+      const result = await runReplyAgent(replyParams);
+
+      expect(result).toMatchObject({ text: expect.stringContaining("Context is too large") });
+      expect(executeAgentTurnMock).not.toHaveBeenCalled();
+      expect(SessionManager.open(scope).buildSessionContext().messages).toEqual([
+        expect.objectContaining({ role: "user", content: "earlier" }),
+        expect.objectContaining({
+          role: "user",
+          content: "the turn that hit the failed preflight",
+          idempotencyKey: "source-1",
+        }),
+      ]);
+    });
   });
 
   it("does not resolve secrets before the enqueue-followup queue path", async () => {

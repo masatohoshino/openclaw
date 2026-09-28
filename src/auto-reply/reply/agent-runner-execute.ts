@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { logVerbose } from "../../globals.js";
 import { withBeforeAgentReplyObserver } from "../../plugins/before-agent-reply.js";
 import { getGatewayContextResolver } from "../../plugins/runtime/gateway-request-scope.js";
 import { readPendingUserTurnTranscriptAdmission } from "../../sessions/user-turn-transcript-admission.js";
@@ -153,20 +154,36 @@ export async function executePreparedReplyAgentRun(
   };
 
   const prePreflightCompactionCount = activeSessionEntry?.compactionCount ?? 0;
-  activeSessionEntry = await traceAgentPhase("reply.preflight_compaction", () =>
-    runSessionCompactionIfNeeded({
-      ...context,
-      pendingUserEntryId: preflightAdmission?.entryId,
-      promptForEstimate: followupRun.prompt,
-      sessionEntry: activeSessionEntry,
-      sessionStore: activeSessionStore,
-      abortSignal: replyOperation.abortSignal,
-      beforeCompaction: checkpointMemory,
-      onCompactionStart: () => replyOperation.setPhase("preflight_compacting"),
-      onSessionIdChanged: (sessionId) => replyOperation.updateSessionId(sessionId),
-      onCompactionNotice: sendDirectCompactionNotice,
-    }),
-  );
+  try {
+    activeSessionEntry = await traceAgentPhase("reply.preflight_compaction", () =>
+      runSessionCompactionIfNeeded({
+        ...context,
+        pendingUserEntryId: preflightAdmission?.entryId,
+        promptForEstimate: followupRun.prompt,
+        sessionEntry: activeSessionEntry,
+        sessionStore: activeSessionStore,
+        abortSignal: replyOperation.abortSignal,
+        beforeCompaction: checkpointMemory,
+        onCompactionStart: () => replyOperation.setPhase("preflight_compacting"),
+        onSessionIdChanged: (sessionId) => replyOperation.updateSessionId(sessionId),
+        onCompactionNotice: sendDirectCompactionNotice,
+      }),
+    );
+  } catch (error) {
+    // The run fails before admission, yet the user sent this turn: record only its
+    // transcript entry (no recovery claim), as chat.send does for returned errors.
+    const recorder = followupRun.userTurnTranscriptRecorder;
+    if (recorder && !replyOperation.abortSignal.aborted) {
+      await recorder
+        .persistApproved({ expectedSessionId: replyOperation.sessionId })
+        .catch((persistError: unknown) =>
+          logVerbose(
+            `user turn persistence after failed preflight failed: ${String(persistError)}`,
+          ),
+        );
+    }
+    throw error;
+  }
   setActiveSessionEntry(activeSessionEntry);
   const preflightCompactionApplied =
     (activeSessionEntry?.compactionCount ?? 0) > prePreflightCompactionCount;
