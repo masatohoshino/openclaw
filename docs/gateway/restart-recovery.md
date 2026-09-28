@@ -768,7 +768,15 @@ For pre-June installations, use the [bridge upgrade procedure](/install/updating
   When the breaker is tripped, the **control plane still starts**, but channel
   plugins (and other auto-started side services) stay down until an operator
   manually overrides the suppression or the full window drains with no unclean
-  boots. Recovery preserves channels that an operator manually stopped and any
+  boots.
+
+  A tripped breaker also pauses automatic main-session restart recovery for
+  that boot. A turn that starts before each crash refreshes its retry allowance,
+  so replaying it would restart the crash loop. Interrupted sessions stay marked
+  and keep their transcripts. A new message in such a session resumes its
+  interrupted turn, and the first Gateway start after the breaker recovers
+  resumes the rest. The log reads `restart-loop breaker tripped; automatic
+main-session restart recovery paused`. Recovery preserves channels that an operator manually stopped and any
   separate development-mode suppression. Gateway logs look like:
   `channel autostart suppressed by crash-loop breaker; refusing automatic
 start for <channel>… Start a channel manually with: openclaw gateway call
@@ -805,7 +813,9 @@ channels.start --params '{"channel":"<id>"}'`
   vs channel-autostart split.
 
 - **Main-session attempt budget:** three charged automatic dispatch attempts
-  per interrupted cycle. Exhaustion tombstones that session until it is
+  per interrupted cycle. A turn that reaches its runtime refreshes this
+  allowance; the crash-loop breaker above contains turns that crash the Gateway
+  after they start. Exhaustion tombstones that session until it is
   inspected and replaced.
 - **Metrics:** recovery activity is exported via
   [Prometheus](/gateway/prometheus) as `openclaw_session_recovery_total` and

@@ -39,6 +39,7 @@ import type { refreshLatestUpdateRestartSentinel } from "./server-restart-sentin
 import type { GatewaySidecarStartupMode } from "./server-sidecar-startup-mode.js";
 import { scheduleGatewayHandlerPrewarm } from "./server-startup-handler-prewarm.js";
 import type { logGatewayStartup } from "./server-startup-log.js";
+import { scheduleStartupMainSessionRecovery } from "./server-startup-main-session-recovery.js";
 import {
   hydrateConfiguredExternalCliAuth,
   publishConfiguredModelRuntimeSnapshots,
@@ -71,9 +72,6 @@ const ACP_BACKEND_READY_TIMEOUT_MS = 5_000;
 const ACP_BACKEND_READY_POLL_MS = 50;
 type Awaitable<T> = T | Promise<T>;
 
-const loadMainSessionRestartRecoveryModule = createLazyRuntimeModule(
-  () => import("../agents/main-session-recovery/main-session-restart-recovery.js"),
-);
 // Startup only needs orphan marking; keep resume and delivery runtime out of the pre-channel path.
 const loadMainSessionRestartRecoveryMarkingModule = createLazyRuntimeModule(
   () => import("../agents/main-session-recovery/main-session-restart-recovery-marking.js"),
@@ -649,6 +647,8 @@ export async function startGatewayPostAttachRuntime(
     startChannels: () => Promise<void>;
     refreshChatMetadata?: () => Promise<void>;
     recoveryRuntime: GatewayRecoveryRuntime;
+    /** This boot started with the crash-loop breaker tripped. */
+    crashLoopBreakerTripped?: boolean;
     resolveGatewayContext: GatewayContextResolver;
     logHooks: {
       info: (msg: string) => void;
@@ -970,27 +970,19 @@ export async function startGatewayPostAttachRuntime(
                 loaderStatsBefore.sourceTransformFallbacks,
             ],
           ]);
-          let mainSessionRecoverySidecar: GatewayPostReadySidecarHandle | undefined;
           await startupLog;
           if (params.isClosing?.()) {
             return pluginRegistry;
           }
-          try {
-            const { scheduleRestartAbortedMainSessionRecovery } =
-              await loadMainSessionRestartRecoveryModule();
-            if (params.isClosing?.() !== true) {
-              mainSessionRecoverySidecar = scheduleRestartAbortedMainSessionRecovery({
-                delayMs: 0,
-                getConfig: params.getConfig,
-                shouldContinue: () => params.isClosing?.() !== true,
-                startupCheckedStorePaths: mainSessionRecoveryStartupCheckedStorePaths,
-                waitForStart: params.waitForPostReadyWork,
-                gatewayRuntime: params.recoveryRuntime,
-              });
-            }
-          } catch (err) {
-            params.log.warn(`main-session restart recovery failed to schedule: ${String(err)}`);
-          }
+          const mainSessionRecoverySidecar = await scheduleStartupMainSessionRecovery({
+            crashLoopBreakerTripped: params.crashLoopBreakerTripped,
+            getConfig: params.getConfig,
+            isClosing: params.isClosing,
+            log: params.log,
+            recoveryRuntime: params.recoveryRuntime,
+            startupCheckedStorePaths: mainSessionRecoveryStartupCheckedStorePaths,
+            waitForPostReadyWork: params.waitForPostReadyWork,
+          });
           if (params.isClosing?.()) {
             if (mainSessionRecoverySidecar) {
               params.onGatewayLifetimeSidecars(mainSessionRecoverySidecar);
