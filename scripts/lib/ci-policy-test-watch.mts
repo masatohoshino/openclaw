@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
 import { isPlainRepoRelativePath } from "../../test/vitest/vitest.include-patterns.ts";
+import { isTestFileTarget } from "./changed-path-facts.mjs";
+import { UI_E2E_OWNER_WATCHES } from "./ci-ui-e2e-owner-inventory.mts";
 
 type PolicyTestWatch = {
   ownerGlobs?: readonly string[];
+  sourceOnly?: boolean;
   testFile: string;
   watchGlobs: readonly string[];
 };
@@ -12,7 +15,46 @@ type PolicyTestWatch = {
 // they enforce. Boundary and contract suites have dedicated always-on lanes;
 // this inventory covers the remaining tests that changed targeting cannot
 // discover from imports alone.
-const policyTestWatches = [
+const policyTestWatches: readonly PolicyTestWatch[] = [
+  // Browser-served route owners are not imports of the Playwright entry point.
+  ...UI_E2E_OWNER_WATCHES.map(({ testFile, watchGlobs }): PolicyTestWatch => ({
+    testFile,
+    watchGlobs,
+    sourceOnly: true,
+  })),
+  // New or removed modules and new import edges can escape a static inventory.
+  // Watch source edits conservatively: the absent inventory entry cannot own its guard.
+  ...[
+    "test/scripts/pr-wrapper-source-closure.test.ts",
+    "test/scripts/pr-worktree-provision.test.ts",
+    "test/scripts/eager-import-closure.test.ts",
+    "test/scripts/update-restart-module-outcome.test.ts",
+    "test/scripts/type-suppression-inventory.test.ts",
+    "test/scripts/plugin-sdk-surface-report.test.ts",
+  ].map((testFile): PolicyTestWatch => ({
+    testFile,
+    sourceOnly: true,
+    watchGlobs: ["{src,extensions,packages,scripts,ui/src}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
+  })),
+  {
+    testFile: "test/vitest-pr-exempt-retention.test.ts",
+    watchGlobs: [
+      ".github/workflows/ci.yml",
+      ".github/workflows/full-release-validation.yml",
+      ".github/workflows/plugin-prerelease.yml",
+      "scripts/ci-*.{mjs,mts}",
+      "scripts/lib/ci-*.{mjs,mts}",
+      "scripts/lib/extension-test-plan.mts",
+      "scripts/lib/list-test-files.mts",
+      "scripts/lib/test-selector-source-facts.mts",
+      "scripts/lib/test-source-term-matcher.mts",
+      "scripts/test-projects.test-support.mts",
+      "test/scripts/ci-changed-node-test-plan*.test.ts",
+      "test/vitest/**",
+      "ui/vitest.config.ts",
+      "vitest.config.ts",
+    ],
+  },
   // These owner contracts enter production through fixture adapters or a facade.
   {
     testFile: "src/agents/agent-bundle-mcp-reload.test.ts",
@@ -360,7 +402,6 @@ const policyTestWatches = [
   ...[
     "src/agents/worktrees/empty-source.test.ts",
     "src/agents/worktrees/service.remove-lease.test.ts",
-    "src/agents/worktrees/service.run-end-cleanup.test.ts",
     "src/agents/worktrees/service.snapshot-index.test.ts",
     "src/agents/worktrees/service.test.ts",
   ].map((testFile): PolicyTestWatch => ({
@@ -1386,6 +1427,13 @@ const policyTestWatches = [
     ],
   },
   {
+    testFile: "src/commands/doctor-lint.native-capture.test.ts",
+    watchGlobs: [
+      "src/commands/doctor-lint.native-capture.test-support.ts",
+      "src/cli/run-main-plugin-cache.ts",
+    ],
+  },
+  {
     testFile: "src/gateway/server.models-native-retirement.test.ts",
     watchGlobs: ["extensions/xai/openclaw.plugin.json"],
   },
@@ -2028,7 +2076,7 @@ const policyTestWatches = [
       "src/agents/sandbox/ssh-backend.ts",
     ],
   },
-] satisfies readonly PolicyTestWatch[];
+];
 
 const literalPolicyPatterns = new Set(
   policyTestWatches
@@ -2052,9 +2100,10 @@ export function resolvePolicyTestTargets(
     literal: isPlainRepoRelativePath(changedPath),
   }));
   return policyTestWatches
-    .filter(({ watchGlobs, ownerGlobs }) =>
+    .filter(({ watchGlobs, ownerGlobs, sourceOnly }) =>
       paths.some(
         ({ changedPath, literal }) =>
+          (!sourceOnly || !isTestFileTarget(changedPath)) &&
           watchGlobs.some((watchGlob) => matchesPolicyPattern(changedPath, watchGlob, literal)) &&
           (!options.completeOwnersOnly ||
             ownerGlobs?.some((ownerGlob) => matchesPolicyPattern(changedPath, ownerGlob, literal))),
