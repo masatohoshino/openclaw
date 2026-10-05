@@ -238,6 +238,44 @@ describe("applyPatch preflight", () => {
     });
   });
 
+  it.each([
+    {
+      name: "updates the other name with contents written through the first",
+      hunks: "*** Update File: alias.txt\n@@\n-two\n+three",
+      files: { "alias.txt": "three\n", "original.txt": "three\n" },
+    },
+    {
+      name: "updates the other name after deleting the first",
+      hunks: "*** Delete File: original.txt\n*** Update File: alias.txt\n@@\n-two\n+three",
+      files: { "alias.txt": "three\n" },
+    },
+    {
+      name: "keeps the other name's contents when the first is moved away",
+      hunks: "*** Update File: alias.txt\n@@\n-one\n+kept",
+      move: "*** Move to: moved.txt\n",
+      files: { "alias.txt": "kept\n", "moved.txt": "two\n" },
+    },
+  ])("$name after an update through one name of a hardlink", async ({ hunks, move, files }) => {
+    await withTempDir(async (dir) => {
+      await fs.writeFile(path.join(dir, "original.txt"), "one\n", "utf8");
+      await fs.link(path.join(dir, "original.txt"), path.join(dir, "alias.txt"));
+
+      await createApplyPatchTool({ cwd: dir, workspaceOnly: false }).execute(
+        "call-update-hardlink",
+        {
+          input: `*** Begin Patch\n*** Update File: original.txt\n${move ?? ""}@@\n-one\n+two\n${hunks}\n*** End Patch`,
+        },
+        undefined,
+      );
+
+      const names = (await fs.readdir(dir)).toSorted();
+      const contents = await Promise.all(names.map((name) => fs.readFile(path.join(dir, name))));
+      expect(Object.fromEntries(names.map((name, i) => [name, contents[i]?.toString()]))).toEqual(
+        files,
+      );
+    });
+  });
+
   it("replaces a file with a directory that the same patch deletes first", async () => {
     await withTempDir(async (dir) => {
       await fs.writeFile(path.join(dir, "x"), "file\n", "utf8");

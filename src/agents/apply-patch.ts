@@ -192,6 +192,8 @@ type ResolvedHunk = {
   readmit?: true;
   /** The preflight cannot read the source before the commit pass admits it. */
   unread?: true;
+  /** Shared stage of an unrestricted host hardlink, whose names have separate queue keys. */
+  contentStage?: string;
 };
 
 type OrderedTarget = Pick<ResolvedHunk, "target" | "stage" | "keys" | "readmit" | "unread"> & {
@@ -254,6 +256,12 @@ async function resolvePatchHunks(
       unlinked.push(source);
       target.keys.push(source.key);
     }
+    // Unrestricted host writes rewrite a file in place, so every hardlink name sees them;
+    // strict admission and the sandbox helpers refuse or split hardlinks instead.
+    const inode =
+      hunk.kind === "update" && !options.sandbox && options.workspaceOnly === false
+        ? hardlinkInode(await fs.stat(target.target.resolved).catch(() => undefined))
+        : undefined;
     resolved.push({
       hunk,
       target: target.target,
@@ -263,12 +271,14 @@ async function resolvePatchHunks(
       ...(moveTarget ? { moveTarget: moveTarget.target, moveStage: moveTarget.stage } : {}),
       ...(target.readmit || moveTarget?.readmit ? { readmit: true } : {}),
       ...(target.unread ? { unread: true } : {}),
+      ...(inode ? { contentStage: INODE_STAGE + inode } : {}),
     });
   }
   return resolved;
 }
 
 const PATH_STAGE = "\0path\0";
+const INODE_STAGE = "\0inode\0";
 
 /**
  * Queue identity follows a final symlink to the file it names, so a link and
@@ -468,12 +478,18 @@ async function preflightUpdateHunks(
 ): Promise<void> {
   // Absent: read the file; null: the commit pass admits and reads it first.
   const staged = new Map<string, string | null | typeof REMOVED>();
-  for (const { hunk, target, stage, moveStage, removesContents, unread } of hunks) {
+  for (const entry of hunks) {
     throwIfPatchAborted(signal);
+    const { hunk, target, moveStage, removesContents, unread } = entry;
     if (hunk.kind !== "update") {
-      staged.set(stage, hunk.kind === "add" ? hunk.contents : REMOVED);
+      staged.set(entry.stage, hunk.kind === "add" ? hunk.contents : REMOVED);
       continue;
     }
+    // A hardlink name shares its file's contents until this patch removes that name.
+    const stage =
+      entry.contentStage && !staged.has(entry.stage) && !entry.stage.startsWith(PATH_STAGE)
+        ? entry.contentStage
+        : entry.stage;
     const current = staged.has(stage)
       ? staged.get(stage)
       : stage.startsWith(PATH_STAGE)
@@ -500,9 +516,10 @@ async function preflightUpdateHunks(
             }
             throw error;
           });
-    if (moveStage !== undefined && moveStage !== stage) {
+    if (moveStage !== undefined && moveStage !== entry.stage) {
       if (removesContents) {
-        staged.set(stage, REMOVED);
+        // Moving one name away leaves the other names of a hardlink in place.
+        staged.set(entry.stage, REMOVED);
       }
       staged.set(moveStage, applied);
     } else {
