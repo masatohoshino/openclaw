@@ -1,0 +1,53 @@
+# setup: isolated state dir, loopback Gateway, published openclaw@2026.9.8 from npm + published @openclaw/llama-cpp-provider@2026.9.8,
+# managed llama.cpp embedding-only setup via 'openclaw models auth login --provider llama-cpp' (verified CPU build b10809, EmbeddingGemma), memory.search.provider=local, synthetic notes
+# 'stored index' = sha256 over memory_index_chunks (id, path, hash, model, embedding, updated_at), memory_embedding_cache and memory_index_meta rows, read-only
+== published: OpenClaw 2026.9.8 (fc23bc8)
+== Gateway health: {"ok":true,"status":"live"}
+memory status: files=0 chunks=0 dirty=True provider=local vector=empty cache=0 indexIdentity=missing automaticRebuildSeq=0
+stored index: none yet (first start; this Gateway creates the agent database)
+Gateway memory_search 'which fruit does the lighthouse keeper like' -> MEMORY.md vectorScore=0.666
+Gateway memory_search 'when is the greenhouse watered' -> memory/2026-10-05.md vectorScore=0.592
+Gateway memory_search 'how are parcels delivered' -> memory/2026-10-05.md vectorScore=0.536
+== append memory note (copper-ridge-5)
+memory status: files=2 chunks=2 dirty=False provider=local vector=complete/768d cache=3 indexIdentity=valid automaticRebuildSeq=0
+Gateway memory_search 'copper-ridge-5' -> memory/2026-10-05.md vectorScore=0.473
+== openclaw gateway restart --safe (in-process restart)
+safe restart requested; gateway will restart momentarily
+== Gateway health after the restart: {"ok":true,"status":"live"}
+Gateway memory_search 'which fruit does the lighthouse keeper like' -> MEMORY.md vectorScore=0.666
+== append memory note after the restart (sage-meadow-9)
+memory status: files=2 chunks=2 dirty=False provider=local vector=complete/768d cache=4 indexIdentity=valid automaticRebuildSeq=0
+Gateway memory_search 'sage-meadow-9' -> memory/2026-10-05.md vectorScore=0.465
+stored index: chunks=2 sha256:651a35f9cbe4e692  embedding-cache=4 sha256:7b7855882ab03fbe  meta=2 sha256:0de5645bd646ad35
+== memory sync failures in this Gateway's log:
+count=0
+== plugins loaded: http server listening (15 plugins: anthropic, browser, canvas, cua-computer, device-pair, file-transfer, geolocation, github, linux-node, llama-cpp, memory-core, ollama, openai, talk-voice, xai
+[provider-local-service] llama-cpp local service ready: 
+[gateway] restart mode: in-process restart (unmanaged: use in-process restart to keep custom supervisor PID tracking stable)
+== stop Gateway (SIGTERM)
+
+== upgrade the same install in place: npm install <candidate tarball> (packed from this branch)
+== candidate: OpenClaw 2026.9.8 (1640a33)
+== Gateway health: {"ok":true,"status":"live"}
+memory status: files=2 chunks=2 dirty=False provider=local vector=complete/768d cache=4 indexIdentity=valid automaticRebuildSeq=0
+stored index: chunks=2 sha256:651a35f9cbe4e692  embedding-cache=4 sha256:7b7855882ab03fbe  meta=2 sha256:0de5645bd646ad35
+Gateway memory_search 'which fruit does the lighthouse keeper like' -> MEMORY.md vectorScore=0.666
+Gateway memory_search 'when is the greenhouse watered' -> memory/2026-10-05.md vectorScore=0.513
+Gateway memory_search 'how are parcels delivered' -> memory/2026-10-05.md vectorScore=0.454
+== append memory note (lilac-ridge-1)
+memory status: files=2 chunks=2 dirty=False provider=local vector=complete/768d cache=5 indexIdentity=valid automaticRebuildSeq=0
+Gateway memory_search 'lilac-ridge-1' -> memory/2026-10-05.md vectorScore=0.486
+== openclaw gateway restart --safe (in-process restart)
+safe restart requested; gateway will restart momentarily
+== Gateway health after the restart: {"ok":true,"status":"live"}
+Gateway memory_search 'which fruit does the lighthouse keeper like' -> MEMORY.md vectorScore=0.666
+== append memory note after the restart (quartz-delta-3)
+memory status: files=2 chunks=2 dirty=False provider=local vector=complete/768d cache=6 indexIdentity=valid automaticRebuildSeq=0
+Gateway memory_search 'quartz-delta-3' -> memory/2026-10-05.md vectorScore=0.404
+stored index: chunks=2 sha256:4bab6a720f56d76f  embedding-cache=6 sha256:c4ae765e9471db3f  meta=2 sha256:0de5645bd646ad35
+== memory sync failures in this Gateway's log:
+count=0
+== plugins loaded: http server listening (15 plugins: anthropic, browser, canvas, cua-computer, device-pair, file-transfer, geolocation, github, linux-node, llama-cpp, memory-core, ollama, openai, talk-voice, xai
+[provider-local-service] llama-cpp local service ready: 
+[gateway] restart mode: in-process restart (unmanaged: use in-process restart to keep custom supervisor PID tracking stable)
+== stop Gateway (SIGTERM)
