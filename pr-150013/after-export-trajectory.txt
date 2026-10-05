@@ -1,0 +1,18 @@
+openclaw sessions export-trajectory, After: PR head 6df0955393dccd71b6752571eaabe9a92ea2177e (built CLI, isolated state dir, synthetic session)
+
+FILES BEFORE EXPORT (mode size sha256/16 path)
+  640   684032 b97bb246ef074bad agents/main/agent/openclaw-agent.sqlite
+  600    20480 522c069a6d403653 state/openclaw-quarantine.sqlite
+  640  1466368 4336e14ad45e6e74 state/openclaw.sqlite
+COMMAND: openclaw sessions export-trajectory --session-key agent:main:proof --workspace <workspace> --json
+EXIT: 0
+RESULT: sessionId=proof-session eventCount=2 transcriptEventCount=2 files=["manifest.json","events.jsonl","session-branch.json"]
+FILES AFTER EXPORT
+  640   684032 b97bb246ef074bad agents/main/agent/openclaw-agent.sqlite
+  640    32768 fd4c9fda9cd3f9ae agents/main/agent/openclaw-agent.sqlite-shm
+  640        0 e3b0c44298fc1c14 agents/main/agent/openclaw-agent.sqlite-wal
+  600    20480 522c069a6d403653 state/openclaw-quarantine.sqlite
+  640  1466368 4336e14ad45e6e74 state/openclaw.sqlite
+OPENAT OF SQLITE MAIN FILES (flags, count):
+  2   openclaw-agent.sqlite O_RDONLY|O_NOFOLLOW|O_CLOEXEC
+  3   openclaw-quarantine.sqlite O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC
