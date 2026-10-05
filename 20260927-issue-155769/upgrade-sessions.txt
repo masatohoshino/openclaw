@@ -1,0 +1,34 @@
+# setup: fresh isolated state dir, loopback Gateway; published openclaw@2026.9.8 + @openclaw/llama-cpp-provider@2026.9.8 from npm;
+# managed llama.cpp embedding-only setup (verified CPU build b10809, EmbeddingGemma), memory.search.provider=local; chat model Ollama qwen3.5:9b on a local GPU; synthetic notes
+== published: OpenClaw 2026.9.8 (fc23bc8)
+memory status at-startup: memoryDirty=True sessionFiles=0 embeddingCache=0 indexIdentity=missing automaticRebuildSeq=0
+== agent turn rel-pre (memory_search via the Gateway, chat model on a local GPU)
+Found in MEMORY.md.
+memory status after-first-turn: memoryDirty=False sessionFiles=1 embeddingCache=16 indexIdentity=valid automaticRebuildSeq=0
+== openclaw gateway restart --safe (in-process restart)
+safe restart requested; gateway will restart momentarily
+== append memory note
+== agent turn rel-post (memory_search via the Gateway, chat model on a local GPU)
+amber-lantern-42
+memory status after-post-restart-turn: memoryDirty=True sessionFiles=1 embeddingCache=16 indexIdentity=valid automaticRebuildSeq=0
+== memory sync failures in this Gateway's log after the restart:
+2026-10-06T01:39:34.832+09:00 [memory] sync failed (session-startup-catchup): Error: Memory sync aborted: embedding provider "local" is configured but unavailable. Refusing to run sync in fts-only fallback mode to protect existing vector index (current model: hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-
+2026-10-06T01:39:40.009+09:00 [memory] sync failed (session update): Error: Memory sync aborted: embedding provider "local" is configured but unavailable. Refusing to run sync in fts-only fallback mode to protect existing vector index (current model: hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf
+count=2
+== stop Gateway (SIGTERM)
+
+== upgrade the same install in place: npm install <candidate tarball packed from this branch>
+== candidate: OpenClaw 2026.9.8 (1640a33)
+memory status at-startup: memoryDirty=True sessionFiles=1 embeddingCache=16 indexIdentity=valid automaticRebuildSeq=0
+== agent turn cand-pre (memory_search via the Gateway, chat model on a local GPU)
+The proof fixture codeword is: **amber-lantern-42**
+memory status after-first-turn: memoryDirty=False sessionFiles=2 embeddingCache=18 indexIdentity=valid automaticRebuildSeq=0
+== openclaw gateway restart --safe (in-process restart)
+safe restart requested; gateway will restart momentarily
+== append memory note
+== agent turn cand-post (memory_search via the Gateway, chat model on a local GPU)
+The proof fixture codeword is **amber-lantern-42**.
+memory status after-post-restart-turn: memoryDirty=False sessionFiles=4 embeddingCache=21 indexIdentity=valid automaticRebuildSeq=0
+== memory sync failures in this Gateway's log after the restart:
+count=0
+== stop Gateway (SIGTERM)
