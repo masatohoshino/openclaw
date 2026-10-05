@@ -1,0 +1,30 @@
+--- before (0257a7dab0f)
++++ after (6df0955393d)
+@@ -1,16 +1,16 @@
+ FILES BEFORE EXPORT (mode size sha256/16 path)
+-  640   684032 1f6e461744a852ab agents/main/agent/openclaw-agent.sqlite
+-  600    20480 aec8c89579ee2d38 state/openclaw-quarantine.sqlite
+-  640  1466368 5fcf983cea7bb280 state/openclaw.sqlite
++  640   684032 b97bb246ef074bad agents/main/agent/openclaw-agent.sqlite
++  600    20480 522c069a6d403653 state/openclaw-quarantine.sqlite
++  640  1466368 4336e14ad45e6e74 state/openclaw.sqlite
+ COMMAND: openclaw sessions export-trajectory --session-key agent:main:proof --workspace <workspace> --json
+ EXIT: 0
+ RESULT: sessionId=proof-session eventCount=2 transcriptEventCount=2 files=["manifest.json","events.jsonl","session-branch.json"]
+ FILES AFTER EXPORT
+-  600   684032 1f6e461744a852ab agents/main/agent/openclaw-agent.sqlite
+-  600    20480 82ad7d5357948719 state/openclaw-quarantine.sqlite
+-  600  1466368 97bf4331afa09d22 state/openclaw.sqlite
++  640   684032 b97bb246ef074bad agents/main/agent/openclaw-agent.sqlite
++  640    32768 fd4c9fda9cd3f9ae agents/main/agent/openclaw-agent.sqlite-shm
++  640        0 e3b0c44298fc1c14 agents/main/agent/openclaw-agent.sqlite-wal
++  600    20480 522c069a6d403653 state/openclaw-quarantine.sqlite
++  640  1466368 4336e14ad45e6e74 state/openclaw.sqlite
+ OPENAT OF SQLITE MAIN FILES (flags, count):
+   2   openclaw-agent.sqlite O_RDONLY|O_NOFOLLOW|O_CLOEXEC
+-  1   openclaw-agent.sqlite O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC
+-  8   openclaw-quarantine.sqlite O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC
+-  2   openclaw.sqlite O_RDWR|O_NOFOLLOW|O_CLOEXEC
+\ No newline at end of file
++  3   openclaw-quarantine.sqlite O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC
+\ No newline at end of file
