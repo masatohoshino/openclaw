@@ -273,53 +273,60 @@ export function searchSessionTranscriptsReadOnlySync(
             .$if(params.sessionId !== undefined, (builder) =>
               builder.where("session_id", "=", params.sessionId!),
             );
-          const archivedTranscriptsExcluded =
-            executeSqliteQueryTakeFirstSync(
-              database.db,
-              db
-                .selectFrom("session_transcript_cold_archives as cold")
-                .innerJoin(selectedWindows.as("window"), "window.session_id", "cold.session_id")
-                .select((eb) => eb.fn.countAll<number>().as("count")),
-            )?.count ?? 0;
           // Deletion and reset keep a recovery archive but drop the window and its
           // index rows, so those transcripts can never match. Count them in the same
           // key scope so an empty result is not read as "never happened". The archive
           // table is optional until the first archive write; its presence comes from the
           // read handle's admitted schema facts, never from a per-search catalog query.
-          const deletedTranscriptsExcluded = getAdmittedSqliteSchemaFacts(database.db)?.tables.has(
-            SESSION_TRANSCRIPT_ARCHIVES_TABLE,
-          )
-            ? (executeSqliteQueryTakeFirstSync(
-                database.db,
-                db
-                  .selectFrom("session_transcript_archives as archive")
-                  .select((eb) => eb.fn.count<number>("archive.session_id").distinct().as("count"))
-                  .where((eb) =>
-                    eb.not(
-                      eb.exists(
-                        eb
-                          .selectFrom("session_windows as window")
-                          .select("window.session_id")
-                          .whereRef("window.session_id", "=", "archive.session_id"),
+          const hasDeletedArchives =
+            getAdmittedSqliteSchemaFacts(database.db)?.tables.has(
+              SESSION_TRANSCRIPT_ARCHIVES_TABLE,
+            ) === true;
+          // One statement reads both coverage counts from the same snapshot.
+          const excluded = executeSqliteQueryTakeFirstSync(
+            database.db,
+            db.selectNoFrom((eb) => [
+              eb
+                .selectFrom("session_transcript_cold_archives as cold")
+                .innerJoin(selectedWindows.as("window"), "window.session_id", "cold.session_id")
+                .select((sub) => sub.fn.countAll<number>().as("count"))
+                .as("archived"),
+              hasDeletedArchives
+                ? eb
+                    .selectFrom("session_transcript_archives as archive")
+                    .select((sub) =>
+                      sub.fn.count<number>("archive.session_id").distinct().as("count"),
+                    )
+                    .where((sub) =>
+                      sub.not(
+                        sub.exists(
+                          sub
+                            .selectFrom("session_windows as window")
+                            .select("window.session_id")
+                            .whereRef("window.session_id", "=", "archive.session_id"),
+                        ),
                       ),
-                    ),
-                  )
-                  .where((eb) =>
-                    params.sessionKeys === undefined
-                      ? eb.or([
-                          /* kysely-allow-raw: GLOB preserves literal underscores in SQLite agent namespaces. */
-                          sql<boolean>`${eb.ref("archive.session_key")} GLOB ${toAgentStoreSessionKey({ agentId: scope.agentId, requestKey: "*" })}`,
-                          eb("archive.session_key", "in", ["global", "unknown"]),
-                        ])
-                      : params.sessionKeys.length > 0
-                        ? eb("archive.session_key", "in", sqliteStringSet(params.sessionKeys))
-                        : eb.and([]),
-                  )
-                  .$if(params.sessionId !== undefined, (builder) =>
-                    builder.where("archive.session_id", "=", params.sessionId!),
-                  ),
-              )?.count ?? 0)
-            : 0;
+                    )
+                    .where((sub) =>
+                      params.sessionKeys === undefined
+                        ? sub.or([
+                            /* kysely-allow-raw: GLOB preserves literal underscores in SQLite agent namespaces. */
+                            sql<boolean>`${sub.ref("archive.session_key")} GLOB ${toAgentStoreSessionKey({ agentId: scope.agentId, requestKey: "*" })}`,
+                            sub("archive.session_key", "in", ["global", "unknown"]),
+                          ])
+                        : params.sessionKeys.length > 0
+                          ? sub("archive.session_key", "in", sqliteStringSet(params.sessionKeys))
+                          : sub.and([]),
+                    )
+                    .$if(params.sessionId !== undefined, (builder) =>
+                      builder.where("archive.session_id", "=", params.sessionId!),
+                    )
+                    .as("deleted")
+                : eb.lit(0).as("deleted"),
+            ]),
+          );
+          const archivedTranscriptsExcluded = excluded?.archived ?? 0;
+          const deletedTranscriptsExcluded = excluded?.deleted ?? 0;
           const match =
             /* kysely-allow-raw: FTS5 table MATCH with a bound search query. */
             sql<boolean>`session_transcript_fts MATCH ${toFtsQuery(query, params.match)}`;
