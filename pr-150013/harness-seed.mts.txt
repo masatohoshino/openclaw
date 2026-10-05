@@ -1,0 +1,36 @@
+// Seeds one synthetic SQLite session through the side's own session accessor,
+// then closes every database so the CLI export starts from closed files.
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const root = process.cwd();
+const load = (rel: string) => import(pathToFileURL(path.join(root, rel)).href);
+const stateDir = process.env.OPENCLAW_STATE_DIR!;
+const workspace = process.env.PROOF_WORKSPACE!;
+fs.mkdirSync(workspace, { recursive: true });
+
+const accessor = await load("src/config/sessions/session-accessor.ts");
+const agentDb = await load("src/state/openclaw-agent-db-lifecycle.ts");
+const stateDb = await load("src/state/openclaw-state-db-cache.ts");
+
+const storePath = path.join(stateDir, "agents", "main", "agent", "openclaw-agent.sqlite");
+const sessionId = "proof-session";
+const sessionKey = "agent:main:proof";
+const scope = { agentId: "main", sessionId, sessionKey, storePath };
+await accessor.replaceSessionEntry(scope, { sessionId, updatedAt: 1 });
+await accessor.replaceTranscriptEvents(scope, [
+  { type: "session", version: 3, id: sessionId, timestamp: "2026-04-01T05:46:39.000Z", cwd: workspace },
+  {
+    type: "message", id: "m1", parentId: null, timestamp: "2026-04-01T05:46:40.000Z",
+    message: { role: "user", content: "synthetic proof question", timestamp: 1 },
+  },
+  {
+    type: "message", id: "m2", parentId: "m1", timestamp: "2026-04-01T05:46:41.000Z",
+    message: { role: "assistant", content: [{ type: "text", text: "synthetic proof answer" }], timestamp: 2 },
+  },
+]);
+await agentDb.closeOpenClawAgentDatabasesAsync();
+await stateDb.closeOpenClawStateDatabaseAsync();
+console.log("seeded", sessionKey);
+process.exit(0);
