@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Seed a closed 0640 agent + state database, export the session through the
+# built CLI under strace, and report modes, hashes, side files and open flags.
+set -uo pipefail
+HARNESS="$(cd "$(dirname "$0")" && pwd)"
+export OPENCLAW_STATE_DIR="$HOME/state-root"
+export PROOF_WORKSPACE="$HOME/workspace"
+rm -rf "$OPENCLAW_STATE_DIR" "$PROOF_WORKSPACE"
+node --import tsx "$HARNESS/seed.mts" >/dev/null 2>"$HOME/seed.err" || { echo "seed failed"; cat "$HOME/seed.err"; exit 3; }
+AGENT_DB="$OPENCLAW_STATE_DIR/agents/main/agent/openclaw-agent.sqlite"
+STATE_DB=$(find "$OPENCLAW_STATE_DIR" -name 'openclaw.sqlite' -not -path '*/agents/*' | head -1)
+rm -f "$AGENT_DB"-wal "$AGENT_DB"-shm "$STATE_DB"-wal "$STATE_DB"-shm
+chmod 0640 "$AGENT_DB" "$STATE_DB"
+snap() {
+  echo "$1"
+  (cd "$OPENCLAW_STATE_DIR" && for f in $(find . -name '*.sqlite*' -type f | sort); do
+    printf '  %s %8s %s %s\n' "$(stat -c %a "$f")" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)" "${f#./}"
+  done)
+}
+snap "FILES BEFORE EXPORT (mode size sha256/16 path)"
+echo "COMMAND: openclaw sessions export-trajectory --session-key agent:main:proof --workspace <workspace> --json"
+strace -f -qq -e trace=openat -e signal=none -o "$HOME/strace.log" \
+  node openclaw.mjs sessions export-trajectory --session-key agent:main:proof --workspace "$PROOF_WORKSPACE" --json >"$HOME/out.json" 2>"$HOME/err.log"
+code=$?
+echo "EXIT: $code"
+node -e '
+const o = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+console.log("RESULT: sessionId=" + o.sessionId + " eventCount=" + o.eventCount + " transcriptEventCount=" + o.transcriptEventCount + " files=" + JSON.stringify((o.files ?? []).map((f) => require("path").basename(f))));
+' "$HOME/out.json" 2>/dev/null || { echo "STDOUT:"; head -c 2000 "$HOME/out.json"; echo "STDERR:"; head -c 2000 "$HOME/err.log"; }
+snap "FILES AFTER EXPORT"
+echo "OPENAT OF SQLITE MAIN FILES (flags, count):"
+grep -E 'openat\(.*\.sqlite"' "$HOME/strace.log" | grep -v ENOENT \
+  | sed -E 's#.*"([^"]*/)?([^"/]+\.sqlite)", ([A-Z_|]+).*#  \2 \3#' | sort | uniq -c | sed 's/^ */  /'
