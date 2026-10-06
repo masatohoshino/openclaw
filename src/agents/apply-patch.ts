@@ -210,6 +210,8 @@ type UnlinkedPath = {
   link: boolean;
   /** Host `dev:ino` of a hardlinked file; strict admission refuses its other names until then. */
   inode?: string;
+  /** Host `dev:ino` of the removed symlink entry, so another spelling of it can match. */
+  entry?: string;
 };
 
 async function resolvePatchHunks(
@@ -303,6 +305,8 @@ async function resolveUnlinkedPath(
     stage: link ? PATH_STAGE + lexical : stage,
     link,
     ...(inode ? { inode } : {}),
+    // A hardlinked symlink's identity names its other entries too, so only a single link counts.
+    ...(stat?.isSymbolicLink() && stat.nlink === 1 ? { entry: `${stat.dev}:${stat.ino}` } : {}),
   };
 }
 
@@ -363,7 +367,11 @@ async function resolveOrderedPatchPath(
     const target = await resolvePatchPath(rawFilePath, options, aliasPolicy);
     return { target, stage: target.queueKey, keys: [target.queueKey] };
   }
-  const lexical = await resolveLexicalPatchPath(rawFilePath, options);
+  const lexical = await spellLikeRemovedLink(
+    await resolveLexicalPatchPath(rawFilePath, options),
+    unlinked,
+    options,
+  );
   let target: PatchTarget;
   try {
     target = await resolvePatchPath(rawFilePath, options, aliasPolicy);
@@ -403,6 +411,34 @@ async function resolveOrderedPatchPath(
   return removed?.link
     ? { target, stage: removed.stage, keys: [target.queueKey, removed.key], removed }
     : { target, stage: target.queueKey, keys: [target.queueKey] };
+}
+
+/**
+ * The filesystem decides which spellings name one entry (case-insensitive
+ * volumes, for example). Rewrite a path at or under a host symlink an earlier
+ * hunk removes to that removal's spelling, matched by the link entry's identity.
+ */
+async function spellLikeRemovedLink(
+  lexical: string,
+  unlinked: readonly UnlinkedPath[],
+  options: ApplyPatchOptions,
+): Promise<string> {
+  const removedLinks = new Map(
+    unlinked.flatMap((entry) => (entry.entry ? [[entry.entry, entry.path] as const] : [])),
+  );
+  if (options.sandbox || removedLinks.size === 0) {
+    return lexical;
+  }
+  for (let dir = lexical; ; dir = path.dirname(dir)) {
+    const stat = await lstatHostPath(dir);
+    const removed = stat?.isSymbolicLink() && removedLinks.get(`${stat.dev}:${stat.ino}`);
+    if (removed) {
+      return path.join(removed, path.relative(dir, lexical));
+    }
+    if (path.dirname(dir) === dir) {
+      return lexical;
+    }
+  }
 }
 
 /** Another name of a host hardlink an earlier hunk removes; admission waits for commit order. */

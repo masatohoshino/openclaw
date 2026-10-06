@@ -2,7 +2,9 @@
  * Tests that apply_patch rejects predictable update failures before any hunk
  * mutates the workspace, including hunks that replace links earlier hunks remove.
  */
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
@@ -10,6 +12,8 @@ import { createApplyPatchTool } from "./apply-patch.js";
 import { applyPatch, createMemoryPatchSandbox } from "./apply-patch.test-support.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+// The temp root's volume decides whether two spellings name one entry (APFS and NTFS by default).
+const caseInsensitiveTemp = existsSync(os.tmpdir().toUpperCase());
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>) {
   // Sandbox checks compare canonical paths; macOS tmpdir is itself a symlink.
@@ -117,6 +121,61 @@ describe("applyPatch preflight", () => {
         expect((await fs.lstat(link)).isFile()).toBe(true);
         await expect(fs.readFile(link, "utf8")).resolves.toBe("final\n");
         await expect(fs.readFile(outsideTarget, "utf8")).resolves.toBe("keep\n");
+      });
+    },
+  );
+
+  // Linux link(2) hardlinks the symlink entry itself instead of the file it names.
+  it.runIf(process.platform === "linux")(
+    "updates the other name of a hardlinked symlink after deleting one name",
+    async () => {
+      await withTempDir(async (dir) => {
+        await fs.writeFile(path.join(dir, "target.txt"), "old\n", "utf8");
+        await fs.symlink(path.join(dir, "target.txt"), path.join(dir, "a"));
+        await fs.link(path.join(dir, "a"), path.join(dir, "b"));
+
+        await applyPatch(
+          "*** Begin Patch\n*** Delete File: a\n*** Update File: b\n@@\n-old\n+new\n*** End Patch",
+          { cwd: dir, workspaceOnly: false },
+        );
+
+        expect((await fs.readdir(dir)).toSorted()).toEqual(["b", "target.txt"]);
+        await expect(fs.readFile(path.join(dir, "target.txt"), "utf8")).resolves.toBe("new\n");
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32" && caseInsensitiveTemp).each([
+    {
+      name: "a file in different casing",
+      hunks: "*** Delete File: link.txt\n*** Add File: LINK.txt\n+new",
+      created: "LINK.txt",
+    },
+    {
+      name: "a file under a directory link in different casing",
+      hunks: "*** Delete File: d\n*** Add File: D/x.txt\n+new",
+      created: "D/x.txt",
+    },
+  ])(
+    "replaces an outside symlink with $name on a case-insensitive volume",
+    async ({ hunks, created }) => {
+      await withTempDir(async (dir) => {
+        const outsideDir = await fs.realpath(tempDirs.make("openclaw-patch-outside-"));
+        await fs.writeFile(path.join(outsideDir, "target.txt"), "keep\n", "utf8");
+        await fs.symlink(path.join(outsideDir, "target.txt"), path.join(dir, "link.txt"));
+        await fs.symlink(outsideDir, path.join(dir, "d"));
+
+        await createApplyPatchTool({ cwd: dir }).execute(
+          "call-replace-link-case",
+          { input: `*** Begin Patch\n${hunks}\n*** End Patch` },
+          undefined,
+        );
+
+        await expect(fs.readFile(path.join(dir, created), "utf8")).resolves.toBe("new\n");
+        expect(await fs.readdir(outsideDir)).toEqual(["target.txt"]);
+        await expect(fs.readFile(path.join(outsideDir, "target.txt"), "utf8")).resolves.toBe(
+          "keep\n",
+        );
       });
     },
   );
