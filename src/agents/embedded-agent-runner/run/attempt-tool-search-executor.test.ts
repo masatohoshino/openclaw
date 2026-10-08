@@ -27,13 +27,13 @@ describe("createSubscribedToolSearchExecutor", () => {
     );
     const runSignal = new AbortController().signal;
     const executor = createSubscribedToolSearchExecutor({
-      attempt: { config: {}, runId: "run", sessionId: "session", sessionKey: "key" },
+      attempt: { runId: "run", sessionKey: "key" },
       runSignal,
       sessionManager: { getAppendParentId: () => undefined } as never,
       subscription: { runToolLifecycle } as never,
       isCurrent: () => true,
       isReplaySafeTool: () => true,
-      nestedToolActivities: [],
+      nestedToolActivityState: { scopeId: "scope", successfulToolNames: new Set() },
     });
 
     await executor({
@@ -81,13 +81,13 @@ describe("createSubscribedToolSearchExecutor", () => {
       },
     );
     const executor = createSubscribedToolSearchExecutor({
-      attempt: { config: {}, runId: "run", sessionId: "session", sessionKey: "key" },
+      attempt: { runId: "run", sessionKey: "key" },
       runSignal: new AbortController().signal,
       sessionManager: { getAppendParentId: () => undefined } as never,
       subscription: { runToolLifecycle } as never,
       isCurrent: () => true,
       isReplaySafeTool: () => true,
-      nestedToolActivities: [],
+      nestedToolActivityState: { scopeId: "scope", successfulToolNames: new Set() },
     });
 
     await expect(
