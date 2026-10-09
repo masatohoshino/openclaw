@@ -124,9 +124,11 @@ export function chatAbortTargetSession(
 export function currentChatAbortIntent(
   state: ChatAbortTargetState,
   sourceClient: GatewayBrowserClient,
+  scope: "run" | "session" = "run",
 ): ChatAbortIntent {
   const sessionAbortable = state.chatRunSessionAbortable === true;
-  const runId = state.chatRunId ?? null;
+  // Session scope also retires queued wakes; it is sent live and never replayed.
+  const runId = scope === "run" ? (state.chatRunId ?? null) : null;
   const target = {
     sourceClient,
     recoveryScope: state.hello?.auth?.recoveryScope ?? sourceClient.recoveryScope,

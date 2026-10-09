@@ -227,7 +227,11 @@ export function isChatStopCommand(text: string) {
   return CHAT_STOP_COMMANDS.has(normalizeLowercaseStringOrEmpty(text));
 }
 
-type ChatAbortOptions = { preserveDraft?: boolean };
+type ChatAbortOptions = {
+  preserveDraft?: boolean;
+  /** Typed Stop ends the whole session, including queued follow-ups and wakes. */
+  scope?: "session";
+};
 
 function ownsChatAbortIntent(state: ChatAbortRunState, intent: ChatAbortIntent): boolean {
   const conversation = resolveUiConversationIdentity(state, state.sessionKey);
@@ -249,7 +253,8 @@ function ownsChatAbortIntent(state: ChatAbortRunState, intent: ChatAbortIntent):
     state.client === intent.sourceClient &&
     conversation.sessionKey === intent.conversation.sessionKey &&
     conversation.agentId === intent.conversation.agentId &&
-    (runId === intent.runId || ownsTerminal) &&
+    // A session-scoped Stop answers for the conversation, whichever run is current.
+    (intent.runId === null || runId === intent.runId || ownsTerminal) &&
     scopedAgentParamsForSession(state, state.sessionKey).agentId === intent.agentId
   );
 }
@@ -369,7 +374,10 @@ export async function handleAbortChat(host: ChatAbortHost, opts?: ChatAbortOptio
     host.pendingAbort = pendingAbort;
     return;
   }
-  await abortChatRun(host);
+  await abortChatRun(
+    host,
+    opts?.scope && host.client ? currentChatAbortIntent(host, host.client, opts.scope) : undefined,
+  );
 }
 
 function clearTimer(timer: TimerHandle | number | null | undefined) {

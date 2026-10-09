@@ -38,9 +38,12 @@ describe("handleAbortChat", () => {
     { action: "typed", message: "stop" },
     { action: "read-only", message: "/stop" },
     { action: "offline", message: "/stop" },
-  ] as const)("handles an exact-run stop via $action ($message)", async ({ action, message }) => {
+  ] as const)("handles a stop during a run via $action ($message)", async ({ action, message }) => {
     const host = makeChatHost({
-      requestHandlers: action === "read-only" ? {} : { "chat.abort": { aborted: true } },
+      requestHandlers:
+        action === "read-only"
+          ? {}
+          : { "chat.abort": { aborted: true }, "sessions.abort": { status: "aborted" } },
       connected: action !== "offline",
       chatRunId: "run-main",
       chatMessage: message,
@@ -71,6 +74,13 @@ describe("handleAbortChat", () => {
         conversation: { sessionKey: "agent:main" },
       });
       expect(host.request).not.toHaveBeenCalled();
+    } else if (action === "typed") {
+      // Typed Stop must also retire queued follow-ups and wakes behind the run.
+      expect(host.request).toHaveBeenCalledWith("sessions.abort", {
+        key: "agent:main",
+        clearQueued: true,
+      });
+      expect(host.request).not.toHaveBeenCalledWith("chat.abort", expect.anything());
     } else {
       expect(host.request).toHaveBeenCalledWith("chat.abort", {
         runId: "run-main",
@@ -79,6 +89,25 @@ describe("handleAbortChat", () => {
     }
     expect(host.chatMessage).toBe(action === "toolbar" || action === "read-only" ? message : "");
     expect(host.chatRunId).toBe("run-main");
+  });
+
+  it("reports a failed typed stop while its run is still current", async () => {
+    const request = vi.fn(async () => {
+      throw new Error("stop failed");
+    });
+    const host = makeChatHost({
+      client: clientWithRequest(request),
+      connected: true,
+      chatRunId: "run-main",
+      chatMessage: "/stop",
+      sessionKey: "agent:main",
+    });
+    await handleSendChat(host);
+    expect(request).toHaveBeenCalledWith("sessions.abort", {
+      key: "agent:main",
+      clearQueued: true,
+    });
+    expect(host.chatError).toContain("stop failed");
   });
 
   it.each([
