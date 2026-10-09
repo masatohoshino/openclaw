@@ -1,0 +1,47 @@
+# Before (base d13b1c5b825e): built CLI, sessionMode "none" backend with raw-transcript reseed enabled
+
+## setup-stateless-backend
+configured stateless-cli backend: sessionMode=none reseedFromRawTranscriptWhenUncompacted=true
+stored static token profile stateless-cli:default (account one)
+
+## turn-1-first-ask
+sent: "Remember that the invoice is in the blue folder."
+current message occurrences in backend stdin: 1
+--- backend stdin ---
+[<local time>] Remember that the invoice is in the blue folder.
+
+For the current source conversation, reply normally in your final assistant message; OpenClaw will deliver it through the active source conversation.
+
+Commentary is optional progress and may be hidden. Include answers to every still-pending user question, including questions received during ongoing work, in your final response.
+
+Current active computer (latest reported app/system input, not message origin): active_node=unknown active_node_identity=unknown
+
+## turn-2-follow-up
+sent: "Which folder holds the invoice?"
+current message occurrences in backend stdin: 1
+earlier turn "invoice is in the blue folder" visible to the backend: no
+--- backend stdin ---
+[<local time>] Which folder holds the invoice?
+
+For the current source conversation, reply normally in your final assistant message; OpenClaw will deliver it through the active source conversation.
+
+Commentary is optional progress and may be hidden. Include answers to every still-pending user question, including questions received during ongoing work, in your final response.
+
+Current active computer (latest reported app/system input, not message origin): active_node=unknown active_node_identity=unknown
+
+## switch-account
+stored static token profile stateless-cli:default (account two)
+
+## turn-3-other-account
+sent: "Start over for the new account."
+current message occurrences in backend stdin: 1
+earlier turn "invoice is in the blue folder" visible to the backend: no
+--- backend stdin ---
+[<local time>] Start over for the new account.
+
+For the current source conversation, reply normally in your final assistant message; OpenClaw will deliver it through the active source conversation.
+
+Commentary is optional progress and may be hidden. Include answers to every still-pending user question, including questions received during ongoing work, in your final response.
+
+Current active computer (latest reported app/system input, not message origin): active_node=unknown active_node_identity=unknown
+
