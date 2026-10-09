@@ -44,6 +44,8 @@ export type ChatAbortIntent =
   | (ChatAbortIntentBase & {
       runId: null;
       clearQueued?: true;
+      /** The run a session-scoped Stop answers for; the request itself names no run. */
+      ownerRunId?: string;
     });
 
 type ChatAbortRequestTarget = { sessionKey: string; agentId?: string } & (
@@ -129,6 +131,7 @@ export function currentChatAbortIntent(
   const sessionAbortable = state.chatRunSessionAbortable === true;
   // Session scope also retires queued wakes; it is sent live and never replayed.
   const runId = scope === "run" ? (state.chatRunId ?? null) : null;
+  const ownerRunId = scope === "session" ? state.chatRunId : null;
   const target = {
     sourceClient,
     recoveryScope: state.hello?.auth?.recoveryScope ?? sourceClient.recoveryScope,
@@ -144,5 +147,6 @@ export function currentChatAbortIntent(
         ...base,
         runId: null,
         ...queuedSessionAbortParams(state, state.sessionKey),
+        ...(ownerRunId ? { ownerRunId } : {}),
       };
 }

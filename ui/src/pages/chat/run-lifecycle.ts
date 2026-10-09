@@ -233,6 +233,10 @@ type ChatAbortOptions = {
   scope?: "session";
 };
 
+function chatAbortOwnerRunId(intent: ChatAbortIntent): string | undefined {
+  return intent.runId === null ? intent.ownerRunId : intent.runId;
+}
+
 function ownsChatAbortIntent(state: ChatAbortRunState, intent: ChatAbortIntent): boolean {
   const conversation = resolveUiConversationIdentity(state, state.sessionKey);
   const pendingRunId = state.chatQueue?.find(
@@ -243,18 +247,18 @@ function ownsChatAbortIntent(state: ChatAbortRunState, intent: ChatAbortIntent):
   const terminalConversation = terminal
     ? resolveUiConversationIdentity(state, terminal.sessionKey, terminal.agentId)
     : undefined;
+  const ownerRunId = chatAbortOwnerRunId(intent) ?? null;
   const ownsTerminal =
-    intent.runId !== null &&
+    ownerRunId !== null &&
     runId === null &&
-    terminal?.runId === intent.runId &&
+    terminal?.runId === ownerRunId &&
     terminalConversation?.sessionKey === intent.conversation.sessionKey &&
     terminalConversation.agentId === intent.conversation.agentId;
   return (
     state.client === intent.sourceClient &&
     conversation.sessionKey === intent.conversation.sessionKey &&
     conversation.agentId === intent.conversation.agentId &&
-    // A session-scoped Stop answers for the conversation, whichever run is current.
-    (intent.runId === null || runId === intent.runId || ownsTerminal) &&
+    (runId === ownerRunId || ownsTerminal) &&
     scopedAgentParamsForSession(state, state.sessionKey).agentId === intent.agentId
   );
 }
@@ -270,15 +274,15 @@ async function settleChatAbortResponse(
       const message = formatConnectError(result.error);
       if (result.errorKind === "state_contention") {
         setChatError(state, null);
-        setChatRunError(state, message, intent.runId ?? undefined, result.errorKind);
+        setChatRunError(state, message, chatAbortOwnerRunId(intent), result.errorKind);
       } else if (state.chatRunId) {
         setChatError(state, message);
       } else {
-        setChatRunError(state, message, intent.runId ?? undefined, "stop");
+        setChatRunError(state, message, chatAbortOwnerRunId(intent), "stop");
       }
       state.requestUpdate?.();
     } else if (result.warning) {
-      setChatRunError(state, result.warning, intent.runId ?? undefined, "stop");
+      setChatRunError(state, result.warning, chatAbortOwnerRunId(intent), "stop");
       state.requestUpdate?.();
     } else if (result.noActiveRun && state.connected) {
       // Only the refreshed owner may retire a run that is still finalizing.

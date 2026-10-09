@@ -110,6 +110,30 @@ describe("handleAbortChat", () => {
     expect(host.chatError).toContain("stop failed");
   });
 
+  it("keeps a late typed-stop failure away from a replacement run", async () => {
+    let reject: (error: Error) => void = () => {};
+    const request = vi.fn(
+      () =>
+        new Promise((_resolve, rejectRequest) => {
+          reject = rejectRequest;
+        }),
+    );
+    const host = makeChatHost({
+      client: clientWithRequest(request),
+      connected: true,
+      chatRunId: "run-a",
+      chatMessage: "/stop",
+      sessionKey: "agent:main",
+    });
+    const sending = handleSendChat(host);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    host.chatRunId = "run-b";
+    reject(new Error("stop failed"));
+    await sending;
+    expect(host.chatError).toBeFalsy();
+    expect(host.chatRunError).toBeFalsy();
+  });
+
   it.each([
     { key: "agent:main:openclaw-weixin:direct:wechat-user", scope: "per-sender", connected: true },
     { key: "global", scope: "global", connected: true },
