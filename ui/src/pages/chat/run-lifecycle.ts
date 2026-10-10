@@ -33,7 +33,6 @@ import { readChatSessionActionAccess } from "./chat-session-action-access.ts";
 import { formatConnectError } from "./connect-error.ts";
 import {
   getChatSessionProjection,
-  observeChatRunModel,
   reduceChatSessionProjection,
   setChatRunOwner,
 } from "./history-merge.ts";
@@ -227,15 +226,7 @@ export function isChatStopCommand(text: string) {
   return CHAT_STOP_COMMANDS.has(normalizeLowercaseStringOrEmpty(text));
 }
 
-type ChatAbortOptions = {
-  preserveDraft?: boolean;
-  /** Typed Stop ends the whole session, including queued follow-ups and wakes. */
-  scope?: "session";
-};
-
-function chatAbortOwnerRunId(intent: ChatAbortIntent): string | undefined {
-  return intent.runId === null ? intent.ownerRunId : intent.runId;
-}
+type ChatAbortOptions = { preserveDraft?: boolean; scope?: "session" };
 
 function ownsChatAbortIntent(state: ChatAbortRunState, intent: ChatAbortIntent): boolean {
   const conversation = resolveUiConversationIdentity(state, state.sessionKey);
@@ -247,18 +238,17 @@ function ownsChatAbortIntent(state: ChatAbortRunState, intent: ChatAbortIntent):
   const terminalConversation = terminal
     ? resolveUiConversationIdentity(state, terminal.sessionKey, terminal.agentId)
     : undefined;
-  const ownerRunId = chatAbortOwnerRunId(intent) ?? null;
   const ownsTerminal =
-    ownerRunId !== null &&
+    intent.runId !== null &&
     runId === null &&
-    terminal?.runId === ownerRunId &&
+    terminal?.runId === intent.runId &&
     terminalConversation?.sessionKey === intent.conversation.sessionKey &&
     terminalConversation.agentId === intent.conversation.agentId;
   return (
     state.client === intent.sourceClient &&
     conversation.sessionKey === intent.conversation.sessionKey &&
     conversation.agentId === intent.conversation.agentId &&
-    (runId === ownerRunId || ownsTerminal) &&
+    (runId === intent.runId || ownsTerminal) &&
     scopedAgentParamsForSession(state, state.sessionKey).agentId === intent.agentId
   );
 }
@@ -274,15 +264,15 @@ async function settleChatAbortResponse(
       const message = formatConnectError(result.error);
       if (result.errorKind === "state_contention") {
         setChatError(state, null);
-        setChatRunError(state, message, chatAbortOwnerRunId(intent), result.errorKind);
+        setChatRunError(state, message, intent.runId ?? undefined, result.errorKind);
       } else if (state.chatRunId) {
         setChatError(state, message);
       } else {
-        setChatRunError(state, message, chatAbortOwnerRunId(intent), "stop");
+        setChatRunError(state, message, intent.runId ?? undefined, "stop");
       }
       state.requestUpdate?.();
     } else if (result.warning) {
-      setChatRunError(state, result.warning, chatAbortOwnerRunId(intent), "stop");
+      setChatRunError(state, result.warning, intent.runId ?? undefined, "stop");
       state.requestUpdate?.();
     } else if (result.noActiveRun && state.connected) {
       // Only the refreshed owner may retire a run that is still finalizing.
@@ -292,13 +282,15 @@ async function settleChatAbortResponse(
   return result.ok;
 }
 
-async function abortChatRun(state: ChatAbortRunState, intent?: ChatAbortIntent) {
+async function abortChatRun(state: ChatAbortRunState, intent?: ChatAbortIntent, scope?: "session") {
   const client = state.client;
   if (!client || !state.connected) {
     return false;
   }
   const captured = intent ?? currentChatAbortIntent(state, client);
-  const result = await requestChatAbort(client, captured);
+  // Session cancellation still answers to the run that owned the Stop action.
+  const target = scope ? currentChatAbortIntent(state, client, scope) : captured;
+  const result = await requestChatAbort(client, target);
   return settleChatAbortResponse(state, captured, result);
 }
 
@@ -378,10 +370,7 @@ export async function handleAbortChat(host: ChatAbortHost, opts?: ChatAbortOptio
     host.pendingAbort = pendingAbort;
     return;
   }
-  await abortChatRun(
-    host,
-    opts?.scope && host.client ? currentChatAbortIntent(host, host.client, opts.scope) : undefined,
-  );
+  await abortChatRun(host, undefined, opts?.scope);
 }
 
 function clearTimer(timer: TimerHandle | number | null | undefined) {
@@ -511,7 +500,9 @@ export function reconcileChatRunLifecycle(host: RunLifecycleHost, options: Recon
     host.chatStreamStartedAt = null;
   }
   if (options.clearLocalRun) {
-    observeChatRunModel(host, undefined);
+    if (!runId || host.chatReasoning?.runId === runId) {
+      host.chatReasoning = null;
+    }
     if (host.chatRunId) {
       host.chatRunLifecycleGeneration = (host.chatRunLifecycleGeneration ?? 0) + 1;
     }

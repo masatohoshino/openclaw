@@ -75,7 +75,6 @@ describe("handleAbortChat", () => {
       });
       expect(host.request).not.toHaveBeenCalled();
     } else if (action === "typed") {
-      // Typed Stop must also retire queued follow-ups and wakes behind the run.
       expect(host.request).toHaveBeenCalledWith("sessions.abort", {
         key: "agent:main",
         clearQueued: true,
@@ -91,48 +90,46 @@ describe("handleAbortChat", () => {
     expect(host.chatRunId).toBe("run-main");
   });
 
-  it("reports a failed typed stop while its run is still current", async () => {
-    const request = vi.fn(async () => {
-      throw new Error("stop failed");
-    });
-    const host = makeChatHost({
-      client: clientWithRequest(request),
-      connected: true,
-      chatRunId: "run-main",
-      chatMessage: "/stop",
-      sessionKey: "agent:main",
-    });
-    await handleSendChat(host);
-    expect(request).toHaveBeenCalledWith("sessions.abort", {
-      key: "agent:main",
-      clearQueued: true,
-    });
-    expect(host.chatError).toContain("stop failed");
-  });
-
-  it("keeps a late typed-stop failure away from a replacement run", async () => {
-    let reject: (error: Error) => void = () => {};
-    const request = vi.fn(
-      () =>
-        new Promise((_resolve, rejectRequest) => {
-          reject = rejectRequest;
-        }),
-    );
-    const host = makeChatHost({
-      client: clientWithRequest(request),
-      connected: true,
-      chatRunId: "run-a",
-      chatMessage: "/stop",
-      sessionKey: "agent:main",
-    });
-    const sending = handleSendChat(host);
-    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
-    host.chatRunId = "run-b";
-    reject(new Error("stop failed"));
-    await sending;
-    expect(host.chatError).toBeFalsy();
-    expect(host.chatRunError).toBeFalsy();
-  });
+  it.each(["current", "terminal", "replacement"] as const)(
+    "keeps a typed-stop failure with its originating run (%s)",
+    async (scenario) => {
+      const response = Promise.withResolvers<never>();
+      const request = vi.fn(() => response.promise);
+      const host = makeChatHost({
+        client: clientWithRequest(request),
+        connected: true,
+        chatRunId: "run-a",
+        chatMessage: "/stop",
+        sessionKey: "agent:main",
+      });
+      const sending = handleSendChat(host);
+      expect(request).toHaveBeenCalledWith("sessions.abort", {
+        key: "agent:main",
+        clearQueued: true,
+      });
+      if (scenario === "replacement") {
+        host.chatRunId = "run-b";
+      } else if (scenario === "terminal") {
+        host.chatRunId = null;
+        host.lastLocalTerminalReconcile = {
+          sessionKey: host.sessionKey,
+          runId: "run-a",
+          phase: "interrupted",
+          sessionStatus: "killed",
+        };
+      }
+      response.reject(new Error("stop failed"));
+      await sending;
+      if (scenario === "current") {
+        expect(host.chatError).toContain("stop failed");
+      } else if (scenario === "terminal") {
+        expect(host.chatRunError).toMatchObject({ runId: "run-a", summary: "stop failed" });
+      } else {
+        expect(host.chatError).toBeFalsy();
+        expect(host.chatRunError).toBeFalsy();
+      }
+    },
+  );
 
   it.each([
     { key: "agent:main:openclaw-weixin:direct:wechat-user", scope: "per-sender", connected: true },
