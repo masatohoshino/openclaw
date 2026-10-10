@@ -2164,6 +2164,66 @@ final class TalkModeManager {
                     + "error=\(error.localizedDescription)")
             return .unavailable(Self.runtimeIssue(from: error))
         }
+        let relaySession = self.makeRealtimeRelaySession(
+            gateway: gateway,
+            gatewayRoute: gatewayRoute,
+            sessionKey: sessionKey,
+            relayGeneration: relayGeneration,
+            supportsVoiceSelection: supportsVoiceSelection,
+            voiceChange: voiceChange)
+        self.realtimeRelaySession = relaySession
+        do {
+            try await relaySession.start()
+            guard self.realtimeRelaySession === relaySession,
+                  self.realtimeRelayGeneration == relayGeneration,
+                  self.isCurrentStartAttempt(attemptID),
+                  self.mainSessionKey == sessionKey,
+                  relaySession.isReady
+            else {
+                relaySession.stop()
+                return .ignored
+            }
+            if let issue = realtimeRelayStartIssue {
+                self.realtimeRelaySession = nil
+                relaySession.stop()
+                GatewayDiagnostics.log(
+                    "talk.timeline realtime relay start unavailable elapsedMs=\(Self.elapsedMs(since: startedAt)) "
+                        + "issue=\(issue.code.rawValue)")
+                return .unavailable(issue)
+            }
+            self.markRealtimeSessionReady()
+            self.realtimeRelayStartIssue = nil
+            GatewayDiagnostics.log(
+                "talk.timeline realtime relay start ready elapsedMs=\(Self.elapsedMs(since: startedAt))")
+            return .started
+        } catch {
+            guard self.realtimeRelaySession === relaySession,
+                  self.realtimeRelayGeneration == relayGeneration,
+                  self.isCurrentStartAttempt(attemptID),
+                  self.mainSessionKey == sessionKey
+            else {
+                relaySession.stop()
+                return .ignored
+            }
+            self.realtimeRelaySession = nil
+            let issue = self.realtimeRelayStartIssue
+                ?? Self.runtimeIssue(from: error)
+            self.realtimeRelayStartIssue = nil
+            GatewayDiagnostics.log(
+                "talk.timeline realtime relay start failed elapsedMs=\(Self.elapsedMs(since: startedAt)) "
+                    + "error=\(error.localizedDescription)")
+            return .unavailable(issue)
+        }
+    }
+
+    private func makeRealtimeRelaySession(
+        gateway: GatewayNodeSession,
+        gatewayRoute: GatewayNodeSessionRoute,
+        sessionKey: String,
+        relayGeneration: UInt64,
+        supportsVoiceSelection: Bool,
+        voiceChange: TalkVoiceChangeEvent?) -> RealtimeTalkRelaySession
+    {
         // On built-in output, capture and playback share one voice-processing engine so speaker
         // output is the echo reference; the capture owns it and resumes the player after
         // reconfiguration. Headsets keep separate engines without voice processing.
@@ -2178,7 +2238,7 @@ final class TalkModeManager {
         } else {
             pcmPlayer = RealtimePCMStreamingAudioPlayer()
         }
-        let relaySession = RealtimeTalkRelaySession(
+        return RealtimeTalkRelaySession(
             transport: .ios(gateway: gateway, route: gatewayRoute),
             options: RealtimeTalkRelaySession.Options(
                 sessionKey: sessionKey,
@@ -2223,49 +2283,6 @@ final class TalkModeManager {
                 guard let self, self.realtimeRelayGeneration == relayGeneration else { return }
                 self.playbackLevel = level
             })
-        self.realtimeRelaySession = relaySession
-        do {
-            try await relaySession.start()
-            guard self.realtimeRelaySession === relaySession,
-                  self.realtimeRelayGeneration == relayGeneration,
-                  self.isCurrentStartAttempt(attemptID),
-                  self.mainSessionKey == sessionKey,
-                  relaySession.isReady
-            else {
-                relaySession.stop()
-                return .ignored
-            }
-            if let issue = realtimeRelayStartIssue {
-                self.realtimeRelaySession = nil
-                relaySession.stop()
-                GatewayDiagnostics.log(
-                    "talk.timeline realtime relay start unavailable elapsedMs=\(Self.elapsedMs(since: startedAt)) "
-                        + "issue=\(issue.code.rawValue)")
-                return .unavailable(issue)
-            }
-            self.markRealtimeSessionReady()
-            self.realtimeRelayStartIssue = nil
-            GatewayDiagnostics.log(
-                "talk.timeline realtime relay start ready elapsedMs=\(Self.elapsedMs(since: startedAt))")
-            return .started
-        } catch {
-            guard self.realtimeRelaySession === relaySession,
-                  self.realtimeRelayGeneration == relayGeneration,
-                  self.isCurrentStartAttempt(attemptID),
-                  self.mainSessionKey == sessionKey
-            else {
-                relaySession.stop()
-                return .ignored
-            }
-            self.realtimeRelaySession = nil
-            let issue = self.realtimeRelayStartIssue
-                ?? Self.runtimeIssue(from: error)
-            self.realtimeRelayStartIssue = nil
-            GatewayDiagnostics.log(
-                "talk.timeline realtime relay start failed elapsedMs=\(Self.elapsedMs(since: startedAt)) "
-                    + "error=\(error.localizedDescription)")
-            return .unavailable(issue)
-        }
     }
 
     private func invalidateRealtimeVoiceSelection(preserveSelection: Bool = false) {
