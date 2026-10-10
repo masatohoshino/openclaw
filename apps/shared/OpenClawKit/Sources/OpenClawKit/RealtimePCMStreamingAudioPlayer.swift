@@ -54,8 +54,10 @@ public final nonisolated class RealtimePCMStreamingAudioPlayer: PCMStreamingAudi
                 node.stop()
                 if ownsEngine { engine.stop() }
                 engine.disconnectNodeOutput(node)
+                // Relay audio arrives as PCM16, but the player renders Float32: connecting an Int16
+                // node raises while a shared voice-processing engine is running.
                 guard let nextFormat = AVAudioFormat(
-                    commonFormat: .pcmFormatInt16,
+                    commonFormat: .pcmFormatFloat32,
                     sampleRate: sampleRate,
                     channels: 1,
                     interleaved: false)
@@ -74,7 +76,7 @@ public final nonisolated class RealtimePCMStreamingAudioPlayer: PCMStreamingAudi
                 let padFrames = AVAudioFrameCount(sampleRate * 0.3)
                 if let pad = AVAudioPCMBuffer(pcmFormat: nextFormat, frameCapacity: padFrames) {
                     pad.frameLength = padFrames
-                    pad.int16ChannelData?[0].update(repeating: 0, count: Int(padFrames))
+                    pad.floatChannelData?[0].update(repeating: 0, count: Int(padFrames))
                     node.scheduleBuffer(pad)
                 }
             },
@@ -84,15 +86,19 @@ public final nonisolated class RealtimePCMStreamingAudioPlayer: PCMStreamingAudi
                 }
                 let frames = AVAudioFrameCount(data.count / MemoryLayout<Int16>.size)
                 guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
-                      let channel = buffer.int16ChannelData?[0]
+                      let channel = buffer.floatChannelData?[0]
                 else {
                     throw NSError(domain: "RealtimePCMStreamingAudioPlayer", code: 3)
                 }
                 buffer.frameLength = frames
-                data.copyBytes(
-                    to: UnsafeMutableRawBufferPointer(
-                        start: channel,
-                        count: data.count))
+                data.withUnsafeBytes { raw in
+                    for index in 0..<Int(frames) {
+                        let sample = Int16(littleEndian: raw.loadUnaligned(
+                            fromByteOffset: index * MemoryLayout<Int16>.size,
+                            as: Int16.self))
+                        channel[index] = Float(sample) / 32768
+                    }
+                }
                 node.scheduleBuffer(
                     buffer,
                     completionCallbackType: .dataPlayedBack)
