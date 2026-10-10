@@ -25,15 +25,20 @@ private func makeRealtimeAudioTapBlock(
 @MainActor
 final class IOSRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
     private static let bufferSize: AVAudioFrameCount = 2048
-    /// The reply player renders on this engine too: voice processing only cancels echo of
-    /// output from its own I/O unit, so a separate playback engine would leave it uncancelled.
+    /// With voice processing the reply player renders on this engine too: echo cancellation only
+    /// removes output from its own I/O unit, so a separate playback engine would leave it uncancelled.
     let audioEngine = AVAudioEngine()
+    private let voiceProcessing: Bool
     private var tappedInputNode: AVAudioInputNode?
     private var voiceProcessingActive = false
     private var configurationObserver: NSObjectProtocol?
     private var onFailure: (@MainActor (String) -> Void)?
     /// Restarting the engine stops attached nodes; the owner of the reply player resumes it.
     var onEngineRestarted: (@MainActor () -> Void)?
+
+    init(voiceProcessing: Bool) {
+        self.voiceProcessing = voiceProcessing
+    }
 
     var suppressesInputDuringOutput: Bool {
         // With echo cancellation the built-in speaker can stay full duplex. Without it, speaker
@@ -51,13 +56,15 @@ final class IOSRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
         self.stop()
         let input = self.audioEngine.inputNode
         // Must precede engine start; failure keeps the half-duplex speaker behavior.
-        do {
-            try input.setVoiceProcessingEnabled(true)
-            self.voiceProcessingActive = true
-        } catch {
-            self.voiceProcessingActive = false
-            GatewayDiagnostics.log(
-                "talk realtime audio: voice processing unavailable: \(error.localizedDescription)")
+        self.voiceProcessingActive = false
+        if self.voiceProcessing {
+            do {
+                try input.setVoiceProcessingEnabled(true)
+                self.voiceProcessingActive = true
+            } catch {
+                GatewayDiagnostics.log(
+                    "talk realtime audio: voice processing unavailable: \(error.localizedDescription)")
+            }
         }
         // Voice processing changes the input node's output format; tap what it delivers.
         let format = input.outputFormat(forBus: 0)
@@ -76,14 +83,16 @@ final class IOSRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
                 onAudio: onAudio))
         self.tappedInputNode = input
         self.onFailure = onFailure
-        // Enabling voice processing (or a route change) reconfigures the I/O unit shortly after
-        // start and leaves the engine stopped until someone starts it again.
-        self.configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: self.audioEngine,
-            queue: .main)
-        { [weak self] _ in
-            MainActor.assumeIsolated { self?.restartAfterConfigurationChange() }
+        // Enabling voice processing reconfigures the I/O unit shortly after start and leaves the
+        // engine stopped until someone starts it again. Engines without it keep their stop.
+        if self.voiceProcessingActive {
+            self.configurationObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange,
+                object: self.audioEngine,
+                queue: .main)
+            { [weak self] _ in
+                MainActor.assumeIsolated { self?.restartAfterConfigurationChange() }
+            }
         }
         self.audioEngine.prepare()
         try self.audioEngine.start()

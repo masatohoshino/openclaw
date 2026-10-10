@@ -48,16 +48,21 @@ public final nonisolated class RealtimePCMStreamingAudioPlayer: PCMStreamingAudi
     private convenience init(engine: AVAudioEngine, ownsEngine: Bool) {
         let node = AVAudioPlayerNode()
         engine.attach(node)
+        // Relay audio arrives as PCM16, but connecting an Int16 player node raises on iOS (on owned
+        // and shared voice-processing engines alike), so those render Float32 and convert frames.
+        #if os(iOS)
+        let commonFormat = AVAudioCommonFormat.pcmFormatFloat32
+        #else
+        let commonFormat: AVAudioCommonFormat = ownsEngine ? .pcmFormatInt16 : .pcmFormatFloat32
+        #endif
         var format: AVAudioFormat?
         self.init(
             preparePlayback: { sampleRate in
                 node.stop()
                 if ownsEngine { engine.stop() }
                 engine.disconnectNodeOutput(node)
-                // Relay audio arrives as PCM16. A shared voice-processing engine raises when an Int16
-                // node is connected while it runs, so that path renders Float32 and converts frames.
                 guard let nextFormat = AVAudioFormat(
-                    commonFormat: ownsEngine ? .pcmFormatInt16 : .pcmFormatFloat32,
+                    commonFormat: commonFormat,
                     sampleRate: sampleRate,
                     channels: 1,
                     interleaved: false)

@@ -2155,11 +2155,29 @@ final class TalkModeManager {
         let sessionKey = self.mainSessionKey
         GatewayDiagnostics.log("talk.timeline realtime relay start attempt sessionKey=\(sessionKey)")
         let startedAt = Self.nowSeconds()
-        // Capture and playback share one voice-processing engine so speaker output is the echo
-        // reference; the capture owns the engine and resumes the player after reconfiguration.
-        let audioCapture = IOSRealtimeTalkAudioCapture()
-        let pcmPlayer = RealtimePCMStreamingAudioPlayer(sharedEngine: audioCapture.audioEngine)
-        audioCapture.onEngineRestarted = { pcmPlayer.resumePlaybackAfterEngineRestart() }
+        // The configured route decides the audio engines, so configure the session first.
+        do {
+            try configureOwnedRealtimeAudioSession()
+        } catch {
+            GatewayDiagnostics.log(
+                "talk.timeline realtime relay start failed elapsedMs=\(Self.elapsedMs(since: startedAt)) "
+                    + "error=\(error.localizedDescription)")
+            return .unavailable(Self.runtimeIssue(from: error))
+        }
+        // On built-in output, capture and playback share one voice-processing engine so speaker
+        // output is the echo reference; the capture owns it and resumes the player after
+        // reconfiguration. Headsets keep separate engines without voice processing.
+        let voiceProcessing = TalkAudioRoute.isBuiltInOutput(
+            AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType))
+        GatewayDiagnostics.log("talk realtime audio: voiceProcessing=\(voiceProcessing)")
+        let audioCapture = IOSRealtimeTalkAudioCapture(voiceProcessing: voiceProcessing)
+        let pcmPlayer: RealtimePCMStreamingAudioPlayer
+        if voiceProcessing {
+            pcmPlayer = RealtimePCMStreamingAudioPlayer(sharedEngine: audioCapture.audioEngine)
+            audioCapture.onEngineRestarted = { pcmPlayer.resumePlaybackAfterEngineRestart() }
+        } else {
+            pcmPlayer = RealtimePCMStreamingAudioPlayer()
+        }
         let relaySession = RealtimeTalkRelaySession(
             transport: .ios(gateway: gateway, route: gatewayRoute),
             options: RealtimeTalkRelaySession.Options(
@@ -2207,7 +2225,6 @@ final class TalkModeManager {
             })
         self.realtimeRelaySession = relaySession
         do {
-            try configureOwnedRealtimeAudioSession()
             try await relaySession.start()
             guard self.realtimeRelaySession === relaySession,
                   self.realtimeRelayGeneration == relayGeneration,
