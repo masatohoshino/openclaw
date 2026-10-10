@@ -2155,6 +2155,11 @@ final class TalkModeManager {
         let sessionKey = self.mainSessionKey
         GatewayDiagnostics.log("talk.timeline realtime relay start attempt sessionKey=\(sessionKey)")
         let startedAt = Self.nowSeconds()
+        // Capture and playback share one voice-processing engine so speaker output is the echo
+        // reference; the capture owns the engine and resumes the player after reconfiguration.
+        let audioCapture = IOSRealtimeTalkAudioCapture()
+        let pcmPlayer = RealtimePCMStreamingAudioPlayer(sharedEngine: audioCapture.audioEngine)
+        audioCapture.onEngineRestarted = { pcmPlayer.resumePlaybackAfterEngineRestart() }
         let relaySession = RealtimeTalkRelaySession(
             transport: .ios(gateway: gateway, route: gatewayRoute),
             options: RealtimeTalkRelaySession.Options(
@@ -2164,8 +2169,8 @@ final class TalkModeManager {
                 voice: voiceChange?.voice ?? self.realtimeVoiceSelection?.selectedVoice ?? self.realtimeVoiceId,
                 supportsVoiceSelection: supportsVoiceSelection,
                 voiceChangeId: voiceChange?.changeid),
-            audioCapture: IOSRealtimeTalkAudioCapture(),
-            pcmPlayer: RealtimePCMStreamingAudioPlayer(),
+            audioCapture: audioCapture,
+            pcmPlayer: pcmPlayer,
             onStatus: { [weak self] status in
                 guard let self, self.realtimeRelayGeneration == relayGeneration else { return }
                 self.handleRealtimeRelayStatus(status)

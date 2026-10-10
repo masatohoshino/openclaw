@@ -35,14 +35,24 @@ public final nonisolated class RealtimePCMStreamingAudioPlayer: PCMStreamingAudi
     private var inputFinished = false
 
     public convenience init() {
-        let engine = AVAudioEngine()
+        self.init(engine: AVAudioEngine(), ownsEngine: true)
+    }
+
+    /// Plays through an engine whose I/O another owner runs, such as a voice-processing capture
+    /// engine: echo cancellation only removes output rendered by its own I/O unit. That owner
+    /// starts and restarts the engine; playback only connects and stops its own node.
+    public convenience init(sharedEngine engine: AVAudioEngine) {
+        self.init(engine: engine, ownsEngine: false)
+    }
+
+    private convenience init(engine: AVAudioEngine, ownsEngine: Bool) {
         let node = AVAudioPlayerNode()
         engine.attach(node)
         var format: AVAudioFormat?
         self.init(
             preparePlayback: { sampleRate in
                 node.stop()
-                engine.stop()
+                if ownsEngine { engine.stop() }
                 engine.disconnectNodeOutput(node)
                 guard let nextFormat = AVAudioFormat(
                     commonFormat: .pcmFormatInt16,
@@ -54,8 +64,12 @@ public final nonisolated class RealtimePCMStreamingAudioPlayer: PCMStreamingAudi
                 }
                 format = nextFormat
                 engine.connect(node, to: engine.mainMixerNode, format: nextFormat)
-                engine.prepare()
-                try engine.start()
+                // A shared engine may be mid-reconfiguration here; its owner restarts it and then
+                // resumes this node through resumePlaybackAfterEngineRestart().
+                if ownsEngine {
+                    engine.prepare()
+                    try engine.start()
+                }
                 // Preserve the device-startup cushion before the first audible frames.
                 let padFrames = AVAudioFrameCount(sampleRate * 0.3)
                 if let pad = AVAudioPCMBuffer(pcmFormat: nextFormat, frameCapacity: padFrames) {
@@ -84,10 +98,12 @@ public final nonisolated class RealtimePCMStreamingAudioPlayer: PCMStreamingAudi
                     completionCallbackType: .dataPlayedBack)
                 { _ in completion() }
             },
-            startPlayback: { node.play() },
+            // A shared engine can be stopped by its owner for a reconfiguration; starting a node
+            // on a stopped engine raises, so resumePlaybackAfterEngineRestart() starts it later.
+            startPlayback: { if engine.isRunning { node.play() } },
             stopPlayback: {
                 node.stop()
-                engine.stop()
+                if ownsEngine { engine.stop() }
             },
             playbackTime: {
                 guard let renderTime = node.lastRenderTime,
@@ -166,6 +182,15 @@ public final nonisolated class RealtimePCMStreamingAudioPlayer: PCMStreamingAudi
             self.finish(StreamingPlaybackResult(finished: false, interruptedAt: interruptedAt), cancelInput: true)
         }
         return interruptedAt
+    }
+
+    /// Called by a shared engine's owner after it restarts the engine, which stops attached nodes.
+    public func resumePlaybackAfterEngineRestart() {
+        self.backendQueue.async { [weak self] in
+            guard let self else { return }
+            let resume = self.lock.withLock { self.playbackStarted && self.playbackContinuation != nil }
+            if resume { self.startPlayback() }
+        }
     }
 
     private func isCurrent(_ generation: UInt64) -> Bool {

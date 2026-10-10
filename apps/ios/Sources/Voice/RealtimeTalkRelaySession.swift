@@ -25,24 +25,42 @@ private func makeRealtimeAudioTapBlock(
 @MainActor
 final class IOSRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
     private static let bufferSize: AVAudioFrameCount = 2048
-    private let audioEngine = AVAudioEngine()
+    /// The reply player renders on this engine too: voice processing only cancels echo of
+    /// output from its own I/O unit, so a separate playback engine would leave it uncancelled.
+    let audioEngine = AVAudioEngine()
     private var tappedInputNode: AVAudioInputNode?
+    private var voiceProcessingActive = false
+    private var configurationObserver: NSObjectProtocol?
+    private var onFailure: (@MainActor (String) -> Void)?
+    /// Restarting the engine stops attached nodes; the owner of the reply player resumes it.
+    var onEngineRestarted: (@MainActor () -> Void)?
 
     var suppressesInputDuringOutput: Bool {
+        // With echo cancellation the built-in speaker can stay full duplex. Without it, speaker
+        // output bleeds into the mic even in voiceChat mode; headsets retain full-duplex barge-in.
+        guard !self.voiceProcessingActive else { return false }
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
-        // Built-in speaker output can bleed into the mic even in voiceChat mode.
-        // Headsets retain full-duplex barge-in.
         return outputs.contains { $0.portType == .builtInSpeaker }
     }
 
     func start(
         targetSampleRate: Double,
         onAudio: @escaping @Sendable (RealtimeTalkAudioFrame) -> Void,
-        onFailure _: @escaping @MainActor (String) -> Void) throws
+        onFailure: @escaping @MainActor (String) -> Void) throws
     {
         self.stop()
         let input = self.audioEngine.inputNode
-        let format = input.inputFormat(forBus: 0)
+        // Must precede engine start; failure keeps the half-duplex speaker behavior.
+        do {
+            try input.setVoiceProcessingEnabled(true)
+            self.voiceProcessingActive = true
+        } catch {
+            self.voiceProcessingActive = false
+            GatewayDiagnostics.log(
+                "talk realtime audio: voice processing unavailable: \(error.localizedDescription)")
+        }
+        // Voice processing changes the input node's output format; tap what it delivers.
+        let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw NSError(domain: "RealtimeTalkRelay", code: 5, userInfo: [
                 NSLocalizedDescriptionKey: "Invalid realtime audio input format",
@@ -57,16 +75,43 @@ final class IOSRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
                 targetSampleRate: targetSampleRate,
                 onAudio: onAudio))
         self.tappedInputNode = input
+        self.onFailure = onFailure
+        // Enabling voice processing (or a route change) reconfigures the I/O unit shortly after
+        // start and leaves the engine stopped until someone starts it again.
+        self.configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: self.audioEngine,
+            queue: .main)
+        { [weak self] _ in
+            MainActor.assumeIsolated { self?.restartAfterConfigurationChange() }
+        }
         self.audioEngine.prepare()
         try self.audioEngine.start()
     }
 
     func stop() {
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+            self.configurationObserver = nil
+        }
+        self.onFailure = nil
         // Reading inputNode creates RemoteIO even when capture never started.
         // Cold relay cancellation must only tear down an already installed tap.
         self.tappedInputNode?.removeTap(onBus: 0)
         self.tappedInputNode = nil
         self.audioEngine.stop()
+    }
+
+    private func restartAfterConfigurationChange() {
+        guard self.tappedInputNode != nil, !self.audioEngine.isRunning else { return }
+        do {
+            self.audioEngine.prepare()
+            try self.audioEngine.start()
+            self.onEngineRestarted?()
+        } catch {
+            // The relay presents this inside its localized "Realtime audio failed" issue.
+            self.onFailure?(error.localizedDescription)
+        }
     }
 }
 
