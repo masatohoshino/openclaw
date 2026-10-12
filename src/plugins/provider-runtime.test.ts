@@ -1,7 +1,7 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 /** Exercises provider runtime loading, ordering, and manifest-backed discovery paths. */
-import { createRequireRecord, createZeroUsageFixture } from "openclaw/plugin-sdk/test-fixtures";
+import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { ModelProviderConfig, OpenClawConfig } from "../config/types.js";
@@ -10,8 +10,11 @@ import type { ProviderExternalAuthProfile } from "./provider-external-auth.types
 import type { ProviderRuntimeModel } from "./provider-runtime-model.types.js";
 import {
   createProviderRuntimeLogger,
+  DEMO_SANITIZED_MESSAGE,
+  DEMO_TOOL,
   expectAugmentedCodexCatalog,
   expectCodexMissingAuthHint,
+  PROVIDER_RUNTIME_TEST_MODEL as MODEL,
 } from "./provider-runtime.test-support.js";
 import { withPluginRuntimeRegistryScope } from "./runtime/gateway-request-scope.js";
 import { withPluginRuntimeGenerationScope } from "./runtime/generation-scope.js";
@@ -110,38 +113,9 @@ let createEmptyPluginRegistry: typeof import("./registry-empty.js").createEmptyP
 let resetPluginRuntimeStateForTest: typeof import("./runtime.js").resetPluginRuntimeStateForTest;
 let setActivePluginRegistry: typeof import("./runtime.js").setActivePluginRegistry;
 
-const MODEL: ProviderRuntimeModel = {
-  id: "demo-model",
-  name: "Demo Model",
-  api: "openai-responses",
-  provider: "demo",
-  baseUrl: "https://api.example.com/v1",
-  reasoning: true,
-  input: ["text"],
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  contextWindow: 128_000,
-  maxTokens: 8_192,
-};
 const DEMO_PROVIDER_ID = "demo";
 const EMPTY_MODEL_REGISTRY = { find: () => null } as never;
 const DEMO_REPLAY_MESSAGES: AgentMessage[] = [{ role: "user", content: "hello", timestamp: 1 }];
-const DEMO_SANITIZED_MESSAGE: AgentMessage = {
-  role: "assistant",
-  content: [{ type: "text", text: "sanitized" }],
-  api: MODEL.api,
-  provider: MODEL.provider,
-  model: MODEL.id,
-  usage: createZeroUsageFixture(),
-  stopReason: "stop",
-  timestamp: 2,
-};
-const DEMO_TOOL = {
-  name: "demo-tool",
-  label: "Demo tool",
-  description: "Demo tool",
-  parameters: { type: "object", properties: {} },
-  execute: vi.fn(async () => ({ content: [], details: undefined })),
-} as unknown as AnyAgentTool;
 
 function createOpenAiCatalogProviderPlugin(
   overrides: Partial<ProviderPlugin> = {},
