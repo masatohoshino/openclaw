@@ -683,6 +683,11 @@ describe("minimax provider hooks", () => {
       tokenEndpoint: "https://account.minimaxi.com/oauth2/token",
     },
     {
+      baseUrl: "https://api.minimax.cn/anthropic",
+      runtimeBaseUrl: "https://api.minimax.io/anthropic",
+      tokenEndpoint: "https://account.minimaxi.com/oauth2/token",
+    },
+    {
       baseUrl: "https://api.minimax.io/anthropic",
       tokenEndpoint: "https://account.minimax.io/oauth2/token",
     },
@@ -739,6 +744,12 @@ describe("minimax provider hooks", () => {
     {
       case: "a Global credential after the base URL moved to CN",
       baseUrl: "https://api.minimaxi.com/anthropic",
+      runtimeBaseUrl: "https://api.minimax.io/anthropic",
+      tokenEndpoint: "https://account.minimax.io/oauth2/token",
+    },
+    {
+      case: "a Global credential after the base URL moved to the current CN host",
+      baseUrl: "https://api.minimax.cn/anthropic",
       runtimeBaseUrl: "https://api.minimax.io/anthropic",
       tokenEndpoint: "https://account.minimax.io/oauth2/token",
     },

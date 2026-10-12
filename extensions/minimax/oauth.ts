@@ -257,6 +257,9 @@ function resolveMiniMaxRegionFromBaseUrl(baseUrl: string | undefined): MiniMaxRe
   } catch {
     return undefined;
   }
+  if (hostname === "api.minimax.cn") {
+    return "cn";
+  }
   const regions: MiniMaxRegion[] = ["global", "cn"];
   return regions.find(
     (region) => new URL(MINIMAX_OAUTH_CONFIG[region].baseUrl).hostname === hostname,
