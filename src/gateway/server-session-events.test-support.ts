@@ -75,6 +75,7 @@ const projection = {
     return { rowContext: { projectedAgentRuns: buildProjectedAgentRunIndex() } };
   },
   ensureMaterialized: async () => {},
+  ancestorRows: () => [],
   prepareMembership: async () => {},
   needsMembershipPreparation: () => false,
   withPreparedExactRows: (async (queries, consume) => {
@@ -131,6 +132,13 @@ const projection = {
   },
   snapshot(query: { key: string; agentId: string }) {
     return { row: loadGatewaySessionRowMock(query.key, { agentId: query.agentId }) };
+  },
+  describe(query: { key: string; agentId: string }) {
+    const row = projection.snapshot(query).row;
+    return row ? { materialized: { row } } : undefined;
+  },
+  present(record: Parameters<SessionRowProjection["present"]>[0]) {
+    return record.materialized.row;
   },
 } as unknown as SessionRowProjection;
 

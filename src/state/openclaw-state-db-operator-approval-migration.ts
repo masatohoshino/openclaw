@@ -1,5 +1,6 @@
 // Doctor-only repair for the operator approval kind constraint.
 import type { DatabaseSync } from "node:sqlite";
+import { getAdmittedSqliteSchemaFacts } from "../infra/sqlite-schema-facts.js";
 import { SqliteSchemaMismatchError } from "../infra/sqlite-schema-issues.js";
 import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
 import { tableExists } from "./openclaw-state-db-schema-helpers.js";
@@ -36,9 +37,13 @@ const COLUMNS = [
 ] as const;
 
 function tableSql(db: DatabaseSync): string | undefined {
+  const schema = getAdmittedSqliteSchemaFacts(db);
+  if (schema) {
+    return schema.tableSql.get("operator_approvals") ?? undefined;
+  }
   const row = db
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'operator_approvals'")
-    .get() as { sql?: unknown } | undefined;
+    .get();
   return typeof row?.sql === "string" ? row.sql : undefined;
 }
 

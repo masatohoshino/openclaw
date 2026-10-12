@@ -6,7 +6,7 @@ import { GatewayScheduler } from "../infra/gateway-scheduler.js";
 import { clearGatewayAgentCliShim } from "../infra/openclaw-cli-shim.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
-import { captureRemoteModelCatalogStartupSnapshot } from "../model-catalog/remote-overlay.js";
+import { prepareRemoteModelCatalogStartupSnapshot } from "../model-catalog/remote-overlay.js";
 import {
   LegacyPluginSdkResourceHost,
   bindLegacyPluginSdkResourceHost,
@@ -30,21 +30,6 @@ const loadGatewayModelCatalogModule = createLazyRuntimeModule(
   () => import("./server-model-catalog.js"),
 );
 const bindGatewayModelCatalog = createLazyRuntimeMethodBinder(loadGatewayModelCatalogModule);
-const loadWorkerEnvironmentStartupModule = createLazyRuntimeModule(
-  () => import("./server-worker-environment-startup.js"),
-);
-const loadWorkerPlacementStartupModule = createLazyRuntimeModule(
-  () => import("./server-worker-placement-startup.js"),
-);
-const loadGatewayStartupEarlyModule = createLazyRuntimeModule(
-  () => import("./server-startup-early.js"),
-);
-const loadGatewayPluginBootstrapModule = createLazyRuntimeModule(
-  () => import("./server-plugin-bootstrap.js"),
-);
-const loadGatewayShutdownModule = createLazyRuntimeModule(
-  () => import("./server-shutdown.runtime.js"),
-);
 
 const log = createSubsystemLogger("gateway");
 const logDiscovery = log.child("discovery");
@@ -149,8 +134,8 @@ async function createGatewayKernelWithSdkHost(
     throw new Error("Gateway boot ID must contain 1 to 96 characters");
   }
   const bootId = suppliedBootId ?? randomUUID();
-  // Capture before bootstrap yields or creates workers; concurrent downloads need a restart.
-  captureRemoteModelCatalogStartupSnapshot();
+  // Publish before bootstrap creates catalog consumers; later downloads use explicit adoption.
+  await prepareRemoteModelCatalogStartupSnapshot();
   // Retain cancellation before bootstrap owns resources or an update replaces its chunk.
   const { cancelPreparedModelRuntimeRefresh } = await import("../agents/prepared-model-runtime.js");
   ensureOpenClawCliOnPath();
@@ -169,7 +154,7 @@ async function createGatewayKernelWithSdkHost(
         opts,
         log,
         logSecrets,
-        loadWorkerEnvironmentStartupModule,
+        loadWorkerEnvironmentStartupModule: () => import("./server-worker-environment-startup.js"),
         formatRuntimeGatewayAuthTokenWarning,
       }),
     );
@@ -196,8 +181,6 @@ async function createGatewayKernelWithSdkHost(
         logPlugins,
         gatewayRuntime,
         resolveChannelRuntime: getChannelRuntime,
-        loadWorkerEnvironmentStartupModule,
-        loadWorkerPlacementStartupModule,
       }),
     );
     kernelState = runtime;
@@ -206,7 +189,7 @@ async function createGatewayKernelWithSdkHost(
     // Resolve and retain the complete shutdown graph while the install is healthy.
     const shutdownRuntime = await runtime.startupTrace.measure(
       "gateway.shutdown-runtime-import",
-      async () => (await loadGatewayShutdownModule()).prepareGatewayShutdownRuntime(),
+      async () => (await import("./server-shutdown.runtime.js")).prepareGatewayShutdownRuntime(),
     );
     const preparedLifecycleRuntime = await runtime.startupTrace.measure("gateway.lifecycle", () =>
       prepareGatewayLifecycle({
@@ -238,8 +221,6 @@ async function createGatewayKernelWithSdkHost(
         logDiscovery,
         logHealth,
         logChannels,
-        loadGatewayStartupEarlyModule,
-        loadGatewayPluginBootstrapModule,
         loadGatewayModelCatalog,
         loadGatewayModelCatalogSnapshot,
         readPreparedGatewayModelCatalog,
@@ -262,14 +243,15 @@ async function createGatewayKernelWithSdkHost(
     startupError = error;
   }
   return await rethrowGatewayStartupError(startupError, async () => {
+    const prelude = pluginMetadata.beginClose();
     scheduler.beginClose();
-    await pluginMetadata.beginClose();
+    await prelude;
     if (lifecycleRuntime) {
       // The lifecycle releases metadata only after its required joins succeed.
       await lifecycleRuntime.closeOnStartupFailure();
     } else {
       closeStartupTrace?.();
-      kernelState?.mentionInbox.dispose();
+      await kernelState?.mentionInbox.dispose();
       await scheduler.stop();
       await sdkResourceHost.drainWork();
       const cleanupErrors: unknown[] = [];

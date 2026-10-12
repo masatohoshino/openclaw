@@ -72,12 +72,14 @@ test.each(["delete", "archive", "recover"] as const)(
     let serializedReclaim: Promise<unknown> | undefined;
     const moveBarrier = createGatewayWorkerPlacementMoveBarrier({
       placements: { waitForTurnClaimRelease: async () => {} },
+      awaitTurnClaimRelease: (claimSessionId, wait) =>
+        service.awaitTurnClaimRelease(claimSessionId, wait),
       loadSessionRuntime: async () => {
         moveLoading.resolve();
         await releaseMove.promise;
         return {
           managedWorktrees: {
-            findLiveByOwner: () => ({
+            findLiveByOwner: async () => ({
               id: "order-worktree",
               ownerId: sessionKey,
               path: "/fixture/worktree",
@@ -99,8 +101,11 @@ test.each(["delete", "archive", "recover"] as const)(
       {
         dispatch: unexpectedPlacementOperation,
         forceDestroyEnvironment: unexpectedPlacementOperation,
+        getEnvironmentAttachedSessionIds: () => [],
+        readEnvironmentSessionIds: unexpectedPlacementOperation,
         reconcile: unexpectedPlacementOperation,
         reconcileActive: unexpectedPlacementOperation,
+        isInterruptedTurn: () => false,
         resumeProvisioning: unexpectedPlacementOperation,
         move: async () => {
           await moveBarrier({

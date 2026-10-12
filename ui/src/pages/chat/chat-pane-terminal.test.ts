@@ -5,9 +5,18 @@ import { describe, expect, it, vi } from "vitest";
 import { decodeResumeHandoff } from "../../../../src/shared/resume-handoff.js";
 import type { GatewayBrowserClient, GatewayHelloOk } from "../../api/gateway.ts";
 import type { GatewaySessionRow } from "../../api/types.ts";
-import { createSessionCapabilityFixture, createTestChatPane } from "./chat-pane.test-support.ts";
-import { createSessionWorkspaceProps } from "./components/chat-session-workspace.ts";
+import {
+  createPaneHeaderWorkspaceFixture,
+  createSessionCapabilityFixture,
+  createTestChatPane,
+} from "./chat-pane.test-support.ts";
 import { openSlot } from "./sidebar-layout.ts";
+
+function selectPanel(container: HTMLElement, value: string) {
+  const menu = container.querySelector(".chat-pane__layout-menu")!;
+  menu.dispatchEvent(new CustomEvent("wa-select", { detail: { item: { value } } }));
+  menu.dispatchEvent(new CustomEvent("wa-after-hide"));
+}
 
 function desktopHello(methods: string[], scopes: string[]): GatewayHelloOk {
   return {
@@ -26,7 +35,7 @@ function createTerminalPane(client: GatewayBrowserClient) {
   const container = document.createElement("div");
   const paint = (
     row: GatewaySessionRow | undefined,
-    workspace = createSessionWorkspaceProps(state),
+    workspace = createPaneHeaderWorkspaceFixture(state),
   ) => render(pane.renderPaneHeader(workspace, row, false, undefined, false, null), container);
   return { pane, state, container, paint };
 }
@@ -117,26 +126,24 @@ describe("chat pane terminal action", () => {
     state.terminalAvailable = true;
     const renderHeader = () =>
       paint(session, {
-        ...createSessionWorkspaceProps(state),
+        ...createPaneHeaderWorkspaceFixture(state),
         onToggleTerminal: state.terminalAvailable
           ? () => state.updateSidebarLayout(openSlot(state.sidebarLayout, "terminal"))
           : undefined,
       });
     const panelActions = () =>
-      container.querySelector<
-        HTMLElement & { panelActions: Array<{ id: string; onActivate: () => void }> }
-      >("openclaw-chat-header-session-menu")?.panelActions ?? [];
+      container.querySelectorAll(".chat-pane__layout-menu wa-dropdown-item");
 
     renderHeader();
-    expect(container.querySelector('[aria-label="Toggle terminal"]')).toBeNull();
-    panelActions()
-      .find((action) => action.id === "terminal")
-      ?.onActivate();
+    expect(container.querySelector('button[aria-label="Toggle terminal"]')).toBeNull();
+    selectPanel(container, "terminal");
     expect(state.sidebarLayout.columns[0]?.panels.map((panel) => panel.slot)).toContain("terminal");
 
     state.terminalAvailable = false;
     renderHeader();
-    expect(panelActions().some((action) => action.id === "terminal")).toBe(false);
+    expect([...panelActions()].some((action) => action.getAttribute("value") === "terminal")).toBe(
+      false,
+    );
   });
 
   it("exposes Desktop as a side-panel action only for observable session targets", () => {
@@ -149,20 +156,18 @@ describe("chat pane terminal action", () => {
     } satisfies GatewaySessionRow;
     const renderHeader = paint;
     const panelActionIds = () =>
-      container
-        .querySelector<HTMLElement & { panelActions: Array<{ id: string }> }>(
-          "openclaw-chat-header-session-menu",
-        )
-        ?.panelActions.map((action) => action.id) ?? [];
+      [...container.querySelectorAll(".chat-pane__layout-menu wa-dropdown-item")].map((item) =>
+        item.getAttribute("value"),
+      );
     const snapshot = pane.context.gateway.snapshot;
     snapshot.hello = desktopHello([], ["operator.admin"]);
     renderHeader(localSession);
-    expect(container.querySelector('[aria-label="Toggle desktop panel"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Toggle desktop panel"]')).toBeNull();
 
     snapshot.hello = desktopHello(["desktop.observe"], ["operator.admin"]);
     const onToggleDesktop = vi.fn();
     const renderDesktopHeader = (session: GatewaySessionRow | undefined) =>
-      paint(session, { ...createSessionWorkspaceProps(state), onToggleDesktop });
+      paint(session, { ...createPaneHeaderWorkspaceFixture(state), onToggleDesktop });
     {
       const targetCases: Array<{
         name: string;
@@ -187,12 +192,9 @@ describe("chat pane terminal action", () => {
       ];
       for (const testCase of targetCases) {
         renderDesktopHeader(testCase.session);
-        expect(container.querySelector('[aria-label="Toggle desktop panel"]')).toBeNull();
+        expect(container.querySelector('button[aria-label="Toggle desktop panel"]')).toBeNull();
         expect(panelActionIds(), testCase.name).toContain("desktop");
-        const menu = container.querySelector<
-          HTMLElement & { panelActions: Array<{ id: string; onActivate: () => void }> }
-        >("openclaw-chat-header-session-menu");
-        menu?.panelActions.find((action) => action.id === "desktop")?.onActivate();
+        selectPanel(container, "desktop");
         expect(onToggleDesktop, testCase.name).toHaveBeenCalledTimes(1);
         onToggleDesktop.mockClear();
       }
@@ -206,17 +208,17 @@ describe("chat pane terminal action", () => {
           execNode: "must-not-fall-back",
           placement: placement as GatewaySessionRow["placement"],
         });
-        expect(container.querySelector('[aria-label="Toggle desktop panel"]')).toBeNull();
+        expect(container.querySelector('button[aria-label="Toggle desktop panel"]')).toBeNull();
         expect(panelActionIds()).not.toContain("desktop");
       }
 
       renderDesktopHeader(undefined);
-      expect(container.querySelector('[aria-label="Toggle desktop panel"]')).toBeNull();
+      expect(container.querySelector('button[aria-label="Toggle desktop panel"]')).toBeNull();
       expect(panelActionIds()).not.toContain("desktop");
 
       snapshot.hello = desktopHello(["desktop.observe"], ["operator.read"]);
       renderDesktopHeader(localSession);
-      expect(container.querySelector('[aria-label="Toggle desktop panel"]')).toBeNull();
+      expect(container.querySelector('button[aria-label="Toggle desktop panel"]')).toBeNull();
     }
   });
 
@@ -230,11 +232,9 @@ describe("chat pane terminal action", () => {
     } satisfies GatewaySessionRow;
     const renderHeader = () => paint(session);
     const panelActionIds = () =>
-      container
-        .querySelector<HTMLElement & { panelActions: Array<{ id: string }> }>(
-          "openclaw-chat-header-session-menu",
-        )
-        ?.panelActions.map((action) => action.id) ?? [];
+      [...container.querySelectorAll(".chat-pane__layout-menu wa-dropdown-item")].map((item) =>
+        item.getAttribute("value"),
+      );
 
     state.browserPanelAvailable = false;
     renderHeader();
@@ -243,16 +243,9 @@ describe("chat pane terminal action", () => {
 
     state.browserPanelAvailable = true;
     const onToggleBrowser = vi.fn();
-    paint(session, { ...createSessionWorkspaceProps(state), onToggleBrowser });
-    container.querySelector<HTMLButtonElement>(".chat-browser-panel-toggle")?.click();
-    expect(onToggleBrowser).toHaveBeenCalledOnce();
+    paint(session, { ...createPaneHeaderWorkspaceFixture(state), onToggleBrowser });
     expect(panelActionIds()).toContain("browser");
-    container
-      .querySelector<HTMLElement & { panelActions: Array<{ id: string; onActivate: () => void }> }>(
-        "openclaw-chat-header-session-menu",
-      )
-      ?.panelActions.find((action) => action.id === "browser")
-      ?.onActivate();
-    expect(onToggleBrowser).toHaveBeenCalledTimes(2);
+    selectPanel(container, "browser");
+    expect(onToggleBrowser).toHaveBeenCalledOnce();
   });
 });
