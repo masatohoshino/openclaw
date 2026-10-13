@@ -116,14 +116,10 @@ describe("transcribeDeepgramAudio", () => {
     expect(result.text).toBe(expected);
   });
 
-  it.each([
-    { name: "omitted", channels: [{ alternatives: [{}] }] },
-    {
-      name: "silent across all channels",
-      channels: [{ alternatives: [{ transcript: "" }] }, { alternatives: [{ transcript: "   " }] }],
-    },
-  ])("throws when transcripts are $name", async ({ channels }) => {
-    const { fetchFn } = createRequestCaptureJsonFetch({ results: { channels } });
+  it("throws when transcripts are omitted", async () => {
+    const { fetchFn } = createRequestCaptureJsonFetch({
+      results: { channels: [{ alternatives: [{}] }] },
+    });
 
     await expect(
       transcribeDeepgramAudio({
@@ -131,6 +127,24 @@ describe("transcribeDeepgramAudio", () => {
         fetchFn,
       }),
     ).rejects.toThrow("Audio transcription response missing transcript");
+  });
+
+  it("returns an empty transcript when every channel is silent", async () => {
+    const { fetchFn } = createRequestCaptureJsonFetch({
+      results: {
+        channels: [
+          { alternatives: [{ transcript: "" }] },
+          { alternatives: [{ transcript: "   " }] },
+        ],
+      },
+    });
+
+    const result = await transcribeDeepgramAudio({
+      ...audioRequest,
+      fetchFn,
+    });
+
+    expect(result.text).toBe("");
   });
 
   it.each([

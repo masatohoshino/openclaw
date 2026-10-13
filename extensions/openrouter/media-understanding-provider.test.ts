@@ -19,18 +19,12 @@ const { assertOkOrThrowHttpErrorMock, postJsonRequestMock, resolveProviderHttpRe
     })),
   }));
 
-vi.mock("openclaw/plugin-sdk/provider-http", () => ({
+vi.mock("openclaw/plugin-sdk/provider-http", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/provider-http")>()),
   assertOkOrThrowHttpError: assertOkOrThrowHttpErrorMock,
   postJsonRequest: postJsonRequestMock,
   // Pass-through: bounded-reader enforcement is tested via bounded-reader unit tests.
   readProviderJsonResponse: async (response: { json(): Promise<unknown> }) => response.json(),
-  requireTranscriptionText: (value: string | undefined, message: string) => {
-    const text = value?.trim();
-    if (!text) {
-      throw new Error(message);
-    }
-    return text;
-  },
   resolveProviderHttpRequestConfig: resolveProviderHttpRequestConfigMock,
 }));
 
@@ -195,5 +189,30 @@ describe("openrouter media understanding provider", () => {
       }),
     ).rejects.toThrow("OpenRouter STT could not resolve audio format");
     expect(postJsonRequestMock).not.toHaveBeenCalled();
+  });
+
+  const transcribeWavResponse = (payload: unknown) => {
+    postJsonRequestMock.mockResolvedValue({
+      response: new Response(JSON.stringify(payload), { status: 200 }),
+      release: vi.fn(async () => {}),
+    });
+    return transcribeOpenRouterAudio({
+      buffer: Buffer.from("audio"),
+      fileName: "voice.wav",
+      mime: "audio/wav",
+      apiKey: "sk-openrouter",
+      timeoutMs: 5_000,
+      fetchFn: fetch,
+    });
+  };
+
+  it("returns an empty transcript for audio without detected speech", async () => {
+    await expect(transcribeWavResponse({ text: "" })).resolves.toMatchObject({ text: "" });
+  });
+
+  it("throws when the response omits text", async () => {
+    await expect(transcribeWavResponse({})).rejects.toThrow(
+      "OpenRouter transcription response missing text",
+    );
   });
 });

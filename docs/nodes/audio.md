@@ -15,7 +15,7 @@ When audio understanding is enabled (or auto-detected), OpenClaw:
 
 1. Locates the first audio attachment (local path or URL) and downloads it if needed.
 2. Enforces `maxBytes` before sending to each model entry.
-3. Runs the first eligible model entry in order (provider or CLI); if an entry fails or skips (size/timeout), the next entry is tried.
+3. Runs the first eligible model entry in order (provider or CLI); if an entry fails or skips (size/timeout), the next entry is tried. A provider that returns an empty transcript for audio without detected speech is skipped, not failed; a response without a transcript field is still a failure.
 4. On success, replaces `Body` with an `[Audio]` block and sets `{{Transcript}}`.
 
 When transcription succeeds, `CommandBody`/`RawBody` are also set to the transcript so slash commands still work. With `--verbose`, logs show when transcription runs and when it replaces the body.

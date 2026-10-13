@@ -16,6 +16,7 @@ function readDeepgramTranscript(payload: Record<string, unknown>): string | unde
     throw new Error("Audio transcription failed: malformed JSON response");
   }
   const transcripts: string[] = [];
+  let hasTranscript = false;
   for (const rawChannel of results.channels) {
     const channel = asOptionalRecord(rawChannel);
     if (!channel) {
@@ -31,6 +32,7 @@ function readDeepgramTranscript(payload: Record<string, unknown>): string | unde
     if (alternative.transcript !== undefined && typeof alternative.transcript !== "string") {
       throw new Error("Audio transcription failed: malformed JSON response");
     }
+    hasTranscript ||= alternative.transcript !== undefined;
     const text = alternative.transcript?.trim();
     if (text) {
       transcripts.push(text);
@@ -38,7 +40,8 @@ function readDeepgramTranscript(payload: Record<string, unknown>): string | unde
   }
   // Multichannel results contain independent tracks, not alternative hypotheses.
   // Retain the best transcript per track in provider order, including repeats.
-  return transcripts.join("\n\n");
+  // Present but blank transcripts on every track are silence, not a missing field.
+  return hasTranscript ? transcripts.join("\n\n") : undefined;
 }
 
 export async function transcribeDeepgramAudio(
