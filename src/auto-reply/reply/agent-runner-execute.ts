@@ -235,7 +235,9 @@ export async function executePreparedReplyAgentRun(
           },
         });
       } catch (persistError) {
-        logVerbose(`user turn not kept after failed preflight: ${formatErrorMessage(persistError)}`);
+        logVerbose(
+          `user turn not kept after failed preflight: ${formatErrorMessage(persistError)}`,
+        );
       }
     }
     throw error;

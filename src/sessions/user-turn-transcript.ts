@@ -391,7 +391,10 @@ export function createUserTurnTranscriptRecorder(
             updateMode: candidateUpdateMode,
             beforeMessageWrite: params.beforeMessageWrite ?? resolvedTarget.beforeMessageWrite,
             beforeFreshMessageCommit: options.beforeFreshMessageCommit
-              ? composeSessionSourceAssertion([options.beforeFreshMessageCommit, assertOriginalInput])
+              ? composeSessionSourceAssertion([
+                  options.beforeFreshMessageCommit,
+                  assertOriginalInput,
+                ])
               : assertOriginalInput,
             onOriginalInputCommitted: notifyOriginalInputCommitted,
             onCommitted: (committed, acceptCompletion) => {
