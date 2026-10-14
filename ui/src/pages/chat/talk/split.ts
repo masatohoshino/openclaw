@@ -40,6 +40,10 @@ export class SplitTalkTransport implements RealtimeTalkTransport {
   }
 
   stop(): void {
+    this.close("abort");
+  }
+
+  private close(disposition: "abort" | "detach"): void {
     this.closed = true;
     const capture = this.capture;
     this.capture = null;
@@ -47,7 +51,9 @@ export class SplitTalkTransport implements RealtimeTalkTransport {
     this.options.playback.stop();
     this.chatAbort?.abort();
     if (this.runId) {
-      void this.abortRun(this.runId);
+      if (disposition === "abort") {
+        void this.abortRun(this.runId);
+      }
       this.runId = undefined;
     }
     this.callbacks.onInputLevel?.(0);
@@ -154,7 +160,10 @@ export class SplitTalkTransport implements RealtimeTalkTransport {
     if (this.closed) {
       return;
     }
-    this.stop();
+    // Accepted chat runs outlive client failures, so their answers still reach
+    // history; only explicit Stop cancels them. Status callbacks can stop Talk
+    // synchronously, so detach first.
+    this.close("detach");
     this.callbacks.onStatus?.("error", formatUiError(error));
   }
 }

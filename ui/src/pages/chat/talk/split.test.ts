@@ -333,6 +333,33 @@ it("stopping during the model response aborts the owned run and ignores late out
   expect(tracks).toHaveLength(1);
 });
 
+it("leaves the accepted run running when waiting for its answer times out", async () => {
+  const h = harness();
+  await h.state.toggleRealtimeTalk();
+  const sent = createDeferred();
+  const impl = h.request.getMockImplementation()!;
+  h.request.mockImplementation(async (method, params) => {
+    const result = await impl(method, params);
+    if (method === "chat.send") {
+      sent.resolve();
+    }
+    return result;
+  });
+  h.utterance();
+  await sent.promise;
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(h.state.realtimeTalkStatus).toBe("error");
+  expect(h.state.realtimeTalkDetail).toBe("OpenClaw tool call timed out");
+  expect(h.request.mock.calls.some(([method]) => method === "chat.abort")).toBe(false);
+  h.emit("chat", {
+    runId: h.getRunId(),
+    state: "final",
+    message: { role: "assistant", content: [{ type: "text", text: "Answered later" }] },
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.request.mock.calls.some(([method]) => method === "tts.speak")).toBe(false);
+});
+
 it("keeps listening for the model answer after an empty final", async () => {
   const h = harness();
   const sent = createDeferred();
