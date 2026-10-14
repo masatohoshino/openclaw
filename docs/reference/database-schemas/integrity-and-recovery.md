@@ -62,6 +62,25 @@ and the admission policy revision. Commit and build
 IDs do not invalidate seals for otherwise compatible builds. Maintainers must advance
 the policy revision for migrations or schema-version changes not reflected in canonical
 SQL, and for changes to validation rules or serialized admission facts.
+Same-version session columns are admission prerequisites, not optional reader
+projections. Declare them in `STARTUP_ADDITIVE_AGENT_COLUMN_DEFINITIONS`: the
+same declarations drive installation, pending-repair detection, and saved-catalog
+admission. Seal loading checks the saved catalog for these columns before publishing
+any completed-validation facts. Absent feature-local tables remain absent.
+An existing table missing a required column cannot reuse its seal, even when
+the schema version is unchanged.
+
+Startup keeps each affected agent unavailable until its writable admission owner
+installs the columns under existing maintenance authority and publishes the
+committed schema facts. Session preparation and readers run afterward; a cold
+reader refuses pending additive repairs before preparing session queries.
+Same-schema managed activations rely on this ordering even when no version
+crossing invokes Doctor. Do not add an independent reader migration or controller
+SQL repair. Regression coverage must prove that every column installed by the
+same-version installer is represented in admission facts. A complete prior-build
+catalog retains seal reuse without validation SQL; adding requirements alone does
+not invalidate seals whose catalogs already satisfy them.
+
 Updating from an older seal-identity format requires one full validation;
 subsequent compatible builds reuse the new seal. Managed drain followed by an
 interrupt uses ordinary close and can publish a seal once its writers settle.
@@ -247,6 +266,14 @@ separate from Tasks runtime removal, which adds no data-copy or table-drop migra
 Shared-state integrity, schema, version, and ownership checks remain in place.
 
 Schema compatibility preflight can read agent schema headers without a full integrity scan. For ordinary rollback-mode agent databases and complete WAL families, a read-only child reads the schema version and optional writer build in one fresh SQLite transaction, including committed WAL changes, without copying unrelated database contents. Its native connection and physical identity remain owned through close; cancellation and timeout wait for child closure. Parent-side diagnostics do not open or close the live agent file, preserving the parent's SQLite locks. As with the previous online-backup reader, native SQLite may update SHM read marks or rebuild existing SHM after a quiescent family reopens; the database and WAL contents remain unchanged. The Gateway carries successful header facts from admission to its later compatibility preflight only while the database, WAL, and rollback-journal files are unchanged. Changed or uncertain files are inspected again. Full readiness and writable admission retain their existing validation and fresh authority checks.
+
+Shared-state schema preflight uses the same isolated reader when its caller
+explicitly selects online inspection (`preserveSourceArtifacts: false`).
+Version, schema shape, agent registry, and deletion-journal facts share one read
+transaction without copying unrelated payloads. This permits SQLite SHM read
+marks; it does not grant migration or repair authority. Default and explicit
+artifact-preserving inspections retain their private snapshots, and an inherited
+snapshot or startup/Doctor admission keeps its existing owner.
 
 Private snapshots remain necessary for artifact-preserving inspection without a reusable seal, incomplete WAL families whose inspection would create source sidecars, and rollback journals requiring private recovery. Those cases use the existing snapshot owner and deadline; ordinary inspection errors do not trigger a full-copy fallback. A matching clean-close seal permits startup to read the unchanged, checkpointed source directly. Other live files use native SQLite reads; immutable reads require a sealed source or a verified private or explicit consolidated copy. `openclaw database preflight` performs the release-local shape comparison for an explicit copied file.
 
@@ -501,6 +528,19 @@ preparation leaves the agent degraded with the recorded reason; it does not stop
 healthy agents. Shared-state database failures retain their existing startup
 checks.
 
+Startup deletion-journal checks use at most eight concurrent reads, so releasing
+more than 128 agents from preparation readiness does not exhaust the shared
+state-read pool. If other readers saturate that pool, startup retries only the
+typed capacity rejection up to four attempts with cancellable backoff. Deletion
+tombstones, genuine read failures, and exhausted retries still leave the agent
+degraded. Gateway ownership and database identity are checked after waiting for
+admission and before consuming the read result.
+
+Configured ACP-only session stores follow the same deferred inspection and
+session preparation path, including IDs from `acp.defaultAgent`,
+`acp.allowedAgents`, and ACP runtime aliases. They do not require native auth or
+model publications unless the ID also belongs to the configured agent roster.
+
 Pending preparation does not produce a startup migration warning. Status and
 Doctor derive failed inspection and preparation warnings from current agent
 admission decisions, with the reason and repair guidance. Successful preparation
@@ -577,7 +617,20 @@ free space of at least twice the uncompressed store directory size. It takes
 verified WAL-aware SQLite backups, streams copies into a fresh NOCOW sibling,
 preserves ownership, modes, and access/default ACLs, checks copy size and
 `PRAGMA quick_check`, then atomically exchanges directories.
-It also re-records the relocated identity of any recorded migration recovery
+Before inventory or copying, Doctor checks `fuser` against a known open file and
+tries a scratch directory exchange in the store's parent, once per filesystem.
+The kernel and filesystem must support `RENAME_EXCHANGE`; unsupported hosts
+leave stores in place with a warning. Doctor checks for open store files again
+immediately before the real exchange.
+
+The official Debian bookworm Docker image cannot perform this optional repair:
+its coreutils 9.1 `mv` lacks `--exchange`/`--no-copy`, and it does not include
+`fuser` (the `psmisc` package) or `getfacl`/`setfacl` (the `acl` package).
+A derived image needs those tools and an exchange-capable GNU `mv`, as well as
+kernel/filesystem support on the mounted state volume. Updates still proceed
+with the existing stores.
+
+After publication, Doctor re-records the relocated identity of any recorded migration recovery
 original and destination database it rewrites, so `update cleanup` eligibility
 survives the rewrite; a copy that no longer matches the recorded content keeps
 its original record and stays protected.
