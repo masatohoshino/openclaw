@@ -121,9 +121,16 @@ describe("transcribeDeepgramAudio", () => {
     expect(result.text).toBe(expected);
   });
 
-  it("throws when transcripts are omitted", async () => {
+  it.each([
+    { name: "the only channel", transcripts: [undefined] },
+    { name: "the first channel before silence", transcripts: [undefined, ""] },
+    { name: "a later channel after silence", transcripts: [" \t", undefined] },
+    { name: "a later channel after speech", transcripts: ["hello", undefined] },
+  ])("rejects a missing transcript in $name", async ({ transcripts }) => {
     const { fetchFn } = createRequestCaptureJsonFetch({
-      results: { channels: [{ alternatives: [{}] }] },
+      results: {
+        channels: transcripts.map((transcript) => ({ alternatives: [{ transcript }] })),
+      },
     });
 
     await expect(
@@ -142,6 +149,10 @@ describe("transcribeDeepgramAudio", () => {
     {
       name: "non-string transcript values in a later channel",
       channels: ["First track.", 123].map((transcript) => ({ alternatives: [{ transcript }] })),
+    },
+    {
+      name: "a non-string transcript before a silent channel",
+      channels: [null, ""].map((transcript) => ({ alternatives: [{ transcript }] })),
     },
   ])("rejects $name with a stable provider error", async ({ channels }) => {
     const { fetchFn } = createRequestCaptureJsonFetch({ results: { channels } });
