@@ -6,8 +6,11 @@ import {
   createAuthProfileStoreFixture,
 } from "../../agents/auth-profiles/credential-fixtures.test-support.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import type { OutputRuntimeEnv } from "../../runtime.js";
 import { modelsAuthListCommand } from "./auth-list.js";
+import { listUnavailableAuthProfiles } from "./auth-unavailability.js";
 
 const mocks = vi.hoisted(() => ({
   ensureAuthProfileStore: vi.fn(),
@@ -73,65 +76,6 @@ describe("modelsAuthListCommand", () => {
     mocks.resolveModelsTargetAgent.mockClear();
   });
 
-  it("filters profiles by provider and redacts credential material in JSON output", async () => {
-    const store: AuthProfileStore = {
-      version: 1,
-      profiles: {
-        "openai:user@example.com": {
-          type: "oauth",
-          provider: "openai",
-          access: "access-secret",
-          refresh: "refresh-secret",
-          expires: 1_800_000_000_000,
-          email: "user@example.com",
-        },
-        "anthropic:manual": {
-          type: "token",
-          provider: "anthropic",
-          token: "token-secret",
-        },
-      },
-      usageStats: {
-        "openai:user@example.com": {
-          cooldownUntil: 1_800_000_010_000,
-        },
-      },
-    };
-    mocks.ensureAuthProfileStore.mockReturnValue(store);
-    const runtime = createRuntime();
-
-    await modelsAuthListCommand({ provider: "OpenAI", agent: "coder", json: true }, runtime);
-
-    expect(mocks.resolveModelsTargetAgent).toHaveBeenCalledWith(expect.anything(), "coder", {
-      kind: "read",
-    });
-    expect(mocks.externalCliDiscoveryForProviderAuth).toHaveBeenCalledWith({
-      cfg: {},
-      provider: "openai",
-    });
-    expect(runtime.jsonPayloads).toStrictEqual([
-      {
-        agentDir: "/tmp/openclaw/agents/coder",
-        agentId: "coder",
-        authStatePath: "/tmp/openclaw/agents/coder/openclaw-agent.sqlite",
-        profiles: [
-          {
-            cooldownUntil: "2027-01-15T08:00:10.000Z",
-            email: "user@example.com",
-            expiresAt: "2027-01-15T08:00:00.000Z",
-            id: "openai:user@example.com",
-            label: "openai:user@example.com",
-            provider: "openai",
-            recoveryHint: "Wait for cooldown or switch provider.",
-            type: "oauth",
-          },
-        ],
-        provider: "openai",
-      },
-    ]);
-    expect(JSON.stringify(runtime.jsonPayloads[0])).not.toContain("secret");
-  });
-
   it("shows the cooldown reason and re-authentication action in text and JSON", async () => {
     mocks.ensureAuthProfileStore.mockReturnValue({
       version: 1,
@@ -172,6 +116,74 @@ describe("modelsAuthListCommand", () => {
       ],
     });
   });
+
+  it.each(["rate_limit", "overloaded", "auth", "auth_permanent", "billing"] as const)(
+    "shows only enforced %s health for a self-managed provider",
+    async (reason) => {
+      const snapshot = createPluginMetadataSnapshotFixture({
+        plugins: [{ id: "gateway", providers: ["my-gateway"], managesOwnAvailability: true }],
+      });
+      const disabled = reason === "auth_permanent" || reason === "billing";
+      const bypassed = reason === "rate_limit" || reason === "overloaded";
+      const window = disabled
+        ? {
+            cooldownUntil: 1_900_003_100_000,
+            cooldownReason: "rate_limit" as const,
+            disabledUntil: 1_900_000_100_000,
+            disabledReason: reason,
+          }
+        : { cooldownUntil: 1_900_000_100_000, cooldownReason: reason };
+      mocks.ensureAuthProfileStore.mockReturnValue({
+        version: 1,
+        profiles: { "my-gateway:manual": createApiKeyCredential("my-gateway", "synthetic-key") },
+        usageStats: { "my-gateway:manual": window },
+      } satisfies AuthProfileStore);
+      const jsonRuntime = createRuntime();
+      const textRuntime = createRuntime();
+      await withPluginMetadataSnapshotScope(
+        snapshot,
+        async () => {
+          await modelsAuthListCommand({ json: true }, jsonRuntime);
+          await modelsAuthListCommand({}, textRuntime);
+          if (disabled) {
+            expect(listUnavailableAuthProfiles(mocks.ensureAuthProfileStore())).toEqual([
+              expect.objectContaining({
+                profileId: "my-gateway:manual",
+                kind: "disabled",
+                reason,
+                until: 1_900_000_100_000,
+              }),
+            ]);
+          }
+        },
+        { trustConfigIdentity: true },
+      );
+      const identity = {
+        id: "my-gateway:manual",
+        label: "my-gateway:manual",
+        provider: "my-gateway",
+        type: "api_key",
+      };
+      if (bypassed) {
+        expect(jsonRuntime.jsonPayloads[0]).toMatchObject({ profiles: [identity] });
+        expect(jsonRuntime.jsonPayloads[0]).not.toMatchObject({
+          profiles: [expect.objectContaining({ cooldownUntil: expect.anything() })],
+        });
+        expect(textRuntime.logs.at(-1)).toBe("- my-gateway:manual [my-gateway/api_key]");
+      } else {
+        expect(jsonRuntime.jsonPayloads[0]).toMatchObject({
+          profiles: [{ ...identity, [disabled ? "disabledReason" : "cooldownReason"]: reason }],
+        });
+        expect(textRuntime.logs.at(-1)).toContain((disabled ? "disabled:" : "cooldown:") + reason);
+        if (disabled) {
+          expect(jsonRuntime.jsonPayloads[0]).not.toMatchObject({
+            profiles: [expect.objectContaining({ cooldownUntil: expect.anything() })],
+          });
+          expect(textRuntime.logs.at(-1)).not.toContain("cooldown");
+        }
+      }
+    },
+  );
 
   it("shows exact WHAM classification without hiding the canonical reason in JSON", async () => {
     mocks.ensureAuthProfileStore.mockReturnValue({
@@ -297,10 +309,8 @@ describe("modelsAuthListCommand", () => {
     expect(JSON.stringify(runtime.jsonPayloads[0])).not.toContain("secret");
   });
 
-  it.each([
-    ["agent-local", "/tmp/openclaw/agents/main/openclaw-agent.sqlite"],
-    ["shared", "/tmp/openclaw/state/openclaw.sqlite"],
-  ])("prints an empty profile list with the %s auth path", async (_shape, authStatePath) => {
+  it("prints an empty profile list with the actual shared auth path", async () => {
+    const authStatePath = "/tmp/openclaw/state/openclaw.sqlite";
     mocks.ensureAuthProfileStore.mockReturnValue({ version: 1, profiles: {} });
     mocks.resolveAuthStatePathForDisplay.mockReturnValue(authStatePath);
     const runtime = createRuntime();

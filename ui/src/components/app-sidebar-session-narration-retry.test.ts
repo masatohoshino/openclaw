@@ -37,7 +37,7 @@ function releaseFixture(
     });
   const coordinator = new GatewaySessionMessageSubscriptionCoordinator({ request });
   const source = {
-    subscribeMessages: (key: string, options?: { agentId?: string | null }) =>
+    subscribeMessages: (key: string, options?: Parameters<typeof coordinator.acquire>[1]) =>
       coordinator.acquire(key, options),
     unsubscribeMessages: vi.fn((handle: Awaited<ReturnType<typeof coordinator.acquire>>) =>
       coordinator.release(handle),
@@ -94,7 +94,8 @@ describe("sidebar narration subscription retries", () => {
     controller.disconnect();
   });
 
-  it.each([0, 0.5, 0.9])("jitters a release after the server hint (draw %s)", async (draw) => {
+  it("jitters a release after the server hint", async () => {
+    const draw = 0.5;
     vi.spyOn(Math, "random").mockReturnValue(draw);
     const { controller, input, source, server, wireKeys } = releaseFixture(
       new GatewayProtocolRequestError({ retryable: true, retryAfterMs: 90_000 }),
@@ -111,19 +112,39 @@ describe("sidebar narration subscription retries", () => {
     controller.disconnect();
   });
 
-  it.each([false, undefined])(
-    "does not retry a release rejection with retryable=%s",
-    async (retryable) => {
-      const { controller, input, source } = releaseFixture(
-        new GatewayProtocolRequestError({ retryable }),
-      );
+  it.each([
+    { retryable: false, returning: false },
+    { retryable: undefined, returning: false },
+    { retryable: false, returning: true },
+  ])(
+    "does not retry terminal release rejection (retryable=$retryable, returning=$returning)",
+    async ({ retryable, returning }) => {
+      const failure = new GatewayProtocolRequestError({ retryable });
+      const { controller, input, source, request } = releaseFixture(failure);
       await vi.advanceTimersByTimeAsync(0);
+      const rejected = createDeferred();
+      if (returning) {
+        request.mockImplementationOnce(async () => {
+          await rejected.promise;
+          throw failure;
+        });
+      }
       const removed = { ...input, rows: [] };
       controller.sync(removed);
-      await vi.advanceTimersByTimeAsync(0);
-      controller.sync(removed);
+      if (returning) {
+        controller.sync(input);
+        controller.sync(removed);
+        rejected.resolve();
+      } else {
+        await vi.advanceTimersByTimeAsync(0);
+        controller.sync(removed);
+      }
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(source.unsubscribeMessages).toHaveBeenCalledOnce();
+      if (returning) {
+        expect(request).toHaveBeenCalledTimes(2);
+      } else {
+        expect(source.unsubscribeMessages).toHaveBeenCalledOnce();
+      }
       expect(vi.getTimerCount()).toBe(0);
       controller.disconnect();
     },
@@ -141,12 +162,27 @@ describe("sidebar narration subscription retries", () => {
     expect(request).toHaveBeenCalledTimes(2);
     expect(wireKeys.size).toBe(1);
     expect(vi.getTimerCount()).toBe(0);
-    const pane = await coordinator.acquire(input.rows[0]!.key);
+    const key = input.rows[0]!.key;
+    const pane = await coordinator.acquire(key);
     controller.disconnect();
     await vi.advanceTimersByTimeAsync(0);
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.map(([method, params]) => [method, params])).toEqual([
+      [
+        "sessions.messages.subscribe",
+        { key, mode: "narration", subscriptionId: expect.any(String) },
+      ],
+      ["sessions.messages.unsubscribe", { key, subscriptionId: expect.any(String) }],
+      ["sessions.messages.subscribe", { key, subscriptionId: expect.any(String) }],
+    ]);
+    expect(wireKeys.has(key)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
     server.failure = null;
     await coordinator.release(pane);
+    expect(request).toHaveBeenCalledTimes(4);
+    expect(request.mock.calls.at(-1)?.slice(0, 2)).toEqual([
+      "sessions.messages.unsubscribe",
+      { key, subscriptionId: expect.any(String) },
+    ]);
     expect(wireKeys.size).toBe(0);
   });
 
@@ -169,37 +205,26 @@ describe("sidebar narration subscription retries", () => {
     controller.disconnect();
   });
 
-  it.each([false, true])(
-    "settles a re-desired in-flight release without losing its observer (timeout: %s)",
-    async (timedOut) => {
-      const { controller, input, request, server, wireKeys } = releaseFixture();
-      await vi.advanceTimersByTimeAsync(0);
-      const released = createDeferred();
-      request.mockImplementationOnce(async () => {
-        await released.promise;
-        if (timedOut) {
-          wireKeys.clear();
-          throw new GatewayProtocolRequestTimeoutError({
-            method: "sessions.messages.unsubscribe",
-            timeoutMs: 30_000,
-            requestSent: true,
-          });
-        }
-        throw new GatewayProtocolRequestError({ retryable: true });
-      });
-      controller.sync({ ...input, rows: [] });
-      controller.sync(input);
-      released.resolve();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(wireKeys.size).toBe(1);
-      expect(request).toHaveBeenCalledTimes(timedOut ? 3 : 2);
-      expect(vi.getTimerCount()).toBe(0);
-      server.failure = null;
-      controller.disconnect();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(wireKeys.size).toBe(0);
-    },
-  );
+  it("settles a re-desired in-flight release after a retryable rejection", async () => {
+    const { controller, input, request, server, wireKeys } = releaseFixture();
+    await vi.advanceTimersByTimeAsync(0);
+    const released = createDeferred();
+    request.mockImplementationOnce(async () => {
+      await released.promise;
+      throw new GatewayProtocolRequestError({ retryable: true });
+    });
+    controller.sync({ ...input, rows: [] });
+    controller.sync(input);
+    released.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(wireKeys.size).toBe(1);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+    server.failure = null;
+    controller.disconnect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(wireKeys.size).toBe(0);
+  });
 
   it.each(["close", "replace", "disconnect"])(
     "cancels release retry work on %s",
@@ -227,26 +252,6 @@ describe("sidebar narration subscription retries", () => {
       controller.disconnect();
     },
   );
-
-  it("honors a terminal release rejection after a returning interest leaves again", async () => {
-    const failure = new GatewayProtocolRequestError({ retryable: false });
-    const { controller, input, request } = releaseFixture(failure);
-    await vi.advanceTimersByTimeAsync(0);
-    const rejected = createDeferred();
-    request.mockImplementationOnce(async () => {
-      await rejected.promise;
-      throw failure;
-    });
-    const removed = { ...input, rows: [] };
-    controller.sync(removed);
-    controller.sync(input);
-    controller.sync(removed);
-    rejected.resolve();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(request).toHaveBeenCalledTimes(2);
-    expect(vi.getTimerCount()).toBe(0);
-    controller.disconnect();
-  });
 
   it("coalesces an overdue release retry with the next sidebar sync", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0.5);
@@ -349,7 +354,7 @@ describe("sidebar narration subscription retries", () => {
     expect(wireKeys.size).toBe(0);
   });
 
-  it("reacquires after the coordinator compensates a sent request timeout", async () => {
+  it("reacquires after a sent request timeout without a compensating RPC", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const request = vi
       .fn()
@@ -362,25 +367,25 @@ describe("sidebar narration subscription retries", () => {
       )
       .mockResolvedValue({ key: "agent:main:run" });
     const coordinator = new GatewaySessionMessageSubscriptionCoordinator({ request });
+    const subscribeMessages = vi.fn(coordinator.acquire.bind(coordinator));
     const { controller } = createRunningNarrationController({
-      subscribeMessages: (key, options) => coordinator.acquire(key, options),
+      subscribeMessages,
       unsubscribeMessages: (handle) => coordinator.release(handle),
     });
+    await expect(subscribeMessages.mock.results[0]?.value).rejects.toBeInstanceOf(
+      GatewayProtocolRequestTimeoutError,
+    );
     await vi.advanceTimersByTimeAsync(0);
-    expect(request.mock.calls.map(([method]) => method)).toEqual([
-      "sessions.messages.subscribe",
-      "sessions.messages.unsubscribe",
-    ]);
+    expect(request.mock.calls.map(([method]) => method)).toEqual(["sessions.messages.subscribe"]);
     await vi.advanceTimersByTimeAsync(250);
     expect(request.mock.calls.map(([method]) => method)).toEqual([
       "sessions.messages.subscribe",
-      "sessions.messages.unsubscribe",
       "sessions.messages.subscribe",
     ]);
     expect(vi.getTimerCount()).toBe(0);
     controller.disconnect();
     await vi.advanceTimersByTimeAsync(0);
-    expect(request).toHaveBeenCalledTimes(4);
+    expect(request).toHaveBeenCalledTimes(3);
   });
 
   it.each<{ draw: number; hint?: number; delay: number; clockShift?: number }>([

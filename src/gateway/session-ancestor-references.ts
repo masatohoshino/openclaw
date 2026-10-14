@@ -1,21 +1,42 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { SessionAncestorRef } from "../../packages/gateway-protocol/src/schema/sessions-row.js";
-import type { GatewaySessionRow } from "./session-utils.types.js";
+import type {
+  SessionAncestorRef,
+  SessionRow,
+} from "../../packages/gateway-protocol/src/schema/sessions-row.js";
+import { isDeeplyFrozenPlainData } from "../shared/immutable-data.js";
 
 const MAX_ROWS = 128;
 const MAX_CONTENT_CHARS = 128 * 1024;
 
 type DeliveredAncestor = { key: string; content: string; chars: number; revision: string };
+const preparedAncestors = new WeakMap<
+  SessionRow,
+  {
+    row: SessionRow;
+    identity: string;
+    content: string;
+    chars: number;
+  }
+>();
 
 /** Prepare immutable viewer content once, before consulting connection delivery history. */
-export function prepareSessionAncestor(row: GatewaySessionRow) {
+export function prepareSessionAncestor(row: SessionRow) {
+  const cached = preparedAncestors.get(row);
+  if (cached) {
+    return cached;
+  }
   const serialized = JSON.stringify(row.snapshotAt === undefined ? row : { ...row, snapshotAt: 0 });
-  return {
+  const prepared = {
     row,
     identity: JSON.stringify([row.agentId, row.key]),
     content: createHash("sha256").update(serialized).digest("base64url"),
     chars: serialized.length,
   };
+  // Presentation replacement retires these facts; mutable callers still encode each sample.
+  if (isDeeplyFrozenPlainData(row)) {
+    preparedAncestors.set(row, prepared);
+  }
+  return prepared;
 }
 
 /** Connection-owned, bounded history of exactly the presented wire content. */
@@ -40,7 +61,7 @@ export class SessionAncestorReferences {
   }
 
   prepare(rows: ReturnType<typeof prepareSessionAncestor>[]) {
-    const ancestorSessions: GatewaySessionRow[] = [];
+    const ancestorSessions: SessionRow[] = [];
     const ancestorSessionRefs: SessionAncestorRef[] = [];
     let updates: Map<string, DeliveredAncestor | undefined> | undefined;
     for (const { row, identity, content, chars } of rows) {

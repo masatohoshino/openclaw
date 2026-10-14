@@ -77,7 +77,7 @@ troubleshooting, see the main [FAQ](/help/faq).
     4. Run `openclaw onboard`, choose `Ollama`, then `Local` or `Cloud + Local`
 
     `Cloud + Local` gives you cloud models plus your local Ollama models;
-    cloud models such as `kimi-k2.5:cloud` need no local pull. To switch
+    cloud models such as `kimi-k2.6:cloud` need no local pull. To switch
     manually: `openclaw models list`, then `openclaw models set ollama/<model>`.
 
     [llmman](/providers/llmman) is the alternative when you want models pulled
@@ -260,7 +260,7 @@ troubleshooting, see the main [FAQ](/help/faq).
     | Alias | Resolves to |
     | --- | --- |
     | `opus` | `anthropic/claude-opus-5-5` |
-    | `sonnet` | `anthropic/claude-sonnet-5` |
+    | `sonnet` | `anthropic/claude-sonnet-5-5` |
     | `gpt` | `openai/gpt-5.4` |
     | `gpt-mini` | `openai/gpt-5.4-mini` |
     | `gpt-nano` | `openai/gpt-5.4-nano` |
