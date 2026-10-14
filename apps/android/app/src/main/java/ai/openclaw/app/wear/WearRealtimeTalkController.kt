@@ -4,6 +4,7 @@ import ai.openclaw.app.node.asStringOrNull
 import ai.openclaw.app.node.parseJsonParamsObject
 import ai.openclaw.app.voice.RealtimeAgentCoordinator
 import ai.openclaw.app.voice.RealtimeAgentSession
+import ai.openclaw.app.voice.realtimeRelayCloseParams
 import ai.openclaw.app.voice.requestPhoneRealtimeSessionWithLanguageFallback
 import ai.openclaw.wear.shared.WearProtocol
 import ai.openclaw.wear.shared.WearRealtimeAudioFrameType
@@ -109,6 +110,7 @@ internal class WearRealtimeTalkController(
     ) -> Unit,
   private val onSnapshot: (WearRealtimeTalkSnapshot) -> Unit = {},
   private val onForceCloseWatchChannel: (WearRealtimeAttemptOwner) -> Unit = {},
+  private val supportsCloseDisposition: () -> Boolean = { false },
 ) {
   private val lifecycleMutex = Mutex()
   private val lifecycleStateLock = Any()
@@ -248,7 +250,7 @@ internal class WearRealtimeTalkController(
       if (!activated) {
         if (!createdSessionId.isNullOrBlank()) {
           runCatching {
-            closeGatewaySession(createdSessionId)
+            closeGatewaySession(createdSessionId, abort = true)
           }
         }
         return@withLock false
@@ -277,7 +279,7 @@ internal class WearRealtimeTalkController(
           sessionId.also { resetLocked() }
         }
       if (closingSession != null) {
-        runCatching { closeGatewaySession(closingSession) }
+        runCatching { closeGatewaySession(closingSession, abort = true) }
       }
       true
     }
@@ -290,7 +292,8 @@ internal class WearRealtimeTalkController(
           sessionId.also { resetLocked() }
         }
       if (closingSession != null) {
-        scope.launch { runCatching { closeGatewaySession(closingSession) } }
+        // An explicit watch stop closes the relay first; reaching here means the channel retired without one.
+        scope.launch { runCatching { closeGatewaySession(closingSession, abort = false) } }
       }
       true
     }
@@ -789,14 +792,17 @@ internal class WearRealtimeTalkController(
         currentOwner to closingSession
       }
     closingSession?.let { session ->
-      scope.launch { runCatching { closeGatewaySession(session) } }
+      scope.launch { runCatching { closeGatewaySession(session, abort = false) } }
     }
     closingOwner?.let(onForceCloseWatchChannel)
   }
 
-  private suspend fun closeGatewaySession(closingSession: String) {
-    val params = buildJsonObject { put("sessionId", JsonPrimitive(closingSession)) }
-    requestGateway("talk.session.close", params.toString(), 5_000L)
+  private suspend fun closeGatewaySession(
+    closingSession: String,
+    abort: Boolean,
+  ) {
+    val params = realtimeRelayCloseParams(closingSession, abort, supportsCloseDisposition())
+    requestGateway("talk.session.close", params, 5_000L)
   }
 
   private fun closeTransportLocked() {

@@ -126,6 +126,20 @@ internal suspend fun requestPhoneRealtimeSessionWithLanguageFallback(
     request(null)
   }
 
+internal const val TALK_SESSION_CLOSE_DISPOSITION_CAPABILITY = "talk-session-close-disposition"
+
+/** Failure cleanup detaches accepted agent work so its answer still lands; only an explicit Stop aborts it. */
+internal fun realtimeRelayCloseParams(
+  sessionId: String,
+  abort: Boolean,
+  dispositionSupported: Boolean,
+): String =
+  buildJsonObject {
+    put("sessionId", JsonPrimitive(sessionId))
+    // Older Gateways reject unknown close fields, so they keep the legacy aborting close.
+    if (dispositionSupported) put("disposition", JsonPrimitive(if (abort) "abort" else "detach"))
+  }.toString()
+
 private enum class TalkStatusState {
   Off,
   Active,
@@ -471,10 +485,16 @@ class TalkModeManager internal constructor(
     }
   }
 
-  /** Stops continuous, one-shot, or push-to-talk capture regardless of the enabled flag. */
-  fun stopAllCapture(failure: NativeText? = null) {
+  /**
+   * Stops continuous, one-shot, or push-to-talk capture regardless of the enabled flag.
+   * Pass [abortAcceptedWork] false when the app, not the user, ends Talk (for example on backgrounding).
+   */
+  fun stopAllCapture(
+    failure: NativeText? = null,
+    abortAcceptedWork: Boolean = true,
+  ) {
     _isEnabled.value = false
-    stop()
+    stop(abortAcceptedWork)
     failure?.let(::setTalkFailure)
   }
 
@@ -1000,7 +1020,7 @@ class TalkModeManager internal constructor(
     }
   }
 
-  private fun stop() {
+  private fun stop(abortAcceptedWork: Boolean = true) {
     val cancelled =
       synchronized(realtimeCapturePauseLock) {
         stopRequested = true
@@ -1027,7 +1047,7 @@ class TalkModeManager internal constructor(
         clearRecognizedTranscript()
         _isListening.value = false
         setStatus(nativeText("Off"), state = TalkStatusState.Off)
-        stopRealtimeRelay()
+        stopRealtimeRelay(abortAcceptedWork = abortAcceptedWork)
         pendingRunId = null
         pendingFinal = null
         synchronized(completedRunsLock) {
@@ -1776,6 +1796,7 @@ class TalkModeManager internal constructor(
     closeSession: Boolean = true,
     preserveStatus: Boolean = false,
     preserveVoiceChange: Boolean = false,
+    abortAcceptedWork: Boolean = false,
   ) = synchronized(realtimeCapturePauseLock) {
     if (!preserveVoiceChange) cancelRealtimeVoiceChange()
     val status = currentStatus
@@ -1811,7 +1832,7 @@ class TalkModeManager internal constructor(
     if (preserveStatus) setStatus(status)
     _isListening.value = false
     if (closeSession && sessionId != null && lease != null) {
-      gatewayWorkScope.launch { closeRealtimeSession(sessionId, lease) }
+      gatewayWorkScope.launch { closeRealtimeSession(sessionId, lease, abortAcceptedWork) }
     }
   }
 
@@ -1918,10 +1939,16 @@ class TalkModeManager internal constructor(
   private suspend fun closeRealtimeSession(
     sessionId: String,
     lease: GatewaySession.RequestLease,
+    abortAcceptedWork: Boolean,
   ) {
     try {
-      val params = buildJsonObject { put("sessionId", JsonPrimitive(sessionId)) }
-      lease.request("talk.session.close", params.toString(), timeoutMs = 5_000)
+      val params =
+        realtimeRelayCloseParams(
+          sessionId,
+          abort = abortAcceptedWork,
+          dispositionSupported = lease.supportsCapability(TALK_SESSION_CLOSE_DISPOSITION_CAPABILITY),
+        )
+      lease.request("talk.session.close", params, timeoutMs = 5_000)
     } catch (err: Throwable) {
       if (err !is CancellationException) {
         Log.d(tag, "realtime close ignored: ${err.message ?: err::class.simpleName}")

@@ -398,11 +398,14 @@ class GatewaySession(
     private val commitIfCurrentImpl: ((block: () -> Unit) -> Boolean)? = null,
     private val advertisedMethods: Set<String> = emptySet(),
     val controlUiCredential: NativeControlUiCredential? = null,
+    private val advertisedCapabilities: Set<String> = emptySet(),
     private val requestImpl: suspend (method: String, paramsJson: String?, timeoutMs: Long, withEnqueue: (() -> Unit) -> Unit) -> String,
   ) {
     fun isCurrent(): Boolean = isCurrentImpl()
 
     fun supportsMethod(method: String): Boolean = method in advertisedMethods
+
+    fun supportsCapability(capability: String): Boolean = capability in advertisedCapabilities
 
     fun commitIfCurrent(block: () -> Unit): Boolean {
       commitIfCurrentImpl?.let { return it(block) }
@@ -872,6 +875,7 @@ class GatewaySession(
         endpointStableId = conn.target.endpoint.stableId,
         advertisedMethods = conn.advertisedMethods,
         controlUiCredential = conn.controlUiCredential,
+        advertisedCapabilities = conn.advertisedCapabilities,
         isCurrentImpl = { currentConnection === conn && conn.isReady() },
         commitIfCurrentImpl = { block ->
           synchronized(lifecycleLock) {
@@ -975,6 +979,9 @@ class GatewaySession(
     val target: DesiredConnection,
   ) {
     var advertisedMethods: Set<String> = emptySet()
+      private set
+
+    var advertisedCapabilities: Set<String> = emptySet()
       private set
 
     var controlUiCredential: NativeControlUiCredential? = null
@@ -1362,9 +1369,10 @@ class GatewaySession(
 
     fun hasOpenTransport(): Boolean = state.get() != ConnectionState.CLOSED && connectHandshakeJob != null
 
-    fun markReady(methods: Set<String>?): Boolean {
+    fun markReady(hello: GatewayHelloSummary): Boolean {
       if (!state.compareAndSet(ConnectionState.CONNECTING, ConnectionState.READY)) return false
-      advertisedMethods = methods.orEmpty().toSet()
+      advertisedMethods = hello.methods.orEmpty()
+      advertisedCapabilities = hello.capabilities.orEmpty()
       return true
     }
 
@@ -2183,7 +2191,7 @@ class GatewaySession(
       val connected = conn.connect()
       synchronized(notificationLock) {
         synchronized(lifecycleLock) {
-          if (currentConnection !== conn || desired !== target || job?.isActive != true || !conn.markReady(connected.hello.methods)) return@withContext
+          if (currentConnection !== conn || desired !== target || job?.isActive != true || !conn.markReady(connected.hello)) return@withContext
           // Ready metadata precedes callbacks; retries requested by a callback remain queued.
           pluginSurfaceUrls = connected.pluginSurfaceUrls
           sessionRouting = connected.sessionRouting

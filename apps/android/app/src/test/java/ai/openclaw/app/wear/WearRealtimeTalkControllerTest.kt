@@ -15,8 +15,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -979,6 +982,47 @@ class WearRealtimeTalkControllerTest {
       assertTrue("talk.session.close" in gatewayMethods)
       assertEquals(listOf("watch-a"), forcedChannelCloses)
     }
+
+  @Test
+  fun `failure cleanup detaches the relay while an explicit watch stop aborts it`() =
+    runTest {
+      for ((supported, explicitStop, disposition) in listOf(
+        Triple(true, false, "detach"),
+        Triple(true, true, "abort"),
+        Triple(false, false, null),
+      )) {
+        val closes = mutableListOf<String?>()
+        val controller =
+          testTalkController(
+            requestGateway = { method, paramsJson, _ ->
+              if (method == "talk.session.close") {
+                closes +=
+                  Json
+                    .parseToJsonElement(checkNotNull(paramsJson))
+                    .jsonObject["disposition"]
+                    ?.jsonPrimitive
+                    ?.content
+              }
+              if (method == "talk.session.create") """{"relaySessionId":"relay-1"}""" else """{"ok":true}"""
+            },
+            sendWatchFrame = { _, _, _ -> error("wear link down") },
+            supportsCloseDisposition = { supported },
+          )
+        assertTrue(controller.start("watch-a", "session-a", "attempt-a", "de"))
+
+        if (explicitStop) {
+          assertTrue(controller.stop("watch-a", "attempt-a"))
+        } else {
+          controller.handleGatewayEvent(
+            "talk.event",
+            """{"relaySessionId":"relay-1","type":"audio","audioBase64":"${Base64.encodeToString(ByteArray(16), Base64.NO_WRAP)}"}""",
+          )
+        }
+        runCurrent()
+
+        assertEquals(listOf(disposition), closes)
+      }
+    }
 }
 
 private fun CoroutineScope.testTalkController(
@@ -990,6 +1034,7 @@ private fun CoroutineScope.testTalkController(
   sendWatchFrame: suspend (WearRealtimeAttemptOwner, WearRealtimeAudioFrameType, ByteArray) -> Unit = { _, _, _ -> },
   onSnapshot: (WearRealtimeTalkSnapshot) -> Unit = {},
   onForceCloseWatchChannel: (WearRealtimeAttemptOwner) -> Unit = {},
+  supportsCloseDisposition: () -> Boolean = { false },
 ): WearRealtimeTalkController =
   WearRealtimeTalkController(
     scope = this,
@@ -999,6 +1044,7 @@ private fun CoroutineScope.testTalkController(
     sendWatchFrame = sendWatchFrame,
     onSnapshot = onSnapshot,
     onForceCloseWatchChannel = onForceCloseWatchChannel,
+    supportsCloseDisposition = supportsCloseDisposition,
   )
 
 private suspend fun WearRealtimeTalkController.start(

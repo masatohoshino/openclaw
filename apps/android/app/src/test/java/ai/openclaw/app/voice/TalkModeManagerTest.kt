@@ -1621,6 +1621,45 @@ class TalkModeManagerTest {
     }
 
   @Test
+  @Config(shadows = [DeadRealtimeAudioTrack::class])
+  fun relayFailureDetachesAcceptedConsultWhileExplicitStopAbortsIt() =
+    runBlocking {
+      for ((advertised, trigger, disposition) in listOf(
+        Triple(true, "failure", "detach"),
+        Triple(true, "stop", "abort"),
+        Triple(true, "app stop", "detach"),
+        Triple(false, "failure", null),
+      )) {
+        val closes = ConcurrentLinkedQueue<JsonObject>()
+        val capabilities = if (advertised) ""","capabilities":["talk-session-close-disposition"]""" else ""
+        val hello = """{"features":{"methods":["talk.voice.get","talk.voice.set","talk.voice.complete"]$capabilities},"snapshot":{"sessionDefaults":{"mainSessionKey":"main"}}}"""
+        withStartedTalk(
+          responseForRequest = { request, _ ->
+            hello.takeIf { request["method"]?.jsonPrimitive?.content == "connect" }
+          },
+          interceptRequest = { request, _ ->
+            if (request["method"]?.jsonPrimitive?.content == "talk.session.close") closes += request.getValue("params").jsonObject
+            false
+          },
+        ) { proof ->
+          if (trigger == "failure") {
+            proof.manager.handleGatewayEvent(
+              "talk.event",
+              """{"relaySessionId":"playback-relay","type":"audio","talkEvent":{"turnId":"failed-turn"},"audioBase64":"${Base64.encodeToString(ByteArray(100), Base64.NO_WRAP)}"}""",
+            )
+          } else {
+            proof.manager.stopAllCapture(abortAcceptedWork = trigger == "stop")
+          }
+          awaitTalkWork(proof) { closes.isNotEmpty() }
+          assertFalse(proof.manager.isEnabled.value)
+          val close = closes.single()
+          assertEquals("playback-relay", close.getValue("sessionId").jsonPrimitive.content)
+          assertEquals("$trigger with advertised=$advertised", disposition, close["disposition"]?.jsonPrimitive?.content)
+        }
+      }
+    }
+
+  @Test
   fun retiredPttRestartCannotReopenRecognition() {
     val manager = createManager()
     val recognizer = SpeechRecognizer.createSpeechRecognizer(RuntimeEnvironment.getApplication())
