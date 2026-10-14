@@ -582,15 +582,8 @@ export async function postMultipartRequest(params: GuardedPostRequestParams<Body
 // Keep the shipped transcription name on the canonical multipart transport.
 export { postMultipartRequest as postTranscriptionRequest };
 
-/**
- * Providers return an empty transcript for valid audio without detected speech;
- * the media runner records that as a nonfatal skip. Only a missing transcript is
- * a provider failure.
- */
-export function requireTranscriptionText(
-  value: string | undefined,
-  missingMessage: string,
-): string {
+/** Empty strings represent silence; missing or non-string transcripts are malformed. */
+export function requireTranscriptionText(value: unknown, missingMessage: string): string {
   if (typeof value !== "string") {
     throw new Error(missingMessage);
   }

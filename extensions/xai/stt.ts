@@ -64,10 +64,7 @@ async function transcribeXaiAudio(
     await assertOkOrThrowHttpError(response, "xAI audio transcription failed");
     const payload = await readProviderJsonObjectResponse(response, "xai.stt");
     return {
-      text: requireTranscriptionText(
-        typeof payload.text === "string" ? payload.text : undefined,
-        "xAI transcription response missing text",
-      ),
+      text: requireTranscriptionText(payload.text, "xAI transcription response missing text"),
     };
   } finally {
     await release();

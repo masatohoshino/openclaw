@@ -95,6 +95,11 @@ describe("transcribeDeepgramAudio", () => {
       expected: "Only second track.",
     },
     {
+      name: "an empty transcript when every channel is silent",
+      transcripts: ["", "   "],
+      expected: "",
+    },
+    {
       name: "repeated text from distinct channels",
       transcripts: ["Repeated.", "Repeated."],
       expected: "Repeated.\n\nRepeated.",
@@ -127,24 +132,6 @@ describe("transcribeDeepgramAudio", () => {
         fetchFn,
       }),
     ).rejects.toThrow("Audio transcription response missing transcript");
-  });
-
-  it("returns an empty transcript when every channel is silent", async () => {
-    const { fetchFn } = createRequestCaptureJsonFetch({
-      results: {
-        channels: [
-          { alternatives: [{ transcript: "" }] },
-          { alternatives: [{ transcript: "   " }] },
-        ],
-      },
-    });
-
-    const result = await transcribeDeepgramAudio({
-      ...audioRequest,
-      fetchFn,
-    });
-
-    expect(result.text).toBe("");
   });
 
   it.each([

@@ -278,8 +278,7 @@ export async function transcribeDeepgramFluxAudio(params: {
         }
         // Silence is a stream without turns; a turn without transcript text is malformed.
         if (typeof event.transcript !== "string") {
-          settle({ error: new Error("Audio transcription response missing transcript") });
-          return;
+          throw new Error("Audio transcription response missing transcript");
         }
         if (event.event === "EndOfTurn") {
           finalizedTranscriptBytes += Buffer.byteLength(event.transcript, "utf8");
