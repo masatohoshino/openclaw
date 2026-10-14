@@ -1034,11 +1034,14 @@ final class TalkModeManager {
             guard let self else {
                 return OpenClawTalkPTTStopPayload(captureId: captureId, transcript: nil, status: "cancelled")
             }
-            await self.waitForRecognitionToSettle()
+            // Cancel, stop, or backgrounding may finish this capture before or while Speech settles;
+            // check before waiting so a released capture never waits on a newer capture's recognition.
+            if self.activePTTCaptureId == captureId {
+                await self.waitForRecognitionToSettle()
+            }
             if self.pushToTalkRelease?.captureId == captureId {
                 self.pushToTalkRelease = nil
             }
-            // Cancel, stop, or backgrounding already finished this capture while Speech settled.
             guard self.activePTTCaptureId == captureId else {
                 return OpenClawTalkPTTStopPayload(captureId: captureId, transcript: nil, status: "cancelled")
             }
