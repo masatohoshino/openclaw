@@ -273,7 +273,12 @@ export async function transcribeDeepgramFluxAudio(params: {
           });
           return;
         }
-        if (event.type !== "TurnInfo" || typeof event.transcript !== "string") {
+        if (event.type !== "TurnInfo") {
+          return;
+        }
+        // Silence is a stream without turns; a turn without transcript text is malformed.
+        if (typeof event.transcript !== "string") {
+          settle({ error: new Error("Audio transcription response missing transcript") });
           return;
         }
         if (event.event === "EndOfTurn") {
