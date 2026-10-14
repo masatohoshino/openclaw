@@ -102,7 +102,6 @@ import ai.openclaw.app.voice.GatewayTranscriptionSession
 import ai.openclaw.app.voice.MicCaptureManager
 import ai.openclaw.app.voice.PreviewVoiceWakeRecognizer
 import ai.openclaw.app.voice.SystemSpeechSpeaker
-import ai.openclaw.app.voice.TALK_SESSION_CLOSE_DISPOSITION_CAPABILITY
 import ai.openclaw.app.voice.TalkAudioPlayer
 import ai.openclaw.app.voice.TalkFailureNotice
 import ai.openclaw.app.voice.TalkModeManager
@@ -2191,7 +2190,6 @@ class NodeRuntime internal constructor(
             (appContext as? NodeApp)?.wearRealtimeChannels?.close(owner)
           }
         },
-        supportsCloseDisposition = { gatewayAdvertisesCapability(TALK_SESSION_CLOSE_DISPOSITION_CAPABILITY) == true },
       )
     }
 

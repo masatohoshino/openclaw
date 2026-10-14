@@ -126,10 +126,10 @@ internal suspend fun requestPhoneRealtimeSessionWithLanguageFallback(
     request(null)
   }
 
-internal const val TALK_SESSION_CLOSE_DISPOSITION_CAPABILITY = "talk-session-close-disposition"
+private const val TALK_SESSION_CLOSE_DISPOSITION_CAPABILITY = "talk-session-close-disposition"
 
 /** Failure cleanup detaches accepted agent work so its answer still lands; only an explicit Stop aborts it. */
-internal fun realtimeRelayCloseParams(
+private fun realtimeRelayCloseParams(
   sessionId: String,
   abort: Boolean,
   dispositionSupported: Boolean,
