@@ -37,6 +37,7 @@ describe("Google Live browser transcript finality", () => {
     { name: "default 3.1", model: undefined },
     { name: "3.8", model: "gemini-3.8-live" },
     { name: "3.8 Extended Thinking", model: "gemini-3.8-live-extended-thinking" },
+    { name: "prefixed 3.8", model: "models/gemini-3.8-live" },
   ])("finalizes both live $name spoken turns before the session closes", async ({ model }) => {
     const onTranscript = vi.fn();
     const transport = await createModelTransport(model, { onTranscript });
@@ -61,6 +62,13 @@ describe("Google Live browser transcript finality", () => {
       { role: "user", text: "Now reply with the single word crystal.", final: true },
       { role: "assistant", text: "Crystal.", final: true },
     ]);
+    expect(
+      onTranscript.mock.calls
+        .filter(([entry]) => entry.role === "user")
+        .map(([entry]) => entry.final),
+    ).toEqual([true, true]);
+    ws.emitMessage(encodeJsonFrame({ serverContent: { inputTranscription: { finished: true } } }));
+    await flushMicrotasks();
     transport.stop();
     expect(onTranscript.mock.calls.filter(([entry]) => entry.final)).toHaveLength(4);
   });

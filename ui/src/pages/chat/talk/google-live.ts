@@ -97,8 +97,6 @@ export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
     const modelId = session.model?.replace(/^models\//, "") ?? "";
     this.gemini31LiveModel =
       !session.model || (modelId.startsWith("gemini-3.1-") && modelId.includes("-live"));
-    // Live 3.1 and 3.8 send each input utterance as one complete message without
-    // finished, matching the Gateway relay's model contract.
     this.completeInputTranscripts = this.gemini31LiveModel || modelId.startsWith("gemini-3.8-live");
     this.extendedThinkingModel =
       modelId.startsWith("gemini-3.8-live") && modelId.includes("extended-thinking");
@@ -427,6 +425,7 @@ export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
     transcript: { text?: string; finished?: boolean },
   ): boolean {
     const pending = this.pendingTranscripts[role];
+    // Live 3.1 and 3.8 send complete input utterances without a finished flag.
     const completeInput = role === "user" && this.completeInputTranscripts;
     if (transcript.text) {
       pending.byteCount += utf8Encoder.encode(transcript.text).byteLength;
