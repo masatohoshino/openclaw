@@ -942,7 +942,6 @@ class GatewaySessionReconnectTest {
       try {
         connectSession(harness.session, server.port, onReady = {
           ready.trySend(requireNotNull(harness.session.captureRequestLease()))
-          Unit
         })
         val original = withTimeout(LIFECYCLE_TEST_TIMEOUT_MS) { ready.receive() }
         val abort = runCatching { original.closeTalkSession("relay-1", TalkSessionCloseDisposition.Abort) }

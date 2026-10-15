@@ -1651,9 +1651,17 @@ class TalkModeManagerTest {
               )
             }
 
-            "stop" -> proof.manager.setEnabled(false)
-            "start failure" -> proof.manager.stopAllCapture(failure = verbatimText("Start failed"))
-            else -> proof.manager.stopAllCapture()
+            "stop" -> {
+              proof.manager.setEnabled(false)
+            }
+
+            "start failure" -> {
+              proof.manager.stopAllCapture(failure = verbatimText("Start failed"))
+            }
+
+            else -> {
+              proof.manager.stopAllCapture()
+            }
           }
           proof.scheduler.runCurrent()
           val close = withContext(Dispatchers.Default) { withTimeout(5_000) { closed.await() } }
