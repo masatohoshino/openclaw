@@ -177,26 +177,25 @@ export function resolveBareRootLaunchPolicy(target: BareRootLaunchTarget): {
   ttyMessage: string;
   startProxy: boolean;
 } {
-  switch (target.kind) {
-    case "remote-gateway-inference":
-      return {
-        ttyMessage:
-          "Remote Gateway inference setup needs an interactive TTY. Re-run `openclaw` in a terminal connected to this Gateway.",
-        startProxy: false,
-      };
-    case "onboarding":
-      // Onboarding probes providers from this process, like `openclaw onboard`.
-      return {
-        ttyMessage: target.classic
-          ? "OpenClaw config is invalid. Run `openclaw doctor --fix` before onboarding."
-          : "Onboarding needs an interactive TTY. Use `openclaw onboard --non-interactive --accept-risk ...` for automation.",
-        startProxy: true,
-      };
-    case "tui":
-      // The local TUI runs the agent here, like `tui --local`; a Gateway-bound TUI keeps
-      // its direct control-plane connection.
-      return { ttyMessage: TUI_REQUIRES_TTY, startProxy: target.local };
+  if (target.kind === "remote-gateway-inference") {
+    return {
+      ttyMessage:
+        "Remote Gateway inference setup needs an interactive TTY. Re-run `openclaw` in a terminal connected to this Gateway.",
+      startProxy: false,
+    };
   }
+  if (target.kind === "onboarding") {
+    // Onboarding probes providers from this process, like `openclaw onboard`.
+    return {
+      ttyMessage: target.classic
+        ? "OpenClaw config is invalid. Run `openclaw doctor --fix` before onboarding."
+        : "Onboarding needs an interactive TTY. Use `openclaw onboard --non-interactive --accept-risk ...` for automation.",
+      startProxy: true,
+    };
+  }
+  // The local TUI runs the agent here, like `tui --local`; a Gateway-bound TUI keeps
+  // its direct control-plane connection.
+  return { ttyMessage: TUI_REQUIRES_TTY, startProxy: target.local };
 }
 
 export function isDebugProxyCaptureEnvEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
