@@ -1850,14 +1850,17 @@ class TalkModeManagerTest {
     runBlocking {
       for ((trigger, disposition) in listOf("mode change" to "detach", "stop" to "abort")) {
         val closed = CompletableDeferred<JsonObject>()
-        withNodeOwningRealtimePlayback(interceptRequest = { request, _ ->
-          if (request["method"]?.jsonPrimitive?.content == "talk.session.close") closed.complete(request.getValue("params").jsonObject)
-          false
-        }) { runtime, proof ->
+        withNodeOwningRealtimePlayback(
+          workDispatcher = Dispatchers.Unconfined,
+          interceptRequest = { request, _ ->
+            if (request["method"]?.jsonPrimitive?.content == "talk.session.close") closed.complete(request.getValue("params").jsonObject)
+            false
+          },
+        ) { runtime, proof ->
           if (trigger == "stop") runtime.setTalkModeEnabled(false) else runtime.setMicEnabled(true)
+          assertFalse(proof.manager.isEnabled.value)
           proof.scheduler.runCurrent()
           val close = withContext(Dispatchers.Default) { withTimeout(5_000) { closed.await() } }
-          assertFalse(proof.manager.isEnabled.value)
           assertEquals("playback-relay", close.getValue("sessionId").jsonPrimitive.content)
           assertEquals(disposition, close["disposition"]?.jsonPrimitive?.content)
         }
@@ -1865,6 +1868,7 @@ class TalkModeManagerTest {
     }
 
   private suspend fun withNodeOwningRealtimePlayback(
+    workDispatcher: CoroutineDispatcher? = null,
     interceptRequest: (JsonObject, WebSocket) -> Boolean = { _, _ -> false },
     block: suspend (NodeRuntime, RealtimePlaybackProof) -> Unit,
   ) {
@@ -1873,7 +1877,7 @@ class TalkModeManagerTest {
     val runtime = NodeRuntime(app, prefs, mode = NodeRuntimeMode.ScreenshotFixture)
     try {
       ((readPrivateField(runtime, "micCapture\$delegate") as Lazy<*>).value as MicCaptureManager).onGatewayConnectionChanged(false)
-      withStartedTalk(interceptRequest = interceptRequest) { proof ->
+      withStartedTalk(workDispatcher = workDispatcher, interceptRequest = interceptRequest) { proof ->
         setPrivateField(runtime, "talkMode\$delegate", lazyOf(proof.manager))
         setMutableStateFlow(runtime, "_voiceCaptureMode", VoiceCaptureMode.TalkMode)
         setMutableStateFlow(runtime, "externalAudioCaptureActive", true)
@@ -2964,6 +2968,7 @@ class TalkModeManagerTest {
 
   private suspend fun withStartedTalk(
     sessionKey: String = "main",
+    workDispatcher: CoroutineDispatcher? = null,
     captureRelayStopNotification: () -> ((() -> Boolean) -> Unit) = { {} },
     responseForRequest: (JsonObject, WebSocket) -> String? = { _, _ -> null },
     interceptRequest: (JsonObject, WebSocket) -> Boolean = { _, _ -> false },
@@ -2974,7 +2979,7 @@ class TalkModeManagerTest {
     val sessionJob = SupervisorJob()
     val managerJob = SupervisorJob()
     val scheduler = TestCoroutineScheduler()
-    val managerScope = CoroutineScope(StandardTestDispatcher(scheduler) + managerJob)
+    val managerScope = CoroutineScope((workDispatcher ?: StandardTestDispatcher(scheduler)) + managerJob)
     val captureTasks = ConcurrentLinkedQueue<Runnable>()
     val captureDispatcher =
       object : CoroutineDispatcher() {
