@@ -13,6 +13,7 @@ describe("Buzz relay authentication", () => {
       socket.close();
     });
     await once(relay, "listening");
+    // Listening with a numeric port yields a TCP address, not a named-pipe path.
     const { port } = relay.address() as AddressInfo;
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
