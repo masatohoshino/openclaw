@@ -1628,9 +1628,10 @@ class TalkModeManagerTest {
         Triple(true, "failure", "detach"),
         Triple(true, "stop", "abort"),
         Triple(true, "app stop", "detach"),
+        Triple(true, "start failure", "detach"),
         Triple(false, "failure", null),
       )) {
-        val closes = ConcurrentLinkedQueue<JsonObject>()
+        val closed = CompletableDeferred<JsonObject>()
         val capabilities = if (advertised) ""","capabilities":["talk-session-close-disposition"]""" else ""
         val hello = """{"features":{"methods":["talk.voice.get","talk.voice.set","talk.voice.complete"]$capabilities},"snapshot":{"sessionDefaults":{"mainSessionKey":"main"}}}"""
         withStartedTalk(
@@ -1638,21 +1639,25 @@ class TalkModeManagerTest {
             hello.takeIf { request["method"]?.jsonPrimitive?.content == "connect" }
           },
           interceptRequest = { request, _ ->
-            if (request["method"]?.jsonPrimitive?.content == "talk.session.close") closes += request.getValue("params").jsonObject
+            if (request["method"]?.jsonPrimitive?.content == "talk.session.close") closed.complete(request.getValue("params").jsonObject)
             false
           },
         ) { proof ->
-          if (trigger == "failure") {
-            proof.manager.handleGatewayEvent(
-              "talk.event",
-              """{"relaySessionId":"playback-relay","type":"audio","talkEvent":{"turnId":"failed-turn"},"audioBase64":"${Base64.encodeToString(ByteArray(100), Base64.NO_WRAP)}"}""",
-            )
-          } else {
-            proof.manager.stopAllCapture(abortAcceptedWork = trigger == "stop")
+          when (trigger) {
+            "failure" -> {
+              proof.manager.handleGatewayEvent(
+                "talk.event",
+                """{"relaySessionId":"playback-relay","type":"audio","talkEvent":{"turnId":"failed-turn"},"audioBase64":"${Base64.encodeToString(ByteArray(100), Base64.NO_WRAP)}"}""",
+              )
+            }
+
+            "stop" -> proof.manager.setEnabled(false)
+            "start failure" -> proof.manager.stopAllCapture(failure = verbatimText("Start failed"))
+            else -> proof.manager.stopAllCapture()
           }
-          awaitTalkWork(proof) { closes.isNotEmpty() }
+          proof.scheduler.runCurrent()
+          val close = withContext(Dispatchers.Default) { withTimeout(5_000) { closed.await() } }
           assertFalse(proof.manager.isEnabled.value)
-          val close = closes.single()
           assertEquals("playback-relay", close.getValue("sessionId").jsonPrimitive.content)
           assertEquals("$trigger with advertised=$advertised", disposition, close["disposition"]?.jsonPrimitive?.content)
         }
@@ -1832,13 +1837,35 @@ class TalkModeManagerTest {
       }
     }
 
-  private suspend fun withNodeOwningRealtimePlayback(block: suspend (NodeRuntime, RealtimePlaybackProof) -> Unit) {
+  @Test
+  fun disconnectDetachesAcceptedConsultWhileTalkStopAbortsIt() =
+    runBlocking {
+      for ((trigger, disposition) in listOf("disconnect" to "detach", "stop" to "abort")) {
+        val closed = CompletableDeferred<JsonObject>()
+        withNodeOwningRealtimePlayback(interceptRequest = { request, _ ->
+          if (request["method"]?.jsonPrimitive?.content == "talk.session.close") closed.complete(request.getValue("params").jsonObject)
+          false
+        }) { runtime, proof ->
+          if (trigger == "stop") runtime.setTalkModeEnabled(false) else runtime.disconnect()
+          proof.scheduler.runCurrent()
+          val close = withContext(Dispatchers.Default) { withTimeout(5_000) { closed.await() } }
+          assertFalse(proof.manager.isEnabled.value)
+          assertEquals("playback-relay", close.getValue("sessionId").jsonPrimitive.content)
+          assertEquals(disposition, close["disposition"]?.jsonPrimitive?.content)
+        }
+      }
+    }
+
+  private suspend fun withNodeOwningRealtimePlayback(
+    interceptRequest: (JsonObject, WebSocket) -> Boolean = { _, _ -> false },
+    block: suspend (NodeRuntime, RealtimePlaybackProof) -> Unit,
+  ) {
     val app = RuntimeEnvironment.getApplication()
     val prefs = SecurePrefs(app, app.getSharedPreferences("node-playback-${System.nanoTime()}", 0))
     val runtime = NodeRuntime(app, prefs, mode = NodeRuntimeMode.ScreenshotFixture)
     try {
       ((readPrivateField(runtime, "micCapture\$delegate") as Lazy<*>).value as MicCaptureManager).onGatewayConnectionChanged(false)
-      withStartedTalk { proof ->
+      withStartedTalk(interceptRequest = interceptRequest) { proof ->
         setPrivateField(runtime, "talkMode\$delegate", lazyOf(proof.manager))
         setMutableStateFlow(runtime, "_voiceCaptureMode", VoiceCaptureMode.TalkMode)
         setMutableStateFlow(runtime, "externalAudioCaptureActive", true)
@@ -2837,6 +2864,8 @@ class TalkModeManagerTest {
                 capture = Thread { proof.drainCancelledCapture() }.also { it.start() }
               }
               awaitState { held.isCompleted }
+              val sourceClose = requests.first { it["method"]?.jsonPrimitive?.content == "talk.session.close" }.getValue("params").jsonObject
+              assertEquals("detach", sourceClose["disposition"]?.jsonPrimitive?.content)
               assertEquals(if (boundary == "close") 1 else 2, changes().size)
               if (boundary != "close") {
                 val replacement = changes().last().getValue("params").jsonObject
@@ -2847,7 +2876,7 @@ class TalkModeManagerTest {
               assertFalse(requests.any { it["method"]?.jsonPrimitive?.content == "chat.abort" })
               assertEquals(if (outcome == "ptt-resumed") 1 else 0, requests.count { it["method"]?.jsonPrimitive?.content == "talk.session.cancelOutput" })
               when (outcome) {
-                "stop" -> proof.manager.stopAllCapture()
+                "stop" -> proof.manager.setEnabled(false)
                 "gateway" -> proof.manager.onGatewayScopeChanging()
                 "cancelled" -> proof.manager.handleGatewayEvent("talk.voice.change", change.replace("requested", "cancelled"))
               }
@@ -3002,7 +3031,7 @@ class TalkModeManagerTest {
                 val id = request.getValue("id").jsonPrimitive.content
                 val payload =
                   responseForRequest(request, webSocket) ?: when (request.getValue("method").jsonPrimitive.content) {
-                    "connect" -> """{"features":{"methods":["talk.voice.get","talk.voice.set","talk.voice.complete"]},"snapshot":{"sessionDefaults":{"mainSessionKey":"main"}}}"""
+                    "connect" -> """{"features":{"methods":["talk.voice.get","talk.voice.set","talk.voice.complete"],"capabilities":["talk-session-close-disposition"]},"snapshot":{"sessionDefaults":{"mainSessionKey":"main"}}}"""
                     "talk.config" -> """{"config":{}}"""
                     "talk.session.create" -> """{"relaySessionId":"playback-relay"}"""
                     else -> "{}"

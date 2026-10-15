@@ -96,6 +96,13 @@ data class GatewayLoadedImage(
   val mimeType: String,
 )
 
+enum class TalkSessionCloseDisposition(
+  val wireValue: String,
+) {
+  Abort("abort"),
+  Detach("detach"),
+}
+
 enum class GatewayMediaKind(
   val wireValue: String,
   val maximumBufferedBytes: Long,
@@ -399,13 +406,34 @@ class GatewaySession(
     private val advertisedMethods: Set<String> = emptySet(),
     val controlUiCredential: NativeControlUiCredential? = null,
     private val advertisedCapabilities: Set<String> = emptySet(),
+    private val reconnectIfCurrentImpl: () -> Unit = {},
     private val requestImpl: suspend (method: String, paramsJson: String?, timeoutMs: Long, withEnqueue: (() -> Unit) -> Unit) -> String,
   ) {
     fun isCurrent(): Boolean = isCurrentImpl()
 
     fun supportsMethod(method: String): Boolean = method in advertisedMethods
 
-    fun supportsCapability(capability: String): Boolean = capability in advertisedCapabilities
+    suspend fun closeTalkSession(
+      sessionId: String,
+      disposition: TalkSessionCloseDisposition,
+      withEnqueue: (() -> Unit) -> Unit = { it() },
+    ): String =
+      try {
+        request(
+          "talk.session.close",
+          buildJsonObject {
+            put("sessionId", JsonPrimitive(sessionId))
+            // Older Gateways reject unknown fields and retain the legacy aborting close.
+            if ("talk-session-close-disposition" in advertisedCapabilities) put("disposition", JsonPrimitive(disposition.wireValue))
+          }.toString(),
+          timeoutMs = 5_000,
+          withEnqueue = withEnqueue,
+        )
+      } catch (error: Throwable) {
+        // Disconnect also detaches accepted work if the close could not be confirmed.
+        if (disposition == TalkSessionCloseDisposition.Detach) reconnectIfCurrentImpl()
+        throw error
+      }
 
     fun commitIfCurrent(block: () -> Unit): Boolean {
       commitIfCurrentImpl?.let { return it(block) }
@@ -876,6 +904,11 @@ class GatewaySession(
         advertisedMethods = conn.advertisedMethods,
         controlUiCredential = conn.controlUiCredential,
         advertisedCapabilities = conn.advertisedCapabilities,
+        reconnectIfCurrentImpl = {
+          synchronized(lifecycleLock) {
+            if (currentConnection === conn && conn.isReady()) reconnect()
+          }
+        },
         isCurrentImpl = { currentConnection === conn && conn.isReady() },
         commitIfCurrentImpl = { block ->
           synchronized(lifecycleLock) {
