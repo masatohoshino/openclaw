@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { readToolApprovalReviews } from "../../lib/chat/tool-approval-reviews.ts";
 import { readPreparedActivity, summarizeToolGroup } from "../../lib/chat/tool-call-grouping.ts";
 import { extractToolCardsCached, resolveToolCardOutcome } from "../../lib/chat/tool-cards.ts";
+import { activeChatRunStartupStatus, chatStartupStatusLabel } from "./chat-run-startup.ts";
 import { coalesceToolActivityMessages } from "./chat-tool-activity-coalesce.ts";
 import { buildToolStreamIdentity } from "./tool-stream-identity.ts";
 import { resetToolStream } from "./tool-stream-state.ts";
@@ -43,6 +44,96 @@ afterAll(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+describe("observed steering boundary", () => {
+  it.each(["live", "history"] as const)(
+    "anchors only first-observed live tools and commentary (%s)",
+    (source) => {
+      useToolStreamFakeTimers();
+      const host = createHost({
+        chatRunId: "run-1",
+        chatMessages: [
+          {
+            role: "user",
+            content: "Steer",
+            __openclaw: { idempotencyKey: "steer:user", steerTargetRunId: "run-1" },
+          },
+        ],
+      });
+      const tool = agentEvent("run-1", 1, "tool", {
+        phase: "start",
+        toolCallId: "call",
+        name: "read",
+      });
+      handleAgentEvent(host, tool, source);
+      handleAgentEvent(
+        host,
+        agentEvent("run-1", 2, "item", {
+          kind: "preamble",
+          itemId: "comment",
+          progressText: "Checking.",
+        }),
+        source,
+      );
+      const expected = source === "live" ? "steer" : undefined;
+      expect(
+        host.toolStreamById.get(buildToolStreamIdentity("run-1", "call"))?.afterUserSendId,
+      ).toBe(expected);
+      expect(host.chatStreamSegments[0]?.afterUserSendId).toBe(expected);
+      host.chatMessages = [
+        ...(host.chatMessages ?? []),
+        {
+          role: "user",
+          content: "Later",
+          __openclaw: { idempotencyKey: "later:user", steerTargetRunId: "run-1" },
+        },
+      ];
+      handleAgentEvent(host, {
+        ...tool,
+        seq: 3,
+        data: { ...tool.data, phase: "result", result: "Done" },
+      });
+      expect(host.chatToolMessages[0]?.openclawToolStreamAfterSendId).toBe(expected);
+      resetToolStream(host);
+    },
+  );
+});
+
+describe("status text truncation", () => {
+  it("preserves complete characters at the retry and fallback label boundary", () => {
+    const expected = "x".repeat(255);
+    const input = `${expected}😀 trailing`;
+    const host = createHost({
+      chatRunId: "run-1",
+      chatRunStartup: { state: "status", runId: "run-1", phase: "starting_model" },
+      toolStreamSyncTimer: 1,
+    });
+    handleAgentEvent(
+      host,
+      agentEvent("run-1", 1, "run_status", {
+        phase: "retrying",
+        message: input,
+      }),
+    );
+    expect(chatStartupStatusLabel(activeChatRunStartupStatus(host.chatRunStartup), null)).toBe(
+      "Retrying…",
+    );
+    expect(host.chatRunStartup).toMatchObject({ message: expected });
+    handleAgentEvent(
+      host,
+      agentEvent("run-1", 2, "notice", {
+        phase: "provider_policy",
+        category: "cyber",
+        provider: "openai",
+        state: "fallback",
+        model: input,
+        fallbackModel: input,
+      }),
+    );
+    expect(host.providerPolicyNotice?.model).toBe(expected);
+    expect(host.providerPolicyNotice?.fallbackModel).toBe(expected);
+  });
+});
 
 describe("app-tool-stream approval lifecycle", () => {
   it.each([
@@ -778,4 +869,32 @@ describe("app-tool-stream result blocks", () => {
       resultReceived: true,
     });
   });
+});
+
+it("shows a fallback attempt in the claw until same-run output resumes", () => {
+  const host = createHost({ chatRunId: "run-1", toolStreamSyncTimer: 1 });
+  handleAgentEvent(
+    host,
+    agentEvent("run-1", 10, "run_status", {
+      phase: "retrying",
+      message: "Rate limited",
+      retryAt: 20_000,
+    }),
+  );
+  expect(host.chatRunStartup).toMatchObject({ phase: "retrying", retryAt: 20_000 });
+  handleAgentEvent(
+    host,
+    agentEvent("run-1", 11, "lifecycle", {
+      phase: "fallback_step",
+      fallbackStepToModel: "example/backup",
+      fallbackStepFinalOutcome: "next_fallback",
+    }),
+  );
+  expect(chatStartupStatusLabel(activeChatRunStartupStatus(host.chatRunStartup), null)).toBe(
+    "Trying fallback model…",
+  );
+  handleAgentEvent(host, agentEvent("run-1", 12, "assistant", { text: "Recovered" }));
+  expect(
+    chatStartupStatusLabel(activeChatRunStartupStatus(host.chatRunStartup), null),
+  ).toBeUndefined();
 });

@@ -1,5 +1,5 @@
-import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { listAgentIds } from "../agents/agent-scope-config.js";
+import { cloneEnvWithPlatformSemantics } from "../config/config-env-vars.js";
 import { createConfigIO } from "../config/io.factory.js";
 import { createConfigReadError, isConfigReadFailure } from "../config/io.invalid-config.js";
 import {
@@ -9,20 +9,26 @@ import {
   type ConfigSnapshotReadOptions,
 } from "../config/io.js";
 import type { PreparedConfigRecovery } from "../config/io.types.js";
-import { describeConfigSnapshotInputChange } from "../config/snapshot-inputs.js";
 import type { ConfigFileSnapshot } from "../config/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveDatabaseEngineInput } from "../infra/database-engine/config.js";
+import {
+  getDatabaseEngineSelection,
+  installDatabaseEngineSelection,
+  type DatabaseEngineSelection,
+} from "../infra/database-engine/context.js";
 import type { DeferredPluginMigration } from "../infra/deferred-plugin-migrations.js";
-import type { StartupMigrationLease } from "../infra/startup-migration-checkpoint.js";
-import { recordStartupMigrationWarnings } from "../infra/state-migrations.messages.js";
 import { withDeferredPluginDoctorMigrations } from "../plugins/doctor-contract-registry.js";
-import { createPluginCache, getPluginCache, withPluginCache } from "../plugins/plugin-cache.js";
+import {
+  createPluginCache,
+  getPluginCache,
+  getPluginMetadataSnapshotCache,
+  withPluginCache,
+  type PluginCache,
+} from "../plugins/plugin-cache.js";
 import { completePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
-import {
-  listAgentDatabaseAdmissionRefusals,
-  readAgentDatabaseAdmissionRefusal,
-} from "../state/agent-database-admission.js";
+import { readAgentDatabaseAdmissionRefusal } from "../state/agent-database-admission.js";
 import {
   withArtifactPreservingStateReads,
   withOpenClawStateDatabaseReadSnapshot,
@@ -32,68 +38,70 @@ import {
   refuseStartupMigrationsForLiveGatewayOwner,
   rethrowStartupConfigFailure,
   throwStartupMigrationGuardRejected,
-  throwStartupMigrationIdentityChanged,
 } from "./doctor-startup-migration-refusal.js";
 import { addDoctorLegacyIssues } from "./doctor/shared/legacy-config-issues.js";
 
 export type ConfigPreflightSnapshotRead = {
+  databaseEngineSelection?: DatabaseEngineSelection;
   snapshot: ConfigFileSnapshot;
   pluginMetadataSnapshot?: PluginMetadataSnapshot;
 };
 
-type MeasurePreflightStep = <T>(name: string, run: () => T | Promise<T>) => Promise<T>;
+// Match the five-minute startup migration lease budget, including slow cold starts.
+const STARTUP_STATE_ADMISSION_TIMEOUT_MS = 5 * 60_000;
 
-function throwPluginRegistryPersistenceFailed(
-  reason: string,
-  repair = 'Run "openclaw doctor --fix" and retry.',
-): never {
-  throw new Error(
-    `OpenClaw refreshed the plugin registry but could not verify the persisted replacement (${reason}); refusing to accept the plugin registry. ${repair}`,
-  );
+/** Own executable inspection caches until a final snapshot transfers to its caller. */
+export function createConfigPreflightSnapshotReader() {
+  const caches = new Set<PluginCache>();
+  return {
+    async [Symbol.asyncDispose]() {
+      await Promise.all([...caches].map((cache) => cache[Symbol.asyncDispose]()));
+      caches.clear();
+    },
+    read(params: Parameters<typeof readConfigPreflightSnapshot>[0]) {
+      const cache = params.allowCurrentPluginMetadata ? getPluginCache() : createPluginCache();
+      if (!params.allowCurrentPluginMetadata) {
+        caches.add(cache);
+      }
+      return readConfigPreflightSnapshot(params, cache);
+    },
+    async takePluginCache(
+      snapshot: PluginMetadataSnapshot | undefined,
+    ): Promise<PluginCache | undefined> {
+      const selected = snapshot && getPluginMetadataSnapshotCache(snapshot);
+      await Promise.all(
+        [...caches]
+          .filter((cache) => cache !== selected)
+          .map(async (cache) => {
+            await cache[Symbol.asyncDispose]();
+            caches.delete(cache);
+          }),
+      );
+      return selected && caches.delete(selected) ? selected : undefined;
+    },
+  };
 }
 
-function formatPluginRegistryDifferences(
-  snapshot: PluginMetadataSnapshot | undefined,
-): string | undefined {
-  const differences = new Map(
-    snapshot?.registryDiagnostics
-      .flatMap((diagnostic) => diagnostic.differences ?? [])
-      .map((difference) => [JSON.stringify(difference), difference] as const),
-  );
-  if (differences.size === 0) {
-    return undefined;
-  }
-  return [...differences.values()]
-    .toSorted((left, right) =>
-      [left.pluginId, left.persistedSource, left.derivedSource]
-        .join("\0")
-        .localeCompare([right.pluginId, right.persistedSource, right.derivedSource].join("\0")),
-    )
-    .map(
-      (difference) =>
-        `${sanitizeTerminalText(difference.pluginId)} (${difference.changed.join("+")} changed; persisted source: ${JSON.stringify(difference.persistedSource)}; derived source: ${JSON.stringify(difference.derivedSource)})`,
-    )
-    .join(", ");
-}
-
-export async function readConfigPreflightSnapshot(params: {
-  purpose: "startup" | "doctor";
-  allowCurrentPluginMetadata: boolean;
-  includePluginMetadata: boolean;
-  isolateEnv?: boolean;
-  measure?: ConfigSnapshotReadMeasure;
-  observe?: boolean;
-  skipPluginValidation: boolean;
-  /** Complete a private update snapshot before Doctor contract modules are inspected. */
-  prepareSnapshot?: (snapshot: ConfigFileSnapshot) => Promise<void>;
-  preparePluginMigrations?: (
-    snapshot: ConfigFileSnapshot,
-  ) => Promise<readonly DeferredPluginMigration[]>;
-  deferredPluginMigrations?: readonly DeferredPluginMigration[];
-}): Promise<ConfigPreflightSnapshotRead> {
+async function readConfigPreflightSnapshot(
+  params: {
+    purpose: "startup" | "doctor";
+    allowCurrentPluginMetadata: boolean;
+    includePluginMetadata: boolean;
+    isolateEnv?: boolean;
+    measure?: ConfigSnapshotReadMeasure;
+    observe?: boolean;
+    skipPluginValidation: boolean;
+    /** Complete a private update snapshot before Doctor contract modules are inspected. */
+    prepareSnapshot?: (snapshot: ConfigFileSnapshot) => Promise<void>;
+    preparePluginMigrations?: (
+      snapshot: ConfigFileSnapshot,
+    ) => Promise<readonly DeferredPluginMigration[]>;
+    deferredPluginMigrations?: readonly DeferredPluginMigration[];
+  },
+  cache: PluginCache,
+): Promise<ConfigPreflightSnapshotRead> {
   // Explicit management rereads cross a lease or mutation boundary. A resolver's
   // allowCurrent:false still reuses facts within an existing operation generation.
-  const cache = params.allowCurrentPluginMetadata ? getPluginCache() : createPluginCache();
   return withPluginCache(cache, async () => {
     const sharedOptions = {
       ...(params.isolateEnv ? { isolateEnv: true } : {}),
@@ -150,93 +158,6 @@ export async function readConfigPreflightSnapshot(params: {
   });
 }
 
-export function needsRefreshedPluginIndexPersistence(
-  snapshotRead: ConfigPreflightSnapshotRead,
-): boolean {
-  return snapshotRead.pluginMetadataSnapshot?.registrySource === "derived";
-}
-
-export async function persistRefreshedPluginIndex(params: {
-  env: NodeJS.ProcessEnv;
-  measure: MeasurePreflightStep;
-  readPersistedSnapshot: () => Promise<ConfigPreflightSnapshotRead>;
-  snapshotRead: ConfigPreflightSnapshotRead;
-  lease: StartupMigrationLease | undefined;
-  assertCurrent?: () => void;
-}): Promise<{
-  snapshotRead: ConfigPreflightSnapshotRead;
-}> {
-  const lease = params.lease;
-  if (!lease) {
-    throwPluginRegistryPersistenceFailed("startup migration lease was not acquired");
-  }
-  const { withPluginLifecycleLease } = await import("../plugins/plugin-lifecycle-lease.js");
-  // Startup precedes plugin ownership; derive again after any pending installer settles.
-  return await withPluginLifecycleLease(
-    { env: params.env, assertCurrent: params.assertCurrent, processBound: true },
-    async (pluginLease) => {
-      const fresh = await measureDoctorConfigPreflightStep(
-        "plugin-index.read-current",
-        params.readPersistedSnapshot,
-        params.measure,
-      );
-      assertPreflightConfigUnchanged(params.snapshotRead.snapshot, fresh.snapshot);
-      pluginLease.assertOwned();
-      if (!needsRefreshedPluginIndexPersistence(fresh)) {
-        if (fresh.pluginMetadataSnapshot?.registrySource !== "persisted") {
-          throwPluginRegistryPersistenceFailed("fresh metadata was not persisted or derived");
-        }
-        return { snapshotRead: fresh };
-      }
-      const derivedPluginMetadataSnapshot = fresh.pluginMetadataSnapshot;
-      if (!derivedPluginMetadataSnapshot?.configFingerprint?.trim()) {
-        throwPluginRegistryPersistenceFailed("derived metadata was incomplete");
-      }
-      const { writePersistedInstalledPluginIndexWithLeaseSync } = await params.measure(
-        "plugin-index-store-import",
-        () => import("../plugins/installed-plugin-index-store-write.js"),
-      );
-      // Persist the original workspace scope; a config-wide union cannot pass scoped freshness checks.
-      await params.measure("plugin-index-persistence", () =>
-        writePersistedInstalledPluginIndexWithLeaseSync(
-          derivedPluginMetadataSnapshot.registryIndex,
-          {
-            env: params.env,
-            lease: {
-              assertOwnedInTransaction(database) {
-                lease.assertOwnedInTransaction(database);
-                pluginLease.assertOwnedInTransaction(database);
-              },
-            },
-          },
-        ),
-      );
-      const persistedSnapshotRead = await measureDoctorConfigPreflightStep(
-        "plugin-index.read-persisted",
-        params.readPersistedSnapshot,
-        params.measure,
-      );
-      const persistedPluginMetadataSnapshot = persistedSnapshotRead.pluginMetadataSnapshot;
-      // The registry selector owns freshness and returns "persisted" only after accepting the
-      // durable index. Persisted parsing intentionally canonicalizes non-runtime package metadata.
-      if (persistedPluginMetadataSnapshot?.registrySource !== "persisted") {
-        const diagnosticCodes = persistedPluginMetadataSnapshot?.registryDiagnostics.map(
-          (diagnostic) => diagnostic.code,
-        );
-        const differences = formatPluginRegistryDifferences(persistedPluginMetadataSnapshot);
-        throwPluginRegistryPersistenceFailed(
-          `reread source was ${persistedPluginMetadataSnapshot?.registrySource ?? "missing"}${
-            differences ? `; differences: ${differences}` : ""
-          }${diagnosticCodes?.length ? `; diagnostics: ${diagnosticCodes.join(", ")}` : ""}`,
-          'Stop plugin package changes, run "openclaw plugins registry --refresh", then retry.',
-        );
-      }
-      assertPreflightConfigUnchanged(params.snapshotRead.snapshot, persistedSnapshotRead.snapshot);
-      return { snapshotRead: persistedSnapshotRead };
-    },
-  );
-}
-
 /** Admit the same config and state before the lease and again before persistent writes. */
 export async function readAdmittedConfigSnapshot(params: {
   env: NodeJS.ProcessEnv;
@@ -268,10 +189,22 @@ export async function readAdmittedConfigSnapshot(params: {
       }
       // Read-only preparation shares one state generation. Release its snapshot before
       // the caller's live guard or any recovery application / writer lease acquisition.
+      const selection = getDatabaseEngineSelection();
+      const engineInput = selection
+        ? selection.input
+        : await resolveDatabaseEngineInput(selected.config, params.env);
+      installDatabaseEngineSelection({ input: engineInput });
+      const withStateSnapshot: typeof withOpenClawStateDatabaseReadSnapshot = engineInput
+        ? (operation) => operation()
+        : withOpenClawStateDatabaseReadSnapshot;
       const admitted = await measureDoctorConfigPreflightStep("admission.state-snapshot", () =>
-        withOpenClawStateDatabaseReadSnapshot(
+        withStateSnapshot(
           async () => {
-            const recoveryOptions = { configPath: selected.path, observe: false, env: params.env };
+            const recoveryOptions = {
+              configPath: selected.path,
+              observe: false,
+              env: params.env,
+            };
             const coreRecovery = await measureDoctorConfigPreflightStep(
               "admission.core-recovery",
               () =>
@@ -281,27 +214,37 @@ export async function readAdmittedConfigSnapshot(params: {
                 }).prepareConfigRecovery(selected),
             );
             const candidate = coreRecovery?.snapshot ?? selected;
-            await assertStartupStateReady({
-              cfg: candidate.sourceConfig ?? candidate.config,
-              env: params.env,
-            });
-            if (candidate.valid) {
-              await params.validateConfig?.(candidate);
+            // Both readers use the admitted snapshot. Pin schema selection before the
+            // full config read applies env defaults, and join both before releasing it.
+            const [readiness, configRead] = await Promise.allSettled([
+              (async () => {
+                await assertStartupStateReady({
+                  cfg: candidate.sourceConfig ?? candidate.config,
+                  env: cloneEnvWithPlatformSemantics(params.env),
+                });
+                if (candidate.valid) {
+                  await params.validateConfig?.(candidate);
+                }
+              })(),
+              measureDoctorConfigPreflightStep("admission.plugin-config", () =>
+                params.readSnapshot(coreRecovery ? { isolateEnv: true } : undefined),
+              ),
+            ]);
+            if (readiness.status === "rejected") {
+              throw readiness.reason;
             }
-            // A discarded config cannot publish env values before its backup is restored.
-            let read = await measureDoctorConfigPreflightStep("admission.plugin-config", () =>
-              params.readSnapshot(coreRecovery ? { isolateEnv: true } : undefined),
-            );
-            assertPreflightConfigUnchanged(selected, read.snapshot);
+            if (configRead.status === "rejected") {
+              throw configRead.reason;
+            }
+            let read = configRead.value;
+            if (isConfigReadFailure(read.snapshot)) {
+              throw createConfigReadError(read.snapshot);
+            }
             const recovery = await measureDoctorConfigPreflightStep(
               "admission.config-recovery",
               () => createConfigIO(recoveryOptions).prepareConfigRecovery(read.snapshot),
             );
-            if (Boolean(coreRecovery) !== Boolean(recovery)) {
-              throwStartupMigrationIdentityChanged();
-            }
             if (recovery) {
-              assertPreflightConfigUnchanged(candidate, recovery.snapshot);
               read = {
                 snapshot: recovery.snapshot,
                 pluginMetadataSnapshot: recovery.pluginMetadataSnapshot,
@@ -310,13 +253,18 @@ export async function readAdmittedConfigSnapshot(params: {
             if (read.snapshot.valid) {
               await params.validateConfig?.(read.snapshot);
               await measureDoctorConfigPreflightStep("admission.device-identity", async () => {
-                const { loadDeviceIdentityIfPresent } = await import("../infra/device-identity.js");
-                loadDeviceIdentityIfPresent({ env: params.env });
+                const { loadDeviceIdentityIfPresentAsync } =
+                  await import("../infra/device-identity-async.js");
+                await loadDeviceIdentityIfPresentAsync({ env: params.env });
               });
             }
             return { ...read, ...(recovery ? { recovery } : {}) };
           },
-          { env: params.env },
+          {
+            env: params.env,
+            admissionTimeoutMs: STARTUP_STATE_ADMISSION_TIMEOUT_MS,
+            reuseCleanClose: true,
+          },
         ),
       );
       if (
@@ -327,26 +275,14 @@ export async function readAdmittedConfigSnapshot(params: {
       ) {
         throwStartupMigrationGuardRejected();
       }
-      return admitted;
+      return {
+        ...admitted,
+        ...(engineInput ? { databaseEngineSelection: getDatabaseEngineSelection() } : {}),
+      };
     } catch (error) {
       return rethrowStartupConfigFailure(error);
     }
   });
-}
-
-export function assertPreflightConfigUnchanged(
-  before: ConfigFileSnapshot,
-  after: ConfigFileSnapshot,
-): void {
-  // Unavailable bytes cannot prove input drift or authorize a terminal refusal.
-  const unreadable = [before, after].find(isConfigReadFailure);
-  if (unreadable) {
-    throw createConfigReadError(unreadable);
-  }
-  const change = describeConfigSnapshotInputChange(before, after);
-  if (change) {
-    throwStartupMigrationIdentityChanged(change);
-  }
 }
 
 /** Admission runs before lease acquisition: even acquiring a lease commits SQLite writes. */
@@ -410,11 +346,6 @@ async function assertStartupStateReady(params: {
     () => assertSessionStoreMigrationComplete({ ...params, targets }),
     undefined,
     () => ({ targetCount: targets.length }),
-  );
-  recordStartupMigrationWarnings(
-    listAgentDatabaseAdmissionRefusals({ env: params.env }).map(
-      (refusal) => `${refusal.reason}\n${refusal.repairHint}`,
-    ),
   );
   const { assertConfiguredWorkspaceStateReady } = await measureDoctorConfigPreflightStep(
     "admission.workspace-runtime-import",

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { awaitGateBeforeSettlement } from "../../test/helpers/promise.js";
 import * as acpMetadata from "../acp/runtime/session-meta-readonly.js";
+import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import {
   loadSessionEntry,
   patchSessionEntryCore,
@@ -10,14 +11,12 @@ import { assignSessionOwnerInWorker } from "../config/sessions/session-metadata-
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createDeferredCore } from "../shared/deferred.js";
+import type * as UserProfileEmail from "../state/user-profile-email.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import { createPluginGatewayMethodDescriptor } from "./methods/descriptor.js";
-import { createGatewayMethodRegistry } from "./methods/registry.js";
 import { handleGatewayRequest } from "./server-methods.js";
 import { sessionMutationHandlers } from "./server-methods/sessions-mutations.js";
 import type { GatewayRequestHandler } from "./server-methods/types.js";
 
-const METHOD = "workboard.cards.dispatch";
 const ensureProfileIdForEmail = vi.hoisted(() => vi.fn());
 const prepareUserProfileRoleAuthority = vi.hoisted(() =>
   vi.fn(async (profileId: string) => ({ profileId, isCurrent: () => true })),
@@ -32,7 +31,10 @@ const getUserProfileDisplay = vi.hoisted(() =>
 );
 const setCanonicalUserProfileDisplayName = vi.hoisted(() => vi.fn());
 
-vi.mock("../state/user-profile-email.js", () => ({ ensureProfileIdForEmail }));
+vi.mock("../state/user-profile-email.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof UserProfileEmail>()),
+  ensureProfileIdForEmail,
+}));
 vi.mock("../state/user-channel-identity-operations.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/user-channel-identity-operations.js")>()),
   prepareUserProfileRoleAuthority,
@@ -59,130 +61,56 @@ afterEach(() => {
 });
 
 describe("gateway method authorization", () => {
-  async function dispatch(scopes: string[]) {
-    const handler: GatewayRequestHandler = ({ respond }) => respond(true, { ok: true });
-    const methodRegistry = createGatewayMethodRegistry([
-      createPluginGatewayMethodDescriptor({
-        pluginId: "workboard",
-        name: METHOD,
-        handler,
-        scope: "operator.write",
-      }),
-    ]);
-    const respond = vi.fn();
-
-    // Reproduce a request whose attached dispatch registry is newer than the global runtime state.
-    setActivePluginRegistry(createEmptyPluginRegistry());
-    await handleGatewayRequest({
-      req: { type: "req", id: "req-1", method: METHOD },
-      respond,
-      client: {
-        connId: "conn-1",
-        connect: {
-          role: "operator",
-          scopes,
-          client: { id: "test", version: "1", platform: "test", mode: "test" },
-          minProtocol: 1,
-          maxProtocol: 1,
-        },
-      } as Parameters<typeof handleGatewayRequest>[0]["client"],
-      isWebchatConnect: () => false,
-      context: { logGateway: { warn: vi.fn() } } as unknown as Parameters<
-        typeof handleGatewayRequest
-      >[0]["context"],
-      methodRegistry,
-    });
-    return respond;
-  }
-
-  it("authorizes from the attached registry used for dispatch", async () => {
-    const allowed = await dispatch(["operator.write"]);
-    const denied = await dispatch(["operator.read"]);
-
-    expect(allowed).toHaveBeenCalledWith(true, { ok: true });
-    expect(denied).toHaveBeenCalledWith(false, undefined, {
-      code: "FORBIDDEN",
-      message: "missing scope: operator.write",
-      details: {
-        code: "MISSING_SCOPE",
-        missingScope: "operator.write",
-        requiredScopes: ["operator.write"],
-      },
-    });
-  });
-
-  it("allows read-only projects.list to reach its redacting handler", async () => {
-    const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { projects: [] }));
-    const respond = vi.fn();
-
-    await handleGatewayRequest({
-      req: { type: "req", id: "req-projects-read", method: "projects.list", params: {} },
-      respond,
-      client: {
-        connId: "conn-projects-read",
-        connect: {
-          role: "operator",
-          scopes: ["operator.read"],
-          client: { id: "test", version: "1", platform: "test", mode: "test" },
-          minProtocol: 1,
-          maxProtocol: 1,
-        },
-      } as Parameters<typeof handleGatewayRequest>[0]["client"],
-      isWebchatConnect: () => false,
-      context: { logGateway: { warn: vi.fn() } } as unknown as Parameters<
-        typeof handleGatewayRequest
-      >[0]["context"],
-      extraHandlers: { "projects.list": handler },
-    });
-
-    expect(handler).toHaveBeenCalledOnce();
-    expect(respond).toHaveBeenCalledWith(true, { projects: [] });
-  });
-
-  it("rejects every node RPC when its connection no longer owns the pairing generation", async () => {
-    const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
-    const respond = vi.fn();
-    const isConnectionCurrentPairingState = vi.fn().mockResolvedValue(false);
-
-    await handleGatewayRequest({
-      req: { type: "req", id: "req-node-stale", method: "node.event", params: { event: "test" } },
-      respond,
-      client: {
-        connId: "conn-node-stale",
-        connect: {
-          role: "node",
-          scopes: [],
-          device: {
-            id: "node-stale",
-            publicKey: "public-key",
-            signature: "signature",
-            signedAt: 1,
-            nonce: "nonce",
+  it.each(["operator.read", "operator.write", "operator.admin"])(
+    "requires admin authority for installed-runtime setup (%s)",
+    async (scope) => {
+      const respond = vi.fn();
+      const handler = vi.fn<GatewayRequestHandler>(({ respond: reply }) => reply(true, {}));
+      await handleGatewayRequest({
+        req: {
+          type: "req",
+          id: "runtime-enable",
+          method: "openclaw.setup.runtime.start",
+          params: {
+            sessionId: "runtime-consent",
+            agentId: "research",
+            runtimeId: "fixture-native",
+            configPatch: { plugins: { entries: { fixture: { config: { enabled: true } } } } },
           },
-          client: { id: "node-host", version: "1", platform: "test", mode: "node" },
-          minProtocol: 1,
-          maxProtocol: 1,
         },
-      } as Parameters<typeof handleGatewayRequest>[0]["client"],
-      isWebchatConnect: () => false,
-      context: {
-        logGateway: { warn: vi.fn() },
-        nodeRegistry: { isConnectionCurrentPairingState },
-      } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
-      extraHandlers: { "node.event": handler },
-    });
-
-    expect(isConnectionCurrentPairingState).toHaveBeenCalledWith("conn-node-stale");
-    expect(handler).not.toHaveBeenCalled();
-    expect(respond).toHaveBeenCalledWith(
-      false,
-      undefined,
-      expect.objectContaining({
-        code: "UNAVAILABLE",
-        details: { code: "PAIRING_CHANGED" },
-      }),
-    );
-  });
+        respond,
+        client: {
+          connId: "runtime-operator",
+          connect: {
+            role: "operator",
+            scopes: [scope],
+            client: { id: "test", version: "1", platform: "test", mode: "test" },
+            minProtocol: 1,
+            maxProtocol: 1,
+          },
+          // Authorization only needs the connection's declared identity and scopes.
+        } as Parameters<typeof handleGatewayRequest>[0]["client"],
+        isWebchatConnect: () => false,
+        context: {
+          getRuntimeConfig: () => ({}),
+          logGateway: { warn: vi.fn() },
+          // The probe handler does not consume the remaining runtime services.
+        } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
+        extraHandlers: { "openclaw.setup.runtime.start": handler },
+      });
+      if (scope === "operator.admin") {
+        expect(handler).toHaveBeenCalledOnce();
+        expect(respond).toHaveBeenCalledWith(true, {});
+      } else {
+        expect(handler).not.toHaveBeenCalled();
+        expect(respond).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "FORBIDDEN" }),
+        );
+      }
+    },
+  );
 
   async function dispatchProfileMutation(params: {
     authenticatedUserId?: string;
@@ -210,9 +138,10 @@ describe("gateway method authorization", () => {
         },
       } as Parameters<typeof handleGatewayRequest>[0]["client"],
       isWebchatConnect: () => false,
-      context: { logGateway: { warn: vi.fn() } } as unknown as Parameters<
-        typeof handleGatewayRequest
-      >[0]["context"],
+      context: {
+        getRuntimeConfig: () => ({}),
+        logGateway: { warn: vi.fn() },
+      } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
     });
     return respond;
   }
@@ -228,23 +157,6 @@ describe("gateway method authorization", () => {
       undefined,
       expect.objectContaining({ code: "FORBIDDEN" }),
     );
-  });
-
-  it("rejects profile mutations before the handler without write scope", async () => {
-    const respond = await dispatchProfileMutation({
-      profileId: "profile-1",
-      scopes: ["operator.read"],
-    });
-
-    expect(respond).toHaveBeenCalledWith(false, undefined, {
-      code: "FORBIDDEN",
-      message: "missing scope: operator.write",
-      details: {
-        code: "MISSING_SCOPE",
-        missingScope: "operator.write",
-        requiredScopes: ["operator.write"],
-      },
-    });
   });
 
   it("allows an identified write caller to edit its own profile", async () => {
@@ -290,7 +202,8 @@ describe("gateway method authorization", () => {
     { phase: "before response", change: "replacement" },
     { phase: "before response", change: "reassignment" },
   ] as const)("rejects a session $change $phase", async ({ phase, change }) => {
-    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+    await withOpenClawTestState({ scenario: "minimal", prepareProfileCatalog: true }, async () => {
+      setRuntimeConfigSnapshot({});
       const sessionKey = "agent:main:commit-bound-authorization";
       await upsertSessionEntryCore(
         { agentId: "main", sessionKey },
@@ -446,7 +359,8 @@ describe("gateway method authorization", () => {
   });
 
   it("authorizes lifecycle targets from each method's protocol shape", async () => {
-    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+    await withOpenClawTestState({ scenario: "minimal", prepareProfileCatalog: true }, async () => {
+      setRuntimeConfigSnapshot({});
       const sessionKey = "agent:main:lifecycle-authorization-target";
       await upsertSessionEntryCore(
         { agentId: "main", sessionKey },

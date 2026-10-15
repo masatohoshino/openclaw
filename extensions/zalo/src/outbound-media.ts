@@ -67,13 +67,6 @@ export function resolveHostedZaloMediaRoutePrefix(params: {
     : `${webhookRoutePath}/${ZALO_OUTBOUND_MEDIA_SEGMENT}`;
 }
 
-function resolveHostedZaloMediaRoutePath(params: {
-  webhookUrl: string;
-  webhookPath?: string;
-}): string {
-  return `${resolveHostedZaloMediaRoutePrefix(params)}/`;
-}
-
 export async function prepareHostedZaloMediaUrl(params: {
   mediaUrl: string;
   webhookUrl: string;
@@ -81,19 +74,10 @@ export async function prepareHostedZaloMediaUrl(params: {
   maxBytes: number;
   proxyUrl?: string;
 }): Promise<string> {
-  const now = asDateTimestampMs(Date.now());
-  const expiresAt =
-    now === undefined
-      ? undefined
-      : resolveExpiresAtMsFromDurationMs(ZALO_OUTBOUND_MEDIA_TTL_MS, { nowMs: now });
-  if (expiresAt === undefined) {
-    throw new Error("Zalo outbound media expiry could not be resolved");
-  }
-
-  const routePath = resolveHostedZaloMediaRoutePath({
+  const routePath = `${resolveHostedZaloMediaRoutePrefix({
     webhookUrl: params.webhookUrl,
     webhookPath: params.webhookPath,
-  });
+  })}/`;
   const publicBaseUrl = new URL(params.webhookUrl).origin;
 
   return await getHostedZaloMediaStore().prepareUrl({

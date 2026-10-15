@@ -12,6 +12,7 @@ import {
   prepareSqliteReadOnlyLocationSyncInProcess,
 } from "./sqlite-readonly-location.js";
 import { MAX_SNAPSHOT_ATTEMPTS } from "./sqlite-snapshot-policy.js";
+import { readDatabasePathIdentitySync } from "./sqlite-worker-identity.js";
 
 const MIB = 1024 * 1024;
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
@@ -419,6 +420,67 @@ describe("stable read-only snapshot copies", () => {
     }
   });
 
+  it("captures a restarted WAL while every attempt's commit rewrites its stale tail", () => {
+    const fixture = createFixture(Buffer.alloc(0));
+    const sqlite = requireNodeSqlite();
+    const writer = new sqlite.DatabaseSync(fixture.sourcePath);
+    let prepared: ReturnType<typeof prepareSqliteReadOnlyLocationSyncInProcess> | undefined;
+    try {
+      writer.exec(`
+        PRAGMA journal_mode = WAL;
+        PRAGMA wal_autocheckpoint = 0;
+        CREATE TABLE entries (value TEXT);
+        CREATE TABLE payload (data BLOB);
+        INSERT INTO payload VALUES (zeroblob(${MIB}));
+        PRAGMA wal_checkpoint(PASSIVE);
+        INSERT INTO entries VALUES ('after-restart');
+      `);
+      // The Gateway's periodic PASSIVE checkpoint leaves this shape: a restarted
+      // generation at offset 0 followed by the previous generation's frames.
+      const walPath = `${fixture.sourcePath}-wal`;
+      const walBytes = fs.statSync(walPath).size;
+      expect(walBytes).toBeGreaterThan(MIB);
+      const insert = writer.prepare("INSERT INTO entries VALUES (?)");
+      let commits = 0;
+      let sourceAfterWrites = snapshotSqliteFamily(fixture.sourcePath);
+      afterPrivateCopy(fixture.stagingRoot, (target) => {
+        if (target.endsWith("-wal")) {
+          insert.run(`during-copy-${++commits}`);
+          sourceAfterWrites = snapshotSqliteFamily(fixture.sourcePath);
+        }
+      });
+
+      prepared = prepareSqliteReadOnlyLocationSyncInProcess(
+        fixture.sourcePath,
+        fixture.stagingRoot,
+      );
+      expect(commits).toBe(1);
+      expect(fs.statSync(walPath).size).toBe(walBytes);
+      expect(fs.statSync(`${prepared.location}-wal`).size).toBeLessThan(walBytes);
+      const snapshot = new sqlite.DatabaseSync(prepared.location, { readOnly: true });
+      try {
+        expect(snapshot.prepare("PRAGMA integrity_check").get()).toEqual({
+          integrity_check: "ok",
+        });
+        expect(snapshot.prepare("SELECT value FROM entries").all()).toEqual([
+          { value: "after-restart" },
+        ]);
+        expect(snapshot.prepare("SELECT length(data) AS bytes FROM payload").get()).toEqual({
+          bytes: MIB,
+        });
+      } finally {
+        snapshot.close();
+      }
+      expect(snapshotSqliteFamily(fixture.sourcePath)).toEqual(sourceAfterWrites);
+    } finally {
+      if (prepared) {
+        expect(prepared.cleanup()).toBe(true);
+      }
+      writer.close();
+      expect(fs.readdirSync(fixture.stagingRoot)).toEqual([]);
+    }
+  });
+
   it("rejects a reset WAL paired with checkpoint-restored main bytes during native copying", async () => {
     const prepare = prepareSqliteReadOnlyCopyInProcess;
     const fixture = createFixture(Buffer.alloc(0));
@@ -741,4 +803,102 @@ describe("stable read-only snapshot copies", () => {
     expect(descriptors.size).toBe(0);
     expect(fs.readdirSync(fixture.sourceRoot)).toEqual(["source.sqlite"]);
   });
+});
+
+it("copies the admitted source and rejects an identical successor at every observed main open", () => {
+  const bytes = Buffer.alloc(4099, 42);
+  const { sourcePath: source, sourceRoot, stagingRoot: staging } = createFixture(bytes);
+  const replacement = path.join(sourceRoot, "replacement.sqlite");
+  const archived = path.join(sourceRoot, "original.sqlite");
+  fs.writeFileSync(replacement, bytes);
+  const files = { source, replacement, archived, staging, bytes };
+  const identity = readDatabasePathIdentitySync(files.source);
+  expect(readDatabasePathIdentitySync(files.replacement).key).not.toBe(identity.key);
+  const canonicalSource = fs.realpathSync.native(files.source);
+  const open = fs.openSync.bind(fs);
+  const close = fs.closeSync.bind(fs);
+  let observedOpens = 0;
+  const census = vi.spyOn(fs, "openSync").mockImplementation((pathname, flags, mode) => {
+    const descriptor = open(pathname, flags, mode);
+    if (String(pathname) === canonicalSource) {
+      observedOpens += 1;
+    }
+    return descriptor;
+  });
+  let baseline: ReturnType<typeof prepareSqliteReadOnlyLocationSyncInProcess>;
+  try {
+    baseline = prepareSqliteReadOnlyLocationSyncInProcess(files.source, files.staging, identity);
+  } finally {
+    census.mockRestore();
+  }
+  try {
+    expect(fs.readFileSync(baseline.location)).toEqual(files.bytes);
+    expect(fs.readFileSync(files.source)).toEqual(files.bytes);
+    expect(readDatabasePathIdentitySync(files.source)).toEqual(identity);
+  } finally {
+    expect(baseline.cleanup()).toBe(true);
+  }
+  expect(observedOpens).toBeGreaterThanOrEqual(1);
+  expect(fs.readdirSync(files.staging)).toEqual([]);
+
+  for (let targetOpen = 1; targetOpen <= observedOpens; targetOpen += 1) {
+    const label = `main descriptor ${targetOpen} of ${observedOpens}`;
+    let sourceOpens = 0;
+    let replacementDescriptor: number | undefined;
+    let injected = false;
+    // Keep the successor installed for the real descriptor's entire lifetime;
+    // the original pathname identity is restored before overall acceptance.
+    const opening = vi.spyOn(fs, "openSync").mockImplementation((pathname, flags, mode) => {
+      if (String(pathname) === canonicalSource && ++sourceOpens === targetOpen) {
+        fs.renameSync(files.source, files.archived);
+        fs.renameSync(files.replacement, files.source);
+        injected = true;
+        replacementDescriptor = open(pathname, flags, mode);
+        return replacementDescriptor;
+      }
+      return open(pathname, flags, mode);
+    });
+    const closing = vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
+      close(descriptor);
+      if (descriptor === replacementDescriptor) {
+        replacementDescriptor = undefined;
+        fs.renameSync(files.source, files.replacement);
+        fs.renameSync(files.archived, files.source);
+      }
+    });
+    const wait = vi.spyOn(Atomics, "wait");
+    let prepared: ReturnType<typeof prepareSqliteReadOnlyLocationSyncInProcess> | undefined;
+    let failure: unknown;
+    try {
+      try {
+        prepared = prepareSqliteReadOnlyLocationSyncInProcess(
+          files.source,
+          files.staging,
+          identity,
+        );
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (prepared) {
+          expect(prepared.cleanup(), label).toBe(true);
+        }
+      }
+      expect(injected, label).toBe(true);
+      expect(failure, label).toBeInstanceOf(Error);
+      expect(failure, label).toHaveProperty(
+        "message",
+        expect.stringMatching(/file identity changed/),
+      );
+      expect(wait, label).not.toHaveBeenCalled();
+      expect(replacementDescriptor, label).toBeUndefined();
+      expect(readDatabasePathIdentitySync(files.source), label).toEqual(identity);
+      expect(fs.readFileSync(files.source), label).toEqual(files.bytes);
+      expect(fs.readFileSync(files.replacement), label).toEqual(files.bytes);
+      expect(fs.readdirSync(files.staging), label).toEqual([]);
+    } finally {
+      opening.mockRestore();
+      closing.mockRestore();
+      wait.mockRestore();
+    }
+  }
 });

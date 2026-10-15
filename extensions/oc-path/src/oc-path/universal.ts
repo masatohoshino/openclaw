@@ -16,10 +16,11 @@
  */
 
 import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
-import { isMap, isScalar, isSeq, type Pair } from "yaml";
+import { isMap, isSeq, type Node } from "yaml";
 import type { MdAst } from "./ast.js";
 import { setMdOcPath } from "./edit.js";
-import { rebuildMdRaw } from "./emit.js";
+import { insertMdSource } from "./emit.js";
+import { formatFrontmatterValue } from "./frontmatter-format.js";
 import type { JsoncAst, JsoncEntry, JsoncValue } from "./jsonc/ast.js";
 import { insertJsoncOcPath, setJsoncOcPath } from "./jsonc/edit.js";
 import { resolveJsoncOcPath } from "./jsonc/resolve.js";
@@ -27,17 +28,15 @@ import type { JsonlAst } from "./jsonl/ast.js";
 import { appendJsonlOcPath as appendJsonlLine, setJsonlOcPath } from "./jsonl/edit.js";
 import { resolveJsonlOcPath } from "./jsonl/resolve.js";
 import type { OcPath } from "./oc-path.js";
-import { formatOcPath, isPattern, OcPathError, parseArrayIndexSegment } from "./oc-path.js";
+import { formatOcPath, isPattern, OcPathError } from "./oc-path.js";
 import { resolveMdOcPath } from "./resolve.js";
 import { guardSentinel } from "./sentinel.js";
 import { slugify } from "./slug.js";
+import { sourceLineOffset } from "./source.js";
 import type { YamlAst } from "./yaml/ast.js";
 import { insertYamlOcPath, setYamlOcPath } from "./yaml/edit.js";
 import { resolveYamlOcPath } from "./yaml/resolve.js";
 
-// ---------- Public types ---------------------------------------------------
-
-/** Tagged-union of every AST kind the substrate supports. */
 export type OcAst = MdAst | JsoncAst | JsonlAst | YamlAst;
 
 /**
@@ -70,12 +69,12 @@ type NodeDescriptor =
   | "yaml-seq";
 
 type ContainerKind =
-  | "md-section" // append item to a section
-  | "md-file" // append a section to the file
-  | "md-frontmatter" // add a frontmatter key
+  | "md-section"
+  | "md-file"
+  | "md-frontmatter"
   | "jsonc-object"
   | "jsonc-array"
-  | "jsonl-file" // append a line
+  | "jsonl-file"
   | "yaml-map"
   | "yaml-seq";
 
@@ -133,7 +132,6 @@ function detectInsertion(path: OcPath): InsertionInfo | null {
   return { parentPath, marker };
 }
 
-/** Resolve an `OcPath` against any AST. Throws on wildcard patterns. */
 export function resolveOcPath(ast: OcAst, path: OcPath): OcMatch | null {
   // Single-match verb: wildcards belong to findOcPaths. Throw with a
   // structured code so consumers can route to the right verb.
@@ -232,17 +230,15 @@ function resolveYamlToUniversal(ast: YamlAst, path: OcPath): OcMatch | null {
     return { kind: "root", ast, line: 1 };
   }
   if (m.kind === "scalar" || m.kind === "pair") {
-    return yamlScalarToMatch(m.value, yamlLine(ast, m.path));
+    return yamlScalarToMatch(m.value, yamlLine(ast, m.node));
   }
-  return { kind: "node", descriptor: `yaml-${m.kind}`, line: yamlLine(ast, m.path) };
+  return { kind: "node", descriptor: `yaml-${m.kind}`, line: yamlLine(ast, m.node) };
 }
 
 function yamlScalarToMatch(value: unknown, line: number): OcMatch {
-  if (typeof value === "number") {
-    return { kind: "leaf", valueText: String(value), leafType: "number", line };
-  }
-  if (typeof value === "boolean") {
-    return { kind: "leaf", valueText: String(value), leafType: "boolean", line };
+  const leafType = typeof value;
+  if (leafType === "number" || leafType === "boolean") {
+    return { kind: "leaf", valueText: String(value), leafType, line };
   }
   if (value === null) {
     return { kind: "leaf", valueText: "null", leafType: "null", line };
@@ -263,35 +259,9 @@ function yamlScalarToText(value: unknown): string {
   return JSON.stringify(value) ?? "";
 }
 
-function yamlLine(ast: YamlAst, path: readonly string[]): number {
-  let node: unknown = ast.doc.contents;
-  for (const segment of path) {
-    if (node === null || typeof node !== "object") {
-      break;
-    }
-    if (isSeq(node)) {
-      const index = parseArrayIndexSegment(segment, node.items.length);
-      if (index === null) {
-        break;
-      }
-      node = node.items[index] ?? null;
-      continue;
-    }
-    if (isMap(node)) {
-      const pair = (node as { items: readonly Pair[] }).items.find((entry) => {
-        const key = isScalar(entry.key) ? entry.key.value : entry.key;
-        return String(key) === segment;
-      });
-      node = pair?.value ?? null;
-      continue;
-    }
-    break;
-  }
-  const range = (node as { range?: readonly [number, number, number] } | null)?.range;
-  if (range === undefined) {
-    return 1;
-  }
-  return ast.lineCounter.linePos(range[0]).line;
+function yamlLine(ast: YamlAst, node: Node): number {
+  const range = node.range;
+  return range ? ast.lineCounter.linePos(range[0]).line : 1;
 }
 
 function resolveInsertion(ast: OcAst, info: InsertionInfo): InsertionMatch | null {
@@ -342,11 +312,8 @@ function resolveJsoncInsertion(ast: JsoncAst, info: InsertionInfo): InsertionMat
     containerNode = m.node;
   }
   const line = containerNode.line ?? 1;
-  if (containerNode.kind === "object") {
-    return { kind: "insertion-point", container: "jsonc-object", line };
-  }
-  if (containerNode.kind === "array") {
-    return { kind: "insertion-point", container: "jsonc-array", line };
+  if (containerNode.kind === "object" || containerNode.kind === "array") {
+    return { kind: "insertion-point", container: `jsonc-${containerNode.kind}`, line };
   }
   return null;
 }
@@ -379,7 +346,7 @@ function resolveYamlInsertion(ast: YamlAst, info: InsertionInfo): InsertionMatch
   if (m.kind === "pair" || m.kind === "scalar") {
     return null;
   }
-  return { kind: "insertion-point", container: `yaml-${m.kind}`, line: yamlLine(ast, m.path) };
+  return { kind: "insertion-point", container: `yaml-${m.kind}`, line: yamlLine(ast, m.node) };
 }
 
 /**
@@ -484,23 +451,25 @@ function setMdInsertion(ast: MdAst, info: InsertionInfo, value: string): SetResu
     if (info.marker !== "+") {
       return { ok: false, reason: "not-writable", detail: "md file-level insertion uses bare `+`" };
     }
-    const newAst: MdAst = {
-      ...ast,
-      blocks: [
-        ...ast.blocks,
-        {
-          heading: value,
-          slug: slugify(value),
-          line: 0,
-          bodyText: "",
-          items: [],
-        },
-      ],
+    const gap = ast.raw.replace(/^\uFEFF/, "").length > 0 && !/\n\r?\n$/.test(ast.raw) ? "\n" : "";
+    return {
+      ok: true,
+      ast: insertMdSource(ast, ast.raw.length, `${gap}## ${value}`, (shifted, line) => ({
+        ...shifted,
+        blocks: [
+          ...shifted.blocks,
+          {
+            heading: value,
+            slug: slugify(value),
+            line: line + gap.length,
+            bodyText: "",
+            items: [],
+          },
+        ],
+      })),
     };
-    return { ok: true, ast: rebuildMdRaw(newAst) };
   }
 
-  // [frontmatter] — keyed insertion only
   if (p.section === "[frontmatter]") {
     if (typeof info.marker !== "object" || info.marker.kind !== "keyed") {
       return {
@@ -517,11 +486,31 @@ function setMdInsertion(ast: MdAst, info: InsertionInfo, value: string): SetResu
         detail: `frontmatter key '${key}' already exists; use set, not insert`,
       };
     }
-    const newAst: MdAst = {
-      ...ast,
-      frontmatter: [...ast.frontmatter, { key, value, line: 0 }],
+    const endLine = ast.frontmatterEndLine;
+    const hasFrontmatter = endLine !== undefined;
+    const offset =
+      endLine !== undefined
+        ? sourceLineOffset(ast.raw, endLine)
+        : ast.raw.startsWith("\uFEFF")
+          ? 1
+          : 0;
+    const entry = `${key}: ${formatFrontmatterValue(value)}`;
+    return {
+      ok: true,
+      ast: insertMdSource(
+        ast,
+        offset,
+        hasFrontmatter ? entry : `---\n${entry}\n---`,
+        (shifted, line) => ({
+          ...shifted,
+          frontmatterEndLine: hasFrontmatter ? shifted.frontmatterEndLine : line + 2,
+          frontmatter: [
+            ...shifted.frontmatter,
+            { key, value, line: line + (hasFrontmatter ? 0 : 1) },
+          ],
+        }),
+      ),
     };
-    return { ok: true, ast: rebuildMdRaw(newAst) };
   }
 
   // section-level: append item. Value can be `key: value` (kv) or plain text.
@@ -534,29 +523,38 @@ function setMdInsertion(ast: MdAst, info: InsertionInfo, value: string): SetResu
     if (blockIdx === -1) {
       return { ok: false, reason: "unresolved" };
     }
-    const block = expectDefined(ast.blocks[blockIdx], "located Markdown block index");
     const kvMatch = /^([^:]+?)\s*:\s*(.+)$/.exec(value);
     const itemLine = `- ${value}`;
     const kvKey =
       kvMatch === null ? undefined : expectDefined(kvMatch[1], "Markdown item key capture");
     const kvValue =
       kvMatch === null ? undefined : expectDefined(kvMatch[2], "Markdown item value capture");
-    const bodyPrefix = block.bodyText.length === 0 ? "" : block.bodyText.replace(/\n*$/, "\n");
-    const newItem = {
-      text: value,
-      slug: slugify(kvKey ?? value),
-      line: block.line + bodyPrefix.split("\n").length,
-      ...(kvKey !== undefined && kvValue !== undefined
-        ? { kv: { key: kvKey.trim(), value: kvValue.trim() } }
-        : {}),
+    const nextBlock = ast.blocks[blockIdx + 1];
+    const offset = nextBlock ? sourceLineOffset(ast.raw, nextBlock.line) : ast.raw.length;
+    return {
+      ok: true,
+      ast: insertMdSource(ast, offset, itemLine, (shifted, line) => ({
+        ...shifted,
+        blocks: shifted.blocks.map((entry, index) =>
+          index !== blockIdx
+            ? entry
+            : {
+                ...entry,
+                items: [
+                  ...entry.items,
+                  {
+                    text: value,
+                    slug: slugify(kvKey ?? value),
+                    line,
+                    ...(kvKey !== undefined && kvValue !== undefined
+                      ? { kv: { key: kvKey.trim(), value: kvValue.trim() } }
+                      : {}),
+                  },
+                ],
+              },
+        ),
+      })),
     };
-    const newBlocks = ast.blocks.slice();
-    newBlocks[blockIdx] = {
-      ...block,
-      items: [...block.items, newItem],
-      bodyText: bodyPrefix + itemLine,
-    };
-    return { ok: true, ast: rebuildMdRaw({ ...ast, blocks: newBlocks }) };
   }
 
   return { ok: false, reason: "not-writable" };

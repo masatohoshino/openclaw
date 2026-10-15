@@ -7,16 +7,14 @@ import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { SecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { onUserProfilesChanged } from "../state/user-profile-events.js";
+import { getUserProfileListItem } from "../state/user-profile-list-item.test-support.js";
+import { getUserProfileDisplay, prepareUserProfileCatalog } from "../state/user-profile-list.js";
 import {
   setDisplayName,
   setUserProfileRole,
   syncGitHubIdentity,
 } from "../state/user-profile-writes.worker.js";
-import {
-  ensureProfileForTailscaleIdentity,
-  getUserProfileDisplay,
-  getUserProfileListItem,
-} from "../state/user-profiles.js";
+import { ensureProfileForTailscaleIdentity } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { buildAuthenticatedPresenceUser } from "./authenticated-presence-user.js";
 import type { ControlUiGitHubError } from "./github-public-api.js";
@@ -190,6 +188,7 @@ describe("authenticated GitHub identity sync", () => {
         const sync =
           provider === "access" ? cloudflareSync({}) : tailscaleSync("ada", initial ?? "");
         const result = await sync!();
+        using _ = { [Symbol.dispose]: (await prepareUserProfileCatalog()).release };
         const display = getUserProfileDisplay(result.profileId);
         expect(display.displayName).toBe(expected);
         const presenceUser = buildAuthenticatedPresenceUser({
@@ -205,24 +204,6 @@ describe("authenticated GitHub identity sync", () => {
     },
   );
 
-  it("preserves the sign-in resolver's existing optional-auth recovery", async () => {
-    await withOpenClawTestState({ scenario: "minimal" }, async () => {
-      setRuntimeConfigSnapshot({
-        gateway: { controlUi: { github: { token: "synthetic-stale-service-token" } } },
-      });
-      const fetchMock = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValueOnce(githubResponse({}, 401))
-        .mockResolvedValueOnce(githubResponse({ id: 42, login: "Visitor" }));
-      await expect(tailscaleSync("visitor")?.()).resolves.toHaveProperty("profileId");
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization")).toBe(
-        "Bearer synthetic-stale-service-token",
-      );
-      expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).has("authorization")).toBe(false);
-    });
-  });
-
   it("rejects a malformed public GitHub account id", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(githubResponse({ id: "583231" }));
@@ -236,6 +217,7 @@ describe("authenticated GitHub identity sync", () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
       const profile = ensureProfileForTailscaleIdentity({ login: "ada@github" });
       setDisplayName(profile.id, "Ada");
+      using _ = { [Symbol.dispose]: (await prepareUserProfileCatalog()).release };
       let resolveLookup: ((response: Response) => void) | undefined;
       const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementationOnce(
         async () =>
@@ -259,26 +241,28 @@ describe("authenticated GitHub identity sync", () => {
     });
   });
 
-  it("preserves verified identity after lookup failure and retries later", async () => {
+  it("reuses only the exact verified login binding during a GitHub outage", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
-      const profile = ensureProfileForTailscaleIdentity({ login: "ada@github" });
       const fetchMock = vi
         .spyOn(globalThis, "fetch")
         .mockResolvedValueOnce(githubResponse({ id: 583231, login: "Ada" }))
         .mockRejectedValueOnce(new Error("network unavailable"))
-        .mockResolvedValueOnce(githubResponse({ id: 583231, login: "Ada-Renamed" }));
+        .mockRejectedValueOnce(new Error("network unavailable"))
+        .mockResolvedValueOnce(githubResponse({ id: 700, login: "eve" }))
+        .mockResolvedValueOnce(githubResponse({ id: 583231, login: "ada-renamed" }))
+        .mockRejectedValueOnce(new Error("network unavailable"));
 
-      const firstConnection = tailscaleSync();
-      await firstConnection?.();
-      const failingConnection = tailscaleSync();
-      await expect(failingConnection?.()).rejects.toMatchObject({ statusCode: 502 });
-      expect(getUserProfileListItem(profile.id).githubIdentity).toMatchObject({ login: "Ada" });
+      const { profileId } = await tailscaleSync()!();
+      await expect(tailscaleSync()!()).resolves.toMatchObject({ profileId });
+      expect(getUserProfileListItem(profileId).githubIdentity).toMatchObject({ login: "Ada" });
 
-      await failingConnection?.();
-      expect(getUserProfileListItem(profile.id).githubIdentity).toMatchObject({
-        login: "Ada-Renamed",
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const unverifiedConnection = tailscaleSync("eve")!;
+      await expect(unverifiedConnection()).rejects.toMatchObject({ statusCode: 502 });
+      await expect(unverifiedConnection()).resolves.not.toMatchObject({ profileId });
+
+      await expect(tailscaleSync("ada-renamed")!()).resolves.toMatchObject({ profileId });
+      await expect(tailscaleSync()!()).rejects.toMatchObject({ statusCode: 502 });
+      expect(fetchMock).toHaveBeenCalledTimes(6);
     });
   });
 
@@ -485,6 +469,7 @@ describe("GitHub public identity metadata cache", () => {
         );
       stubIdentityFetch(metadata);
       const first = await createAccessSync()();
+      using _ = { [Symbol.dispose]: (await prepareUserProfileCatalog()).release };
       const display = getUserProfileDisplay(first.profileId);
       const initialProfile = getUserProfileListItem(first.profileId);
       const changed = vi.fn();
@@ -566,6 +551,10 @@ describe("GitHub public identity metadata cache", () => {
         .mockResolvedValueOnce(new Response(null, { status: 304 }));
       stubIdentityFetch(metadata);
       await createAccessSync()();
+      expect(new Headers(metadata.mock.calls[0]?.[1]?.headers).get("authorization")).toBe(
+        "Bearer service-token",
+      );
+      expect(new Headers(metadata.mock.calls[1]?.[1]?.headers).has("authorization")).toBe(false);
       await createAccessSync()();
       expect(new Headers(metadata.mock.calls[2]?.[1]?.headers).get("if-none-match")).toBeNull();
       clock.mockReturnValue(1_800_000_000_000 + CACHE_TTL_MS);

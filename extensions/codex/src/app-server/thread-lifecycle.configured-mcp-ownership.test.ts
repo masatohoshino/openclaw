@@ -13,7 +13,7 @@ import {
   testCodexAppServerBindingStore,
   writeCodexAppServerBinding,
 } from "./session-binding.test-helpers.js";
-import { useAutoCleanupTempDirTracker } from "./test-support.js";
+import { useAutoCleanupTempDirTracker, withoutCodexSkillDiscovery } from "./test-support.js";
 import { startOrResumeThread as startOrResumeThreadImpl } from "./thread-lifecycle-run.js";
 import {
   createAppServerOptions,
@@ -195,7 +195,7 @@ describe("startOrResumeThread — configured MCP ownership", () => {
     expect(sibling).toBeDefined();
     expect(releaseSibling).not.toHaveBeenCalled();
     await sibling?.release("thread-sibling");
-    expect(releaseSibling).toHaveBeenCalledWith("thread-sibling");
+    expect(releaseSibling).toHaveBeenCalledWith("thread-sibling", undefined, undefined);
   });
 
   it.each(["start", "conflict", "error"] as const)(
@@ -265,7 +265,7 @@ describe("startOrResumeThread — configured MCP ownership", () => {
           error: "lost replacement lease",
         }[failure],
       );
-      expect(request.mock.calls.map(([method]) => method)).toEqual([
+      expect(withoutCodexSkillDiscovery(request.mock.calls.map(([method]) => method))).toEqual([
         "config/read",
         "thread/start",
         ...(failure === "start" ? [] : ["thread/delete"]),
