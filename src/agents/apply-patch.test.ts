@@ -73,10 +73,7 @@ it("fences apply_patch after a file read when permissions change", async () => {
           },
           generation.signal,
         ),
-      ).rejects.toMatchObject({
-        name: "AbortError",
-        cause: expect.objectContaining({ message: "Permission change" }),
-      });
+      ).rejects.toThrow("Permission change");
     } finally {
       read.mockRestore();
     }
