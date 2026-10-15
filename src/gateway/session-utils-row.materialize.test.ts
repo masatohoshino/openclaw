@@ -397,12 +397,12 @@ afterEach(() => {
 });
 
 test("projects the configured reasoning default a session inherits", () => {
-  const cfg = {
+  const cfg: OpenClawConfig = {
     agents: {
       defaults: { reasoningDefault: "stream" },
       entries: { main: {}, ops: { reasoningDefault: "on" } },
     },
-  } as OpenClawConfig;
+  };
   setRuntimeConfigSnapshot(cfg);
   setActivePluginRegistry(createEmptyPluginRegistry());
   const row = (agentId: string) => {
