@@ -1838,15 +1838,15 @@ class TalkModeManagerTest {
     }
 
   @Test
-  fun disconnectDetachesAcceptedConsultWhileTalkStopAbortsIt() =
+  fun voiceModeChangeDetachesAcceptedConsultWhileTalkStopAbortsIt() =
     runBlocking {
-      for ((trigger, disposition) in listOf("disconnect" to "detach", "stop" to "abort")) {
+      for ((trigger, disposition) in listOf("mode change" to "detach", "stop" to "abort")) {
         val closed = CompletableDeferred<JsonObject>()
         withNodeOwningRealtimePlayback(interceptRequest = { request, _ ->
           if (request["method"]?.jsonPrimitive?.content == "talk.session.close") closed.complete(request.getValue("params").jsonObject)
           false
         }) { runtime, proof ->
-          if (trigger == "stop") runtime.setTalkModeEnabled(false) else runtime.disconnect()
+          if (trigger == "stop") runtime.setTalkModeEnabled(false) else runtime.setMicEnabled(true)
           proof.scheduler.runCurrent()
           val close = withContext(Dispatchers.Default) { withTimeout(5_000) { closed.await() } }
           assertFalse(proof.manager.isEnabled.value)
