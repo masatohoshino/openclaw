@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { awaitGateBeforeSettlement } from "../../../../test/helpers/promise.js";
 import { createOperationalRunInstanceRef } from "../../../agents/admitted-run-context.js";
 import {
   onDiagnosticEvent,
@@ -32,6 +33,7 @@ import {
   createOperatorWsClient,
 } from "./authenticated-request-dispatch.test-support.js";
 import { createGatewayRpcDiagnostics } from "./request-diagnostics.js";
+import { GatewayRequestStartTimeoutError } from "./request-start.js";
 // Compile the real router before timed cases; family preparation remains controlled below.
 import "../../server-methods.js";
 
@@ -97,13 +99,96 @@ function createRequest(handler: GatewayRequestHandler, method = "health") {
 
 describe("authenticated Gateway RPC diagnostics", () => {
   it.each([
+    {
+      clientKind: "openclaw-control-ui",
+      params: { sessionKey: "private-session", agentId: "private-agent", compact: true },
+      shape: { scope: "session", compact: true, page: "first" },
+    },
+    {
+      clientKind: "openclaw-macos",
+      params: { agentId: "private-agent", offset: 50 },
+      shape: { scope: "agent", compact: false, page: "append" },
+    },
+    {
+      clientKind: "gateway-client",
+      params: { compact: "private-invalid", offset: "private-invalid", query: "private-query" },
+      shape: { scope: "global", compact: false, page: "first" },
+    },
+  ])("attributes cron list receipt without private values ($clientKind)", async (query) => {
+    const fixture = createRequest(({ respond }) => respond(true, {}), "cron.list");
+    const client = createOperatorWsClient({
+      clientInfo: { id: query.clientKind, mode: "backend" },
+    });
+    await fixture.dispatcher.dispatch(
+      { type: "req", id: "private-request", method: "cron.list", params: query.params },
+      client,
+    );
+    await fixture.finished;
+    expect(fixture.events.filter((event) => event.phase === "received")).toEqual([
+      expect.objectContaining({
+        method: "cron.list",
+        cronList: { clientKind: query.clientKind, source: "wire", ...query.shape },
+      }),
+    ]);
+    expect(JSON.stringify(fixture.events)).not.toContain("private-");
+  });
+
+  it.each([
+    {
+      clientKind: "openclaw-control-ui",
+      params: { view: "configured", agentId: "private-agent", preparedOnly: true },
+      shape: { view: "configured", scope: "agent", preparedOnly: true, refresh: false },
+    },
+    {
+      clientKind: "openclaw-macos",
+      params: { sessionKey: "private-session", agentId: "private-agent", refresh: true },
+      shape: { view: "default", scope: "session", preparedOnly: false, refresh: true },
+    },
+    {
+      clientKind: "gateway-client",
+      params: { view: "provider-config", authProfileId: "private-profile" },
+      shape: {
+        view: "provider-config",
+        scope: "auth-profile",
+        preparedOnly: false,
+        refresh: false,
+      },
+    },
+    {
+      clientKind: "cli",
+      params: { view: "private-view", refresh: "private-refresh" },
+      shape: { view: "other", scope: "global", preparedOnly: false, refresh: false },
+    },
+  ])("attributes model catalog receipt without private values ($clientKind)", async (query) => {
+    const fixture = createRequest(({ respond }) => respond(true, {}), "models.list");
+    const client = createOperatorWsClient({
+      clientInfo: { id: query.clientKind, mode: "backend" },
+    });
+    client.connect.userAgent = "private-user-agent";
+    client.connect.client.displayName = "private-display-name";
+    client.connect.client.instanceId = "private-instance";
+    await fixture.dispatcher.dispatch(
+      { type: "req", id: "private-request", method: "models.list", params: query.params },
+      client,
+    );
+    await fixture.finished;
+    expect(fixture.events.filter((event) => event.phase === "received")).toEqual([
+      expect.objectContaining({
+        method: "models.list",
+        modelsList: { clientKind: query.clientKind, source: "wire", ...query.shape },
+      }),
+    ]);
+    expect(JSON.stringify(fixture.events)).not.toContain("private-");
+  });
+
+  it.each([
     { source: "dashboard", rowMode: "compact", bytes: 204_800, elapsed: 0 },
     { source: "arbitrary-private-caller", rowMode: undefined, bytes: 100, elapsed: 1_000 },
-  ])("attributes slow or large session lists without private filters ($source)", async (query) => {
+  ])("attributes session list diagnostics without private filters ($source)", async (query) => {
     let now = 1_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const output = vi.fn();
-    setLoggerOverride({ level: "silent", consoleLevel: "info" });
+    setLoggerOverride({ level: "silent", consoleLevel: "debug" });
     loggingState.rawConsole = { log: output, info: output, warn: output, error: output };
     onTestFinished(() => {
       setLoggerOverride(null);
@@ -132,6 +217,19 @@ describe("authenticated Gateway RPC diagnostics", () => {
       fixture.client,
     );
     await fixture.finished;
+    expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+    expect(fixture.events.find((event) => event.phase === "received")).toMatchObject({
+      sessionsList: {
+        clientKind: fixture.client.connect.client.id,
+        source: "wire",
+        callerSource: query.rowMode ? "dashboard" : "unspecified",
+        rowMode: query.rowMode ?? "full",
+        filter: "search",
+      },
+    });
+    expect(JSON.stringify(fixture.events)).not.toMatch(
+      /synthetic-private|arbitrary-private-caller/,
+    );
     const log = output.mock.calls.flat().join("\n");
     expect(log).toContain("sessions.list");
     expect(log).toContain(`source=${query.rowMode ? "dashboard" : "unspecified"}`);
@@ -139,6 +237,36 @@ describe("authenticated Gateway RPC diagnostics", () => {
     expect(log).toContain("limit=60 offset=120 filterKind=ownerId+search");
     expect(log).toContain(`bytes=${query.bytes}`);
     expect(log).not.toMatch(/synthetic-private|arbitrary-private-caller/);
+  });
+
+  it.each([
+    { params: { spawnedBy: "private-parent", ownerId: "private-owner" }, filter: "children" },
+    { params: { ownerId: "private-owner", involvingMe: true }, filter: "owner" },
+    { params: { involvingProfileId: "private-profile", activeOnly: true }, filter: "involving" },
+    { params: { activeMinutes: 15 }, filter: "active" },
+    { params: { activeOnly: false, agentId: "private-agent" }, filter: "general" },
+  ])("bounds session list filter attribution ($filter)", async ({ params, filter }) => {
+    const fixture = createRequest(({ respond }) => respond(true, {}), "sessions.list");
+    await fixture.dispatcher.dispatch(
+      {
+        type: "req",
+        id: "private-request",
+        method: "sessions.list",
+        params: { ...params, source: "sidebar", rowMode: "private-invalid-mode" },
+      },
+      fixture.client,
+    );
+    await fixture.finished;
+    expect(fixture.events.find((event) => event.phase === "received")).toMatchObject({
+      sessionsList: {
+        clientKind: fixture.client.connect.client.id,
+        source: "wire",
+        callerSource: "sidebar",
+        rowMode: "other",
+        filter,
+      },
+    });
+    expect(JSON.stringify(fixture.events)).not.toContain("private-");
   });
 
   it.each([true, false])(
@@ -217,7 +345,11 @@ describe("authenticated Gateway RPC diagnostics", () => {
       }
       const secondDispatch = second.dispatch();
       try {
-        await secondEntered.promise;
+        await awaitGateBeforeSettlement(
+          secondEntered.promise,
+          secondDispatch,
+          "overlapping request settled before handler entry",
+        );
         setDiagnosticsEnabledForProcess(true);
         if (overlap === "crossing") {
           firstRelease.resolve();
@@ -495,15 +627,17 @@ describe("authenticated Gateway RPC diagnostics", () => {
     },
   );
 
-  it.each(["authorization", "capacity"])(
+  it.each(["authorization", "capacity", "timeout"])(
     "records %s rejection without a handler sample",
     async (reason) => {
       const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true));
       const fixture = createRequest(handler, "sessions.list");
       if (reason === "authorization") {
         fixture.client.connect.scopes = [];
-      } else {
+      } else if (reason === "capacity") {
         scheduling.start.mockReturnValue(null);
+      } else {
+        scheduling.start.mockRejectedValue(new GatewayRequestStartTimeoutError());
       }
       await fixture.dispatch();
       await fixture.finished;
@@ -517,6 +651,18 @@ describe("authenticated Gateway RPC diagnostics", () => {
       );
       if (reason === "capacity") {
         expect(fixture.events.at(-1)).not.toHaveProperty("queueWaitMs");
+      } else if (reason === "timeout") {
+        expect(fixture.events.at(-1)).toHaveProperty("queueWaitMs");
+        expect(fixture.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            ok: false,
+            error: expect.objectContaining({
+              code: "UNAVAILABLE",
+              retryable: true,
+              details: { reason: "request-start-timeout" },
+            }),
+          }),
+        );
       }
     },
   );
@@ -662,6 +808,22 @@ describe("authenticated Gateway RPC diagnostics", () => {
     const unsubscribe = onInternalDiagnosticEvent(() => {}, { include: ["gateway.rpc"] });
     setDiagnosticsEnabledForProcess(false);
     expect(createGatewayRpcDiagnostics("health", registry, {})).toBeUndefined();
+    const readParams = vi.fn();
+    expect(
+      createGatewayRpcDiagnostics(
+        "sessions.list",
+        registry,
+        {},
+        {
+          clientKind: "openclaw-control-ui",
+          source: "wire",
+          get params() {
+            return readParams();
+          },
+        },
+      ),
+    ).toBeUndefined();
+    expect(readParams).not.toHaveBeenCalled();
     unsubscribe();
     expect(clock).not.toHaveBeenCalled();
     expect(memory).not.toHaveBeenCalled();

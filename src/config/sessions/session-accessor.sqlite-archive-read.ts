@@ -6,8 +6,8 @@ import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
+  sqliteStringSet,
 } from "../../infra/kysely-sync.js";
-import { assertExistingDatabaseIdentity } from "../../infra/sqlite-worker-identity.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import {
   readSessionTranscriptFailureRunId,
@@ -56,7 +56,8 @@ export function listTranscriptArchivesFromDatabase(
   if (!tableExists(db, "session_transcript_archives")) {
     return [];
   }
-  let query = getNodeSqliteKysely<ArchiveDatabase>(db)
+  const selected = sqliteStringSet(selectors);
+  const query = getNodeSqliteKysely<ArchiveDatabase>(db)
     .selectFrom("session_transcript_archives")
     .select([
       "archive_name as archiveName",
@@ -65,15 +66,17 @@ export function listTranscriptArchivesFromDatabase(
       "created_at as createdAt",
     ])
     .orderBy("created_at")
-    .orderBy("session_id");
-  query = query.where((expression) =>
-    expression.or([
-      ...(selectors.length > 0
-        ? [expression("session_id", "in", selectors), expression("session_key", "in", selectors)]
-        : []),
-      ...(archiveNames.length > 0 ? [expression("archive_name", "in", archiveNames)] : []),
-    ]),
-  );
+    .orderBy("session_id")
+    .where((expression) =>
+      expression.or([
+        ...(selectors.length > 0
+          ? [expression("session_id", "in", selected), expression("session_key", "in", selected)]
+          : []),
+        ...(archiveNames.length > 0
+          ? [expression("archive_name", "in", sqliteStringSet(archiveNames))]
+          : []),
+      ]),
+    );
   const rows = executeSqliteQuerySync(db, query).rows;
   return rows
     .map((row) =>
@@ -82,7 +85,7 @@ export function listTranscriptArchivesFromDatabase(
     .filter((row) => logicalAgentId === undefined || row.agentId === logicalAgentId);
 }
 
-export function hasTranscriptArchiveInDatabase(
+function hasTranscriptArchiveInDatabase(
   database: Pick<OpenClawAgentDatabase, "db" | "agentId">,
   target: Pick<TranscriptArchiveReadPlan, "logicalAgentId" | "sessionId" | "sessionKey">,
 ): boolean {
@@ -101,13 +104,6 @@ export function hasTranscriptArchiveInDatabase(
 export function readTranscriptArchivePresenceInWorker(
   request: TranscriptArchivePresenceRead,
 ): boolean {
-  const assertCurrent = () =>
-    assertExistingDatabaseIdentity(
-      request.database.path,
-      request.expectedIdentity.key,
-      request.expectedIdentity.birthtime,
-    );
-  assertCurrent();
   const result = withOpenClawAgentDatabaseReadOnly(
     (database) => {
       const actual = readOpenClawAgentDatabaseIdentity(database);
@@ -122,7 +118,6 @@ export function readTranscriptArchivePresenceInWorker(
     },
     { ...request.database, env: request.env },
   );
-  assertCurrent();
   return result.found && result.value;
 }
 
@@ -131,23 +126,12 @@ export async function readTranscriptArchiveFinalInWorker(
   plan: TranscriptArchiveReadPlan,
   env: NodeJS.ProcessEnv,
 ): Promise<TranscriptArchiveReadResult> {
-  const assertCurrent = () => {
-    if (plan.expectedIdentity) {
-      assertExistingDatabaseIdentity(
-        plan.databasePath,
-        plan.expectedIdentity.key,
-        plan.expectedIdentity.birthtime,
-      );
-    }
-  };
-  assertCurrent();
   const opened = openOpenClawAgentDatabaseReadOnly({
     agentId: plan.agentId,
     path: plan.databasePath,
     env,
   });
   if (!opened.found) {
-    assertCurrent();
     return {};
   }
   const database = opened.database;
@@ -211,7 +195,6 @@ export async function readTranscriptArchiveFinalInWorker(
     }
     database.db.exec("COMMIT"); // sqlite-allow-raw: release the completed read snapshot.
     transactionOpen = false;
-    assertCurrent();
     return result;
   } finally {
     try {
@@ -331,17 +314,6 @@ function readArchivePageCursor(plan: TranscriptArchivePagePlan): ArchivePageCurs
     sha256: cursor.sha256,
     beforeSeq: cursor.beforeSeq,
   };
-}
-
-function sameArchiveBinding(
-  left: TranscriptArchivePageBinding,
-  right: TranscriptArchivePageBinding,
-): boolean {
-  return (
-    left.sessionId === right.sessionId &&
-    left.generation === right.generation &&
-    left.sha256 === right.sha256
-  );
 }
 
 /** Select a unique run-owned archive, never the newest archive for a reused key. */
@@ -466,7 +438,12 @@ export async function readTranscriptArchivePageInWorker(
           if (result) {
             throw new Error("Multiple archived transcript generations contain this run.");
           }
-          if (expectedBinding && !sameArchiveBinding(expectedBinding, binding)) {
+          if (
+            expectedBinding &&
+            (expectedBinding.sessionId !== binding.sessionId ||
+              expectedBinding.generation !== binding.generation ||
+              expectedBinding.sha256 !== binding.sha256)
+          ) {
             throw new Error("Archived transcript identity changed.");
           }
           if (plan.verifyBinding) {

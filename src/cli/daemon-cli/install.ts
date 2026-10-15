@@ -1,7 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { z } from "zod";
 import { SUPPORTED_NODE_VERSIONS } from "../../../node-version.mjs";
 import { resolveNodeStartupTlsEnvironment } from "../../bootstrap/node-startup-env.js";
 import { buildGatewayInstallPlan } from "../../commands/daemon-install-helpers.js";
@@ -26,7 +25,10 @@ import {
 import { readDaemonRuntimePinForInstall } from "../../daemon/runtime-pin-state.js";
 import { readEmbeddedGatewayToken } from "../../daemon/service-audit.js";
 import { mergeGatewayServiceEnv } from "../../daemon/service-env-merge.js";
-import { sanitizeServiceInspectionError } from "../../daemon/service-inspection-error.js";
+import {
+  sanitizeServiceInspectionError,
+  ServiceStartRefusalError,
+} from "../../daemon/service-inspection-error.js";
 import { reconcileGatewayServiceDefinition } from "../../daemon/service-reconciliation.js";
 import type {
   GatewayServiceDefinitionBackupReceipt,
@@ -61,14 +63,10 @@ import { defaultRuntime } from "../../runtime.js";
 import { createLazyPromise } from "../../shared/lazy-promise.js";
 import { formatCliCommand } from "../command-format.js";
 import { formatInvalidConfigPort, formatInvalidPortOption } from "../error-format.js";
-import { resolveRestoreServiceCli } from "./install-restore-cli.js";
+import { assertExpectedRuntimePin, resolveRestoreServiceCli } from "./install-restore-cli.js";
 import { buildDaemonServiceSnapshot, installDaemonServiceAndEmit } from "./response.js";
 import { createDaemonInstallActionContext, resolveDaemonInstallBlockMessage } from "./shared.js";
 import type { DaemonInstallOptions } from "./types.js";
-
-const expectedRuntimePinSchema = z
-  .object({ revision: z.string(), definition: z.string().nullable() })
-  .strict();
 
 function resolveGatewayInstallBindMode(cfg: OpenClawConfig): GatewayBindMode {
   return cfg.gateway?.bind ?? defaultGatewayBindMode(cfg.gateway?.tailscale?.mode ?? "off");
@@ -189,7 +187,13 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
   try {
     existingServiceCommand = await service.readCommand(process.env, { requireEffective: true });
   } catch (error) {
-    fail(sanitizeServiceInspectionError(error).message);
+    const message = sanitizeServiceInspectionError(error).message;
+    // No installer writes precede this read; the updater can retain the unchanged definition.
+    fail(
+      error instanceof ServiceStartRefusalError
+        ? `SERVICE_DEFINITION_UNKNOWN: ${message}`
+        : message,
+    );
     return;
   }
   let loaded;
@@ -220,20 +224,10 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
     return;
   }
   if (opts.expectedRuntimePin !== undefined) {
-    let expected;
     try {
-      expected = expectedRuntimePinSchema.parse(JSON.parse(opts.expectedRuntimePin));
-    } catch {
-      fail("Invalid expected runtime pin snapshot.");
-      return;
-    }
-    if (
-      expected.revision !== pinSnapshot.revision ||
-      expected.definition !== (pinSnapshot.definition ?? null)
-    ) {
-      fail(
-        "Gateway service or runtime pin changed before installation. The newer selection was preserved; inspect it before retrying.",
-      );
+      assertExpectedRuntimePin(opts.expectedRuntimePin, pinSnapshot, "Gateway");
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
       return;
     }
   }
@@ -311,12 +305,12 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
   if (opts.wrapper !== undefined) {
     try {
       wrapperPath = await resolveOpenClawWrapperPath(opts.wrapper);
-      if (!wrapperPath) {
-        fail("Invalid --wrapper");
-        return;
-      }
     } catch (err) {
       fail(`Invalid --wrapper: ${String(err)}`);
+      return;
+    }
+    if (!wrapperPath) {
+      fail("Invalid --wrapper");
       return;
     }
   }
@@ -394,14 +388,14 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
           runtime: "node",
           preferCurrentExecPath: true,
         });
-        if (!runtimePath) {
-          fail(
-            `No supported Node runtime is available. Install Node ${SUPPORTED_NODE_VERSIONS}, then rerun openclaw gateway install.`,
-          );
-          return;
-        }
       } catch (error) {
         fail(`Gateway runtime selection failed: ${String(error)}`);
+        return;
+      }
+      if (!runtimePath) {
+        fail(
+          `No supported Node runtime is available. Install Node ${SUPPORTED_NODE_VERSIONS}, then rerun openclaw gateway install.`,
+        );
         return;
       }
       autoRefreshMessage = `Replacing ${replacement} with ${runtimePath}; refreshing the install.`;

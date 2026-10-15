@@ -5,16 +5,14 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import {
   createMessageReceiptFromOutboundResults,
-  defineChannelMessageAdapter,
+  createChannelMessageAdapterFromOutbound,
   listMessageReceiptPlatformIds,
-  type ChannelMessageSendResult,
-  type MessageReceiptPartKind,
 } from "openclaw/plugin-sdk/channel-outbound";
 import {
   createAttachedChannelResultAdapter,
   createEmptyChannelResult,
 } from "openclaw/plugin-sdk/channel-send-result";
-import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
+import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { resolveOutboundMediaUrls } from "openclaw/plugin-sdk/reply-payload";
@@ -33,7 +31,6 @@ import {
   renderLinePresentation,
 } from "./rich-messages.js";
 import { getLineRuntime } from "./runtime.js";
-import { createLineSendReceipt } from "./send-receipt.js";
 import { explainLineRefusal } from "./send-retry.js";
 import type { LineChannelData, LineSendResult, ResolvedLineAccount } from "./types.js";
 
@@ -155,9 +152,6 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
       : quickReplies;
 
     const sendMessageBatch = async (messages: messagingApi.Message[]) => {
-      if (messages.length === 0) {
-        return;
-      }
       for (let i = 0; i < messages.length; i += 5) {
         const batch = messages.slice(i, i + 5);
         await recordResult(sendBatch(to, batch, sendOptions));
@@ -213,7 +207,7 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
           continue;
         }
         await recordResult(
-          outboundRuntime.sendMessageLine(to, "", {
+          sendText(to, "", {
             ...sendOptions,
             ...mediaOptions,
             mediaUrl: trimmed,
@@ -339,7 +333,7 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
         payload: { text: ctx.text },
       }),
     // Core sends a single media reply through here rather than through the payload
-    // owner, so the quote has to be resolved again; sendMessageLine puts it on the
+    // owner, so the quote has to be resolved again; pushMessageLine puts it on the
     // caption, the one part of a media send LINE accepts a quote on.
     sendMedia: async ({
       cfg,
@@ -352,7 +346,7 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
     }) =>
       await (
         await loadLineOutboundRuntime()
-      ).sendMessageLine(to, text, {
+      ).pushMessageLine(to, text, {
         verbose: false,
         mediaUrl,
         cfg,
@@ -369,64 +363,26 @@ export const lineOutboundAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>
   }),
 };
 
-function toLineMessageSendResult(
-  result: Awaited<ReturnType<NonNullable<typeof lineOutboundAdapter.sendPayload>>>,
-  kind: MessageReceiptPartKind,
-): ChannelMessageSendResult {
-  const source = result as typeof result & { chatId?: string };
-  const receipt =
-    result.receipt ??
-    (result.messageId
-      ? createLineSendReceipt({
-          messageId: result.messageId,
-          chatId: source.chatId ?? "",
-          kind,
-        })
-      : undefined);
-  if (!receipt) {
-    throw new Error("LINE message adapter send did not return a receipt");
-  }
-  return {
-    messageId: result.messageId || receipt.primaryPlatformMessageId,
-    receipt,
-  };
-}
-
-export const lineMessageAdapter = defineChannelMessageAdapter({
+export const lineMessageAdapter = createChannelMessageAdapterFromOutbound<OpenClawConfig>({
   id: "line",
-  durableFinal: {
-    capabilities: {
-      text: true,
-      media: true,
-      // Core withholds durable final delivery from any payload whose declared
-      // capabilities it cannot find, so a reply that names a target has to say so.
-      replyTo: true,
-      messageSendingHooks: true,
-    },
+  capabilities: {
+    text: true,
+    media: true,
+    replyTo: true,
+    messageSendingHooks: true,
   },
-  send: {
-    // Core owns this context; forward it whole. Picking fields by hand is how the
-    // reply target it resolved stopped reaching the send.
-    text: async ({ onDeliveryResult, ...ctx }) => {
-      const result = await lineOutboundAdapter.sendPayload!({
+  outbound: {
+    // Keep caption/quote ordering and per-part receipts in the payload owner.
+    sendText: (ctx) =>
+      lineOutboundAdapter.sendPayload!({
         ...ctx,
         payload: { text: ctx.text },
-        onDeliveryResult: async (deliveryResult) => {
-          await onDeliveryResult?.(toLineMessageSendResult(deliveryResult, "text"));
-        },
-      });
-      return toLineMessageSendResult(result, "text");
-    },
-    media: async ({ onDeliveryResult, ...ctx }) => {
-      const result = await lineOutboundAdapter.sendPayload!({
+      }),
+    sendMedia: (ctx) =>
+      lineOutboundAdapter.sendPayload!({
         ...ctx,
         payload: { text: ctx.text, mediaUrl: ctx.mediaUrl },
-        onDeliveryResult: async (deliveryResult) => {
-          await onDeliveryResult?.(toLineMessageSendResult(deliveryResult, "media"));
-        },
-      });
-      return toLineMessageSendResult(result, "media");
-    },
+      }),
   },
   receive: {
     defaultAckPolicy: "after_receive_record",

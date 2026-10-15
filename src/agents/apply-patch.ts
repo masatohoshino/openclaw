@@ -36,6 +36,7 @@ import {
   resolveFileMutationQueueKey,
   withFileMutationQueueKeysResolution,
 } from "./sessions/tools/file-mutation-queue.js";
+import { ToolInputError } from "./tool-input-error.js";
 
 export type ApplyPatchSummary = {
   added: string[];
@@ -115,7 +116,7 @@ export function createApplyPatchTool(
       const params = args as { input?: string };
       const input = typeof params.input === "string" ? params.input : "";
       if (!input.trim()) {
-        throw new Error("Provide a patch input.");
+        throw new ToolInputError("Provide a patch input.");
       }
       if (executionSignal?.aborted) {
         throw createAbortError("Aborted");
@@ -152,7 +153,7 @@ export function createApplyPatchTool(
 async function applyPatch(input: string, options: ApplyPatchOptions): Promise<ApplyPatchResult> {
   const parsedHunks = parsePatchText(input);
   if (parsedHunks.length === 0) {
-    throw new Error("No files were modified.");
+    throw new ToolInputError("No files were modified.");
   }
 
   const patchOptions = {
@@ -705,14 +706,11 @@ async function resolvePatchInputPaths(
 
 function formatSummary(summary: ApplyPatchSummary): string {
   const lines = ["Success. Updated the following files:"];
-  for (const file of summary.added) {
-    lines.push(`A ${file}`);
-  }
-  for (const file of summary.modified) {
-    lines.push(`M ${file}`);
-  }
-  for (const file of summary.deleted) {
-    lines.push(`D ${file}`);
+  const filesByMarker = { A: summary.added, M: summary.modified, D: summary.deleted };
+  for (const [marker, files] of Object.entries(filesByMarker)) {
+    for (const file of files) {
+      lines.push(`${marker} ${file}`);
+    }
   }
   return lines.join("\n");
 }

@@ -6,7 +6,7 @@ import {
   clampPositiveTimerTimeoutMs,
   resolvePositiveTimerTimeoutMs,
 } from "@openclaw/normalization-core/number-coercion";
-import { sleepWithAbort } from "@openclaw/retry";
+import { racePromiseWithAbortSignal, sleepWithAbort } from "@openclaw/retry";
 import type { ModelProviderLocalServiceConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { toErrorObject } from "../infra/errors.js";
@@ -54,7 +54,7 @@ type ModelWithProviderLocalService = {
 
 type ManagedLocalService = {
   process?: ManagedLocalServiceProcess;
-  processStop?: { process: ManagedLocalServiceProcess; promise?: Promise<void> };
+  processStop?: Promise<void>;
   stopping?: { promise?: Promise<void> };
   starting?: Promise<void>;
   startupAbort?: AbortController;
@@ -88,14 +88,12 @@ export function attachModelProviderLocalService<TModel extends object>(
   return { ...model, [MODEL_PROVIDER_LOCAL_SERVICE_SYMBOL]: service };
 }
 
-/** Read local-service startup metadata attached to a model. */
 export function getModelProviderLocalService(
   model: object,
 ): ModelProviderLocalServiceConfig | undefined {
   return (model as ModelWithProviderLocalService)[MODEL_PROVIDER_LOCAL_SERVICE_SYMBOL];
 }
 
-/** Ensure a model's local provider service is healthy and return a lease. */
 export async function ensureModelProviderLocalService(
   model: Model,
   probeHeaders?: HeadersInit,
@@ -113,7 +111,6 @@ export async function ensureModelProviderLocalService(
   );
 }
 
-/** Ensure a provider endpoint's local service is healthy and return a request lease. */
 export async function ensureProviderLocalService(
   target: ProviderLocalServiceTarget,
   signal?: AbortSignal | null,
@@ -142,7 +139,11 @@ async function acquireProviderLocalService(
   }
   throwIfAborted(signal);
 
-  validateLocalServiceConfig(service, target.providerId);
+  if (!path.isAbsolute(service.command)) {
+    throw new Error(
+      `models.providers.${target.providerId}.localService.command must be an absolute path`,
+    );
+  }
   const healthUrl = resolveHealthUrl(service, target.baseUrl);
   const healthHeaders = buildHealthProbeHeaders(target.headers);
   const key = localServiceKey(target.providerId, service, healthUrl);
@@ -214,16 +215,7 @@ async function acquireProviderLocalService(
       }
       await waitForAbort(managed.starting, signal);
       assertCurrentServiceAcquisition(key, managed, signal);
-      const ready =
-        !managed.processStop &&
-        ((managed.process && !hasLocalServiceProcessExited(managed.process.child)) ||
-          (await probeHealth(healthUrl, healthHeaders, signal)));
-      assertCurrentServiceAcquisition(key, managed, signal);
-      if (ready && !managed.processStop) {
-        return { release };
-      }
-      release();
-      return undefined;
+      return { release };
     } finally {
       target.onReadinessWait?.(false);
     }
@@ -260,19 +252,12 @@ export async function stopManagedProviderLocalServices(): Promise<void> {
   );
 }
 
-/** Return bounded local-service state for focused lifecycle tests. */
 export function getManagedProviderLocalServiceDiagnosticsForTest(): LocalServiceDiagnostics[] {
   return structuredClone(
     [...services.values()]
       .map((managed) => managed.diagnostics)
       .filter((value): value is LocalServiceDiagnostics => value !== undefined),
   );
-}
-
-function validateLocalServiceConfig(service: ModelProviderLocalServiceConfig, provider: string) {
-  if (!path.isAbsolute(service.command)) {
-    throw new Error(`models.providers.${provider}.localService.command must be an absolute path`);
-  }
 }
 
 function resolveHealthUrl(service: ModelProviderLocalServiceConfig, baseUrl: string): string {
@@ -325,7 +310,7 @@ async function probeHealth(
   // Only the actual health request may materialize retained sentinel headers.
   const egressHeaders = unwrapHeadersInitSentinelsForProviderEgress(
     headers,
-    "to probe local model provider health",
+    "to check local model provider health",
   );
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_PROBE_TIMEOUT_MS);
@@ -547,40 +532,30 @@ function stopManagedService(
 
 async function stopManagedProcess(managed: ManagedLocalService, signal: AbortSignal) {
   throwIfAborted(signal);
-  if (!managed.processStop) {
-    const owned = managed.process;
-    managed.lastExit = undefined;
-    if (!owned) {
-      return;
-    }
-    managed.processStop = { process: owned };
+  const owned = managed.process;
+  managed.lastExit = undefined;
+  if (!owned) {
+    return;
   }
-  const stopping = managed.processStop;
-  let pending = stopping.promise;
-  if (!pending) {
+  if (!managed.processStop) {
     // Restart cancellation stops its waiter, not the process-tree cleanup owner.
-    pending = Promise.resolve()
-      .then(() => stopLocalServiceProcess(stopping.process))
+    managed.processStop = Promise.resolve()
+      .then(() => stopLocalServiceProcess(owned))
       .then(() => {
-        if (managed.process === stopping.process) {
-          managed.process = undefined;
-        }
-        if (managed.processStop === stopping) {
-          managed.processStop = undefined;
-        }
+        managed.process = undefined;
+        managed.processStop = undefined;
       })
       .catch((error: unknown) => {
-        stopping.promise = undefined;
+        managed.processStop = undefined;
         throw error;
       });
-    stopping.promise = pending;
   }
-  await waitForAbort(pending, signal);
+  await waitForAbort(managed.processStop, signal);
 }
 
 function forceStopManagedService(key: string, managed: ManagedLocalService) {
   clearIdleTimer(managed);
-  const owned = managed.processStop?.process ?? managed.process;
+  const owned = managed.process;
   managed.process = undefined;
   if (services.get(key) === managed) {
     services.delete(key);
@@ -630,23 +605,8 @@ function waitForAbort<T>(promise: Promise<T>, signal?: AbortSignal | null): Prom
   if (!signal) {
     return promise;
   }
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      cleanup();
-      reject(toAbortError(signal));
-    };
-    const cleanup = () => signal.removeEventListener("abort", onAbort);
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error: unknown) => {
-        cleanup();
-        reject(toErrorObject(error, "Non-Error rejection"));
-      },
-    );
+  return racePromiseWithAbortSignal(promise, signal, toAbortError).catch((error: unknown) => {
+    throw toErrorObject(error, "Non-Error rejection");
   });
 }
 
