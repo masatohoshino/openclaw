@@ -424,9 +424,12 @@ async function spellLikeRemovedLink(
   unlinked: readonly UnlinkedPath[],
   options: ApplyPatchOptions,
 ): Promise<string> {
-  const removedLinks = new Map(
-    unlinked.flatMap((entry) => (entry.entry ? [[entry.entry, entry.path] as const] : [])),
-  );
+  const removedLinks = new Map<string, string>();
+  for (const entry of unlinked) {
+    if (entry.entry) {
+      removedLinks.set(entry.entry, entry.path);
+    }
+  }
   if (options.sandbox || removedLinks.size === 0) {
     return lexical;
   }
@@ -572,7 +575,12 @@ async function preflightUpdateHunks(
  */
 function hasCaseVariant(staged: ReadonlyMap<string, unknown>, stage: string): boolean {
   const folded = stage.toLowerCase();
-  return [...staged.keys()].some((key) => key.toLowerCase() === folded);
+  for (const key of staged.keys()) {
+    if (key.toLowerCase() === folded) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function readStaged(current: string | typeof REMOVED): string {
