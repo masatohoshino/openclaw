@@ -10,8 +10,6 @@ import {
   type PinnedDispatcherPolicy,
   type SsrFPolicy,
 } from "../infra/net/ssrf.js";
-import type { ProviderOperationTimeoutMs } from "../media-understanding/shared.js";
-import { ssrfPolicyFromPrivateNetworkOptIn } from "../plugin-sdk/ssrf-policy.js";
 
 /**
  * Downloads `data[].url` entries of an OpenAI-compatible image response and
@@ -28,7 +26,7 @@ export async function inlineOpenAiCompatibleImageUrls(
     providerUrl: string;
     maxDownloads: number;
     maxBytes: number;
-    timeoutMs?: ProviderOperationTimeoutMs;
+    timeoutMs: () => number;
     allowPrivateNetwork?: boolean;
     ssrfPolicy?: SsrFPolicy;
     dispatcherPolicy?: PinnedDispatcherPolicy;
@@ -49,7 +47,7 @@ export async function inlineOpenAiCompatibleImageUrls(
   const downloadOptions = {
     policy: mergeSsrFPolicies(
       params.ssrfPolicy,
-      ssrfPolicyFromPrivateNetworkOptIn(params.allowPrivateNetwork),
+      params.allowPrivateNetwork ? { allowPrivateNetwork: true } : undefined,
     ),
     resolveDispatcherPolicy: (url: URL) =>
       url.origin === providerOrigin ? dispatcherPolicy : externalDispatcherPolicy,
@@ -77,7 +75,7 @@ export async function inlineOpenAiCompatibleImageUrls(
       ...downloadOptions,
       url,
       init: { method: "GET" },
-      timeoutMs: typeof params.timeoutMs === "function" ? params.timeoutMs() : params.timeoutMs,
+      timeoutMs: params.timeoutMs(),
       fetchImpl: fetch,
     });
     try {

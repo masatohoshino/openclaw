@@ -163,6 +163,7 @@ describe("OpenAI-compatible image provider helper", () => {
     resolveProviderHttpRequestConfigMock.mockClear();
     resolveProviderOperationTimeoutMsMock.mockClear();
     sanitizeConfiguredModelProviderRequestMock.mockClear();
+    vi.unstubAllGlobals();
   });
 
   it("checks config-backed auth under the credential owner, not its HTTP config alias", async () => {
@@ -339,21 +340,18 @@ describe("OpenAI-compatible image provider helper", () => {
       async () => new Response(new Uint8Array(png), { headers: { "Content-Type": "image/png" } }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    try {
-      const result = await generate(createProvider(), {
-        prompt: "url result",
-        ssrfPolicy: { allowedOrigins: ["http://127.0.0.1:19614"] },
-      });
 
-      expect(result.images).toEqual([
-        { buffer: png, mimeType: "image/png", fileName: "image-1.png", revisedPrompt: "remote" },
-      ]);
-      expect(fetchMock).toHaveBeenCalledOnce();
-      expect(fetchMock.mock.calls[0]?.[0]).toBe(imageUrl);
-      expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).has("Authorization")).toBe(false);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const result = await generate(createProvider(), {
+      prompt: "url result",
+      ssrfPolicy: { allowedOrigins: ["http://127.0.0.1:19614"] },
+    });
+
+    expect(result.images).toEqual([
+      { buffer: png, mimeType: "image/png", fileName: "image-1.png", revisedPrompt: "remote" },
+    ]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(imageUrl);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).has("Authorization")).toBe(false);
   });
 
   it("wraps malformed successful image responses with provider-owned errors", async () => {

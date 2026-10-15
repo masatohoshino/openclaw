@@ -29,6 +29,9 @@ import type {
   ImageGenerationSourceImage,
 } from "./types.js";
 
+// Same as the guarded provider request's default when the caller sets no timeout.
+const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
+
 type ModelProviderConfig = NonNullable<NonNullable<OpenClawConfig["models"]>["providers"]>[string];
 
 /** OpenAI-compatible image endpoint mode. */
@@ -181,14 +184,15 @@ export function createOpenAiCompatibleImageGenerationProvider(
         mode === "edit"
           ? options.buildEditRequest({ ...requestParams, mode })
           : options.buildGenerateRequest({ ...requestParams, mode });
+      const deadline = createProviderOperationDeadline({
+        timeoutMs: req.timeoutMs,
+        label: options.failureLabels?.[mode] ?? operation,
+      });
       const timeoutMs =
         options.defaultTimeoutMs === undefined
           ? req.timeoutMs
           : resolveProviderOperationTimeoutMs({
-              deadline: createProviderOperationDeadline({
-                timeoutMs: req.timeoutMs,
-                label: options.failureLabels?.[mode] ?? operation,
-              }),
+              deadline,
               defaultTimeoutMs: options.defaultTimeoutMs,
             });
       // Multipart requests must let FormData set its own boundary header, while
@@ -232,7 +236,12 @@ export function createOpenAiCompatibleImageGenerationProvider(
           providerUrl: requestOptions.url,
           maxDownloads: maxImages,
           maxBytes,
-          timeoutMs,
+          // Each download gets what is left of the request's budget.
+          timeoutMs: () =>
+            resolveProviderOperationTimeoutMs({
+              deadline,
+              defaultTimeoutMs: timeoutMs ?? DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
+            }),
           allowPrivateNetwork: resolvedAllowPrivateNetwork,
           ssrfPolicy: req.ssrfPolicy,
           dispatcherPolicy,
