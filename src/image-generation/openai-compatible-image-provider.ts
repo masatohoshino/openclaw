@@ -20,6 +20,7 @@ import {
   parseOpenAiCompatibleImageResponse,
   resolveInlineImageJsonResponseMaxBytes,
 } from "./image-assets.js";
+import { inlineOpenAiCompatibleImageUrls } from "./openai-compatible-image-urls.js";
 import type {
   ImageGenerationProvider,
   ImageGenerationProviderCapabilities,
@@ -217,13 +218,26 @@ export function createOpenAiCompatibleImageGenerationProvider(
           response,
           options.failureLabels?.[mode] ?? `${operation} failed`,
         );
+        const maxImages = options.capabilities[mode].maxCount ?? count;
+        const maxBytes = resolveGeneratedMediaMaxBytes(req.cfg, "image");
         const payload = await readProviderJsonResponse(response, `${options.id}.image-generation`, {
-          maxBytes: resolveInlineImageJsonResponseMaxBytes(
-            options.capabilities[mode].maxCount ?? count,
-            resolveGeneratedMediaMaxBytes(req.cfg, "image"),
-          ),
+          maxBytes: resolveInlineImageJsonResponseMaxBytes(maxImages, maxBytes),
         });
-        const images = parseOpenAiCompatibleImageResponse(payload, {
+        // Backends behind a compatible endpoint (for example dall-e-3 through
+        // LiteLLM) may answer with data[].url instead of b64_json.
+        const inlinePayload = await inlineOpenAiCompatibleImageUrls(payload, {
+          providerId: options.id,
+          label: options.label,
+          operation,
+          providerUrl: requestOptions.url,
+          maxDownloads: maxImages,
+          maxBytes,
+          timeoutMs,
+          allowPrivateNetwork: resolvedAllowPrivateNetwork,
+          ssrfPolicy: req.ssrfPolicy,
+          dispatcherPolicy,
+        });
+        const images = parseOpenAiCompatibleImageResponse(inlinePayload, {
           ...options.response,
           malformedResponseError: `${operation} response malformed`,
         });

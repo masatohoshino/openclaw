@@ -131,6 +131,10 @@ Loopback LiteLLM URLs (`http://localhost:4000`, `127.0.0.1`, `::1`, `host.docker
 without a global private-network override. For a LAN-hosted proxy, set
 `models.providers.litellm.request.allowPrivateNetwork: true` because the API key is sent to that host.
 
+Backends that answer with image URLs (`data[].url`, for example `dall-e-3`) work like base64
+results: OpenClaw downloads each URL under the same network policy and the image size cap from
+`agents.defaults.mediaMaxMb`, without sending the LiteLLM API key to the image host.
+
 ## Advanced
 
 <AccordionGroup>

@@ -326,6 +326,36 @@ describe("OpenAI-compatible image provider helper", () => {
     expect(timeoutRequest.timeoutMs).toBe(60_000);
   });
 
+  it("downloads data[].url results without forwarding provider credentials", async () => {
+    const imageUrl = "http://127.0.0.1:19614/generated.png";
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP4sAAAAASUVORK5CYII=",
+      "base64",
+    );
+    postJsonRequestMock.mockResolvedValue(
+      jsonResponse({ data: [{ url: imageUrl, revised_prompt: "remote" }] }),
+    );
+    const fetchMock = vi.fn<typeof fetch>(
+      async () => new Response(new Uint8Array(png), { headers: { "Content-Type": "image/png" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const result = await generate(createProvider(), {
+        prompt: "url result",
+        ssrfPolicy: { allowedOrigins: ["http://127.0.0.1:19614"] },
+      });
+
+      expect(result.images).toEqual([
+        { buffer: png, mimeType: "image/png", fileName: "image-1.png", revisedPrompt: "remote" },
+      ]);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(imageUrl);
+      expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).has("Authorization")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("wraps malformed successful image responses with provider-owned errors", async () => {
     postJsonRequestMock.mockResolvedValue(jsonResponse({ data: { b64_json: "not-an-array" } }));
     const provider = createProvider();
