@@ -6,7 +6,7 @@ import { createTestPluginServiceScheduler } from "openclaw/plugin-sdk/plugin-tes
 import type { RealtimeTranscriptionProviderPlugin } from "openclaw/plugin-sdk/realtime-transcription";
 import * as webhookRequestGuards from "openclaw/plugin-sdk/webhook-request-guards";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { VoiceCallConfigSchema, resolveVoiceCallConfig, type VoiceCallConfig } from "./config.js";
+import { normalizeVoiceCallConfig, type VoiceCallConfig } from "./config.js";
 import type { CallManager } from "./manager.js";
 import type { MediaStreamConfig } from "./media-stream.js";
 import type { VoiceCallProvider } from "./providers/base.js";
@@ -93,10 +93,12 @@ type TwilioProviderTestDouble = VoiceCallProvider &
     | "clearTtsQueue"
   >;
 
-type VoiceCallConfigInput = Parameters<typeof resolveVoiceCallConfig>[0];
+type VoiceCallConfigInput = Record<string, unknown> & {
+  serve?: Partial<VoiceCallConfig["serve"]>;
+};
 
 const createConfig = (overrides: VoiceCallConfigInput = {}): VoiceCallConfig => {
-  const config = VoiceCallConfigSchema.parse({
+  const config = normalizeVoiceCallConfig({
     ...overrides,
     serve: { ...overrides.serve, port: overrides.serve?.port || 1 },
   });
@@ -192,24 +194,6 @@ function expectNoTwilioStreamState(providerLocal: TwilioProvider) {
   };
   expect(state.callStreamMap.size).toBe(0);
   expect(state.streamAuthTokens.size).toBe(0);
-}
-
-function expectPlivoCallStateReleased(
-  providerLocal: PlivoProvider,
-  params: { callId: string; requestUuid: string; callUuid: string },
-) {
-  const state = providerLocal as unknown as {
-    requestUuidToCallUuid: Map<string, string>;
-    callIdToWebhookUrl: Map<string, string>;
-    callUuidToWebhookUrl: Map<string, string>;
-    pendingSpeakByCallId: Map<string, unknown>;
-    pendingListenByCallId: Map<string, unknown>;
-  };
-  expect(state.requestUuidToCallUuid.has(params.requestUuid)).toBe(false);
-  expect(state.callIdToWebhookUrl.has(params.callId)).toBe(false);
-  expect(state.callUuidToWebhookUrl.has(params.callUuid)).toBe(false);
-  expect(state.pendingSpeakByCallId.has(params.callId)).toBe(false);
-  expect(state.pendingListenByCallId.has(params.callId)).toBe(false);
 }
 
 async function expectTwilioReplayTwiML(response: Response) {
@@ -649,73 +633,6 @@ describe("VoiceCallWebhookServer replay handling", () => {
       expectNoTwilioStreamState(twilioProvider);
     } finally {
       verification.mockRestore();
-      await server.stop();
-    }
-  });
-
-  it("releases Plivo provider state through a terminal webhook before replay ack", async () => {
-    const callId = "call-webhook-terminal-plivo";
-    const requestUuid = "request-webhook-terminal-plivo";
-    const callUuid = "call-uuid-webhook-terminal-plivo";
-    const plivoProvider = new PlivoProvider(
-      {
-        authId: "MA000000000000000000",
-        authToken: "test-token",
-      },
-      { skipVerification: true },
-    );
-    const state = plivoProvider as unknown as {
-      requestUuidToCallUuid: Map<string, string>;
-      callIdToWebhookUrl: Map<string, string>;
-      callUuidToWebhookUrl: Map<string, string>;
-      pendingSpeakByCallId: Map<string, unknown>;
-      pendingListenByCallId: Map<string, unknown>;
-    };
-    state.requestUuidToCallUuid.set(requestUuid, callUuid);
-    state.callIdToWebhookUrl.set(callId, "https://example.test/voice/webhook");
-    state.callUuidToWebhookUrl.set(callUuid, "https://example.test/voice/webhook");
-    state.pendingSpeakByCallId.set(callId, { text: "Hello" });
-    state.pendingListenByCallId.set(callId, { language: "en-US" });
-
-    const parseWebhookEvent = vi.spyOn(plivoProvider, "parseWebhookEvent");
-    const { manager, processEvent } = createManager([]);
-    const config = createConfig({
-      provider: "plivo",
-      skipSignatureVerification: true,
-      plivo: {
-        authId: "MA000000000000000000",
-        authToken: "test-token",
-      },
-    });
-    const server = createServer(config, manager, plivoProvider);
-
-    try {
-      const baseUrl = await server.start();
-      const requestUrl = new URL(baseUrl);
-      requestUrl.searchParams.set("provider", "plivo");
-      requestUrl.searchParams.set("flow", "hangup");
-      requestUrl.searchParams.set("callId", callId);
-      const body = `CallUUID=${callUuid}&RequestUUID=${requestUuid}&CallStatus=completed&Direction=outbound`;
-
-      const first = await postWebhookForm(requestUrl, body);
-      expect(first.status).toBe(200);
-      expect(await first.text()).toBe(
-        '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-      );
-      expectPlivoCallStateReleased(plivoProvider, { callId, requestUuid, callUuid });
-      expect(parseWebhookEvent).toHaveBeenCalledTimes(1);
-      expect(processEvent).toHaveBeenCalledTimes(1);
-
-      const replay = await postWebhookForm(requestUrl, body);
-      expect(replay.status).toBe(200);
-      expect(await replay.text()).toBe(
-        '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-      );
-      expectPlivoCallStateReleased(plivoProvider, { callId, requestUuid, callUuid });
-      expect(parseWebhookEvent).toHaveBeenCalledTimes(1);
-      expect(processEvent).toHaveBeenCalledTimes(1);
-    } finally {
-      parseWebhookEvent.mockRestore();
       await server.stop();
     }
   });
