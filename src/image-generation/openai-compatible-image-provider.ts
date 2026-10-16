@@ -29,8 +29,8 @@ import type {
   ImageGenerationSourceImage,
 } from "./types.js";
 
-// Same as the guarded provider request's default when the caller sets no timeout.
-const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
+// Match the guarded HTTP default, including when no request timeout is supplied.
+const DEFAULT_IMAGE_OPERATION_TIMEOUT_MS = 60_000;
 
 type ModelProviderConfig = NonNullable<NonNullable<OpenClawConfig["models"]>["providers"]>[string];
 
@@ -157,6 +157,9 @@ export function createOpenAiCompatibleImageGenerationProvider(
         req,
         providerConfig,
       });
+      const configuredRequest = options.useConfiguredRequest
+        ? sanitizeConfiguredModelProviderRequest(providerConfig?.request)
+        : undefined;
       const {
         baseUrl,
         allowPrivateNetwork: resolvedAllowPrivateNetwork,
@@ -166,9 +169,7 @@ export function createOpenAiCompatibleImageGenerationProvider(
         baseUrl: resolvedBaseUrl,
         defaultBaseUrl: options.defaultBaseUrl,
         allowPrivateNetwork,
-        request: options.useConfiguredRequest
-          ? sanitizeConfiguredModelProviderRequest(providerConfig?.request)
-          : undefined,
+        request: configuredRequest,
         defaultHeaders: {
           Authorization: `Bearer ${auth.apiKey}`,
         },
@@ -185,7 +186,7 @@ export function createOpenAiCompatibleImageGenerationProvider(
           ? options.buildEditRequest({ ...requestParams, mode })
           : options.buildGenerateRequest({ ...requestParams, mode });
       const deadline = createProviderOperationDeadline({
-        timeoutMs: req.timeoutMs,
+        timeoutMs: req.timeoutMs ?? options.defaultTimeoutMs ?? DEFAULT_IMAGE_OPERATION_TIMEOUT_MS,
         label: options.failureLabels?.[mode] ?? operation,
       });
       const timeoutMs =
@@ -195,6 +196,11 @@ export function createOpenAiCompatibleImageGenerationProvider(
               deadline,
               defaultTimeoutMs: options.defaultTimeoutMs,
             });
+      const remainingTimeoutMs = () =>
+        resolveProviderOperationTimeoutMs({
+          deadline,
+          defaultTimeoutMs: timeoutMs ?? DEFAULT_IMAGE_OPERATION_TIMEOUT_MS,
+        });
       // Multipart requests must let FormData set its own boundary header, while
       // JSON requests need an explicit content type after configured headers.
       const requestOptions = {
@@ -221,11 +227,13 @@ export function createOpenAiCompatibleImageGenerationProvider(
         await assertOkOrThrowHttpError(
           response,
           options.failureLabels?.[mode] ?? `${operation} failed`,
+          { bodyTimeoutMs: remainingTimeoutMs },
         );
         const maxImages = options.capabilities[mode].maxCount ?? count;
         const maxBytes = resolveGeneratedMediaMaxBytes(req.cfg, "image");
         const payload = await readProviderJsonResponse(response, `${options.id}.image-generation`, {
           maxBytes: resolveInlineImageJsonResponseMaxBytes(maxImages, maxBytes),
+          timeoutMs: remainingTimeoutMs,
         });
         // Backends behind a compatible endpoint (for example dall-e-3 through
         // LiteLLM) may answer with data[].url instead of b64_json.
@@ -236,13 +244,9 @@ export function createOpenAiCompatibleImageGenerationProvider(
           providerUrl: requestOptions.url,
           maxDownloads: maxImages,
           maxBytes,
-          // Each download gets what is left of the request's budget.
-          timeoutMs: () =>
-            resolveProviderOperationTimeoutMs({
-              deadline,
-              defaultTimeoutMs: timeoutMs ?? DEFAULT_IMAGE_DOWNLOAD_TIMEOUT_MS,
-            }),
-          allowPrivateNetwork: resolvedAllowPrivateNetwork,
+          timeoutMs: remainingTimeoutMs,
+          // A loopback API endpoint does not authorize arbitrary private image hosts.
+          allowPrivateNetwork: configuredRequest?.allowPrivateNetwork,
           ssrfPolicy: req.ssrfPolicy,
           dispatcherPolicy,
         });

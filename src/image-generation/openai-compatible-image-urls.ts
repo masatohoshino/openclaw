@@ -14,8 +14,9 @@ import {
 /**
  * Downloads `data[].url` entries of an OpenAI-compatible image response and
  * returns the payload with each one inlined as `b64_json`, so URL and inline
- * results share one asset parser. Downloads follow the provider's network
- * policy and never carry provider HTTP credentials.
+ * results share one asset parser. Only the provider origin is automatically
+ * trusted; other private destinations require explicit policy. Provider HTTP
+ * credentials are never sent to image URLs.
  */
 export async function inlineOpenAiCompatibleImageUrls(
   payload: unknown,
@@ -27,6 +28,7 @@ export async function inlineOpenAiCompatibleImageUrls(
     maxDownloads: number;
     maxBytes: number;
     timeoutMs: () => number;
+    /** Explicit operator opt-in only; never an inferred local-provider grant. */
     allowPrivateNetwork?: boolean;
     ssrfPolicy?: SsrFPolicy;
     dispatcherPolicy?: PinnedDispatcherPolicy;
@@ -47,6 +49,7 @@ export async function inlineOpenAiCompatibleImageUrls(
   const downloadOptions = {
     policy: mergeSsrFPolicies(
       params.ssrfPolicy,
+      { allowedOrigins: [providerOrigin] },
       params.allowPrivateNetwork ? { allowPrivateNetwork: true } : undefined,
     ),
     resolveDispatcherPolicy: (url: URL) =>
