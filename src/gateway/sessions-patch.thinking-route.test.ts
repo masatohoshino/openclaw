@@ -27,7 +27,7 @@ test.each([false, true])(
       patch: { key: MAIN_SESSION_KEY, thinkingLevel: "low" },
       loadGatewayModelCatalogSnapshot: async () => ({
         entries: [configured],
-        routeVariants: [{ ...configured, api: "openai-responses", reasoning: true }],
+        routeVariants: [{ ...configured, api: "openai-responses", reasoning: !reasoning }],
       }),
     });
 
