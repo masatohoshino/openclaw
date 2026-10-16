@@ -2572,7 +2572,8 @@ class TalkModeManager internal constructor(
       buildJsonObject {
         put("sessionKey", JsonPrimitive(mainSessionKey))
         put("message", JsonPrimitive(message))
-        put("timeoutMs", JsonPrimitive(30_000))
+        // No timeoutMs: it becomes the run's server-side deadline. The Gateway's
+        // configured agent timeout applies, as for the chat screen.
         put("idempotencyKey", JsonPrimitive(runId))
       }
     try {
@@ -2598,17 +2599,27 @@ class TalkModeManager internal constructor(
 
     consumeRunCompletion(runId)?.let { return it }
 
-    val result =
-      try {
-        withTimeout(chatFinalWaitMs) { deferred.await() }
-      } catch (_: TimeoutCancellationException) {
-        false
-      }
+    // The Gateway owns the run deadline: keep waiting while history still reports
+    // this run in flight. A missed final event falls through to the history read.
+    var result: Boolean?
+    do {
+      result = withTimeoutOrNull(chatFinalWaitMs) { deferred.await() }
+    } while (result == null && isRunInFlight(runId))
 
-    if (!result && pendingRunId == runId) {
+    if (result != true && pendingRunId == runId) {
       clearPendingRun(runId)
     }
-    return result
+    return result ?: false
+  }
+
+  private suspend fun isRunInFlight(runId: String): Boolean {
+    val params =
+      buildJsonObject {
+        put("sessionKey", JsonPrimitive(mainSessionKey))
+        put("limit", JsonPrimitive(1))
+      }
+    val root = json.parseToJsonElement(requestGateway("chat.history", params.toString())).asObjectOrNull() ?: return false
+    return root["inFlightRun"].asObjectOrNull()?.get("runId").asJsonStringOrNull() == runId
   }
 
   private fun armPendingRun(runId: String): CompletableDeferred<Boolean> {

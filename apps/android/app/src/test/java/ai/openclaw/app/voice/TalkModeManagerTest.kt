@@ -55,7 +55,6 @@ import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -102,6 +101,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -972,6 +972,7 @@ class TalkModeManagerTest {
 
         assertEquals("Recognized native speech must reach chat.send after the configured silence", 1, sends.size)
         assertNull("Native Talk must inherit the session's model-aware thinking policy", sends.single()["thinking"])
+        assertNull("Native Talk must leave the run deadline to the Gateway's agent timeout", sends.single()["timeoutMs"])
         assertEquals(
           "main",
           sends
@@ -1313,7 +1314,10 @@ class TalkModeManagerTest {
       }
     }
 
-  private suspend fun withNativeTalk(block: suspend (RealtimePlaybackProof, ConcurrentLinkedQueue<JsonObject>) -> Unit) {
+  private suspend fun withNativeTalk(
+    history: () -> String = { """{"messages":[{"role":"assistant","content":[{"type":"text","text":"Synthetic native reply"}]}]}""" },
+    block: suspend (RealtimePlaybackProof, ConcurrentLinkedQueue<JsonObject>) -> Unit,
+  ) {
     installSpeechRecognitionService()
     val sends = ConcurrentLinkedQueue<JsonObject>()
     val relayCreates = ConcurrentLinkedQueue<JsonObject>()
@@ -1335,7 +1339,7 @@ class TalkModeManagerTest {
           }
 
           "chat.history" -> {
-            """{"messages":[{"role":"assistant","content":[{"type":"text","text":"Synthetic native reply"}]}]}"""
+            history()
           }
 
           else -> {
@@ -3633,15 +3637,35 @@ class TalkModeManagerTest {
     }
 
   @Test
-  fun chatFinalWaitUsesGatewayEventTimeout() =
-    runTest {
-      val manager = createManager(scope = this)
+  fun chatFinalWaitOutlastsItsWindowWhileTheGatewayReportsTheRunInFlight() =
+    runBlocking {
+      val historyReads = AtomicInteger()
+      withNativeTalk(history = {
+        historyReads.incrementAndGet()
+        """{"messages":[],"inFlightRun":{"runId":"slow-run","text":""}}"""
+      }) { proof, _ ->
+        val wait = proof.scope.async { proof.manager.waitForChatFinal("slow-run") }
+        proof.scheduler.runCurrent()
+        proof.scheduler.advanceTimeBy(45_001)
+        awaitTalkWork(proof) { historyReads.get() == 1 }
+        assertFalse("A run the Gateway still executes must outlast the observation window", wait.isCompleted)
 
-      setPrivateField(manager, "pendingRunId", "run-missing-final")
-      setPrivateField(manager, "pendingFinal", CompletableDeferred<Boolean>())
+        proof.manager.handleGatewayEvent("chat", """{"runId":"slow-run","sessionKey":"main","state":"final"}""")
+        awaitTalkWork(proof) { wait.isCompleted }
+        assertTrue(wait.await())
+      }
+    }
 
-      assertFalse(manager.waitForChatFinal("run-missing-final"))
-      assertEquals(45_000, currentTime)
+  @Test
+  fun chatFinalWaitFallsThroughWhenTheGatewayNoLongerReportsTheRun() =
+    runBlocking {
+      withNativeTalk(history = { """{"messages":[],"inFlightRun":{"runId":"other-run","text":""}}""" }) { proof, _ ->
+        val wait = proof.scope.async { proof.manager.waitForChatFinal("run-missing-final") }
+        proof.scheduler.runCurrent()
+        proof.scheduler.advanceTimeBy(45_001)
+        awaitTalkWork(proof) { wait.isCompleted }
+        assertFalse(wait.await())
+      }
     }
 
   private fun createManager(
