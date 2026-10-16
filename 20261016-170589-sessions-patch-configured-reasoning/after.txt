@@ -1,0 +1,76 @@
+# after: commit 42920b945493ea8250929220fa5d2889d38a2f38
+
+$ openclaw gateway call sessions.patch --json --params {"key":"agent:main:t3-route-switch","thinkingLevel":"low"}
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_request_error",
+    "code": "INVALID_REQUEST",
+    "message": "thinkingLevel \"low\" is not supported for kimi/kimi-for-coding (use off|ultra)",
+    "retryable": false
+  }
+}
+[exit 1]
+
+$ openclaw gateway call sessions.patch --json --params {"key":"agent:main:t3-control","thinkingLevel":"low"}
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_request_error",
+    "code": "INVALID_REQUEST",
+    "message": "thinkingLevel \"low\" is not supported for kimi/kimi-for-coding-highspeed (use off|ultra)",
+    "retryable": false
+  }
+}
+[exit 1]
+
+$ openclaw gateway call sessions.list --json --params {}   (rows for the two test sessions, thinking fields only)
+{"key":"agent:main:t3-control","thinkingLevels":["off","ultra"],"thinkingDefault":"off"}
+{"key":"agent:main:t3-route-switch","thinkingLevels":["off","ultra"],"thinkingDefault":"off"}
+
+$ openclaw gateway call sessions.patch --json --params {"key":"agent:main:t3-route-switch","thinkingLevel":"off"}
+{
+  "ok": true,
+  "path": "$OPENCLAW_STATE_DIR/agents/main/agent/openclaw-agent.sqlite",
+  "key": "agent:main:t3-route-switch",
+  "entry": {
+    "sessionId": "bcb553b7-892e-4c7f-ace5-49c40c41a968",
+    "lifecycleRevision": "286d28b3-c945-4d31-bdb7-0b0a2b32fbd1",
+    "updatedAt": 1792127318555,
+    "sessionRoot": "$OPENCLAW_STATE_DIR/workspace",
+    "providerOverride": "kimi",
+    "modelOverride": "kimi-for-coding",
+    "modelOverrideSource": "user",
+    "modelOverrideRouteResolution": "resolved",
+    "delivery": {
+      "kind": "none"
+    },
+    "createdVia": "operator",
+    "createdAt": 1792127309963,
+    "spawnDepth": 0,
+    "parentSessionKey": "agent:main:main",
+    "thinkingLevel": "off"
+  },
+  "resolved": {
+    "modelProvider": "kimi",
+    "model": "kimi-for-coding",
+    "agentRuntime": {
+      "id": "openclaw",
+      "source": "model"
+    },
+    "runtimeSelectionLocked": false,
+    "thinkingLevel": "off",
+    "thinkingLevels": [
+      {
+        "id": "off",
+        "label": "off"
+      },
+      {
+        "id": "ultra",
+        "label": "ultra"
+      }
+    ]
+  }
+}
+[exit 0]
+
