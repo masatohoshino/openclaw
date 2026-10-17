@@ -628,8 +628,11 @@ async function runSetupWizardOnce(
       beforePersistentEffect: opts.beforePersistentEffect,
       assertCurrent: opts.assertPersistentEffectCurrent,
     });
-    opts.assertPersistentEffectCurrent?.();
-    const committed = await commitSetupConfigFile(nextConfig, { allowConfigSizeDrop: false });
+    // The commit can wait on locks; the writer checks the requester right before publication.
+    const committed = await commitSetupConfigFile(nextConfig, {
+      allowConfigSizeDrop: false,
+      writeOptions: { assertBeforePublish: opts.assertPersistentEffectCurrent },
+    });
     await channelSetup.runPostWriteHooks(committed.path);
     nextConfig = committed.nextConfig;
   }

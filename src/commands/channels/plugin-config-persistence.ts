@@ -97,12 +97,21 @@ export async function persistChannelPluginConfig(params: {
         storedNames,
       });
       await setup.beforePersistentEffect?.();
-      setup.assertCurrent?.();
     }
+    const assertSetupCurrent = setup?.assertCurrent;
     const committed = await commitConfigWithPendingPluginInstalls({
       sourceConfig,
       baseHash: params.baseHash,
-      writeOptions: params.writeOptions,
+      // The commit can wait on locks; the writer checks the requester right before publication.
+      writeOptions: assertSetupCurrent
+        ? {
+            ...params.writeOptions,
+            assertBeforePublish: () => {
+              params.writeOptions?.assertBeforePublish?.();
+              assertSetupCurrent();
+            },
+          }
+        : params.writeOptions,
     });
     if (committed.movedInstallRecords || params.pluginInstalled) {
       await refreshPluginRegistryAfterConfigMutation({
