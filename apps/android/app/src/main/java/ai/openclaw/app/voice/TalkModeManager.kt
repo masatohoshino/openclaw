@@ -53,6 +53,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -2572,8 +2573,7 @@ class TalkModeManager internal constructor(
       buildJsonObject {
         put("sessionKey", JsonPrimitive(mainSessionKey))
         put("message", JsonPrimitive(message))
-        // No timeoutMs: it becomes the run's server-side deadline. The Gateway's
-        // configured agent timeout applies, as for the chat screen.
+        // Omit the run deadline so the Gateway's configured agent timeout applies.
         put("idempotencyKey", JsonPrimitive(runId))
       }
     try {
@@ -2599,23 +2599,37 @@ class TalkModeManager internal constructor(
 
     consumeRunCompletion(runId)?.let { return it }
 
-    // The Gateway owns the run deadline: keep waiting while history still reports
-    // this run in flight. A missed final event falls through to the history read.
-    var result: Boolean?
-    do {
-      result = withTimeoutOrNull(chatFinalWaitMs) { deferred.await() }
-    } while (result == null && isRunInFlight(runId))
-
-    if (result != true && pendingRunId == runId) {
-      clearPendingRun(runId)
+    val sessionKey = mainSessionKey
+    return coroutineScope {
+      // History backs up missed events; a slow probe must not delay completion or Stop.
+      val observer =
+        launch {
+          try {
+            do {
+              delay(chatFinalWaitMs)
+            } while (isRunInFlight(sessionKey, runId))
+          } catch (_: Exception) {
+            currentCoroutineContext().ensureActive()
+            // An unavailable snapshot falls through to the existing reply-history recovery.
+          }
+          deferred.complete(false)
+        }
+      try {
+        deferred.await()
+      } finally {
+        observer.cancel()
+        clearPendingRun(runId)
+      }
     }
-    return result ?: false
   }
 
-  private suspend fun isRunInFlight(runId: String): Boolean {
+  private suspend fun isRunInFlight(
+    sessionKey: String,
+    runId: String,
+  ): Boolean {
     val params =
       buildJsonObject {
-        put("sessionKey", JsonPrimitive(mainSessionKey))
+        put("sessionKey", JsonPrimitive(sessionKey))
         put("limit", JsonPrimitive(1))
       }
     val root = json.parseToJsonElement(requestGateway("chat.history", params.toString())).asObjectOrNull() ?: return false

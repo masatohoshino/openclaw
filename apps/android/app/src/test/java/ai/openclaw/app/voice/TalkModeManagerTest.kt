@@ -53,6 +53,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -101,7 +102,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -1316,12 +1316,14 @@ class TalkModeManagerTest {
 
   private suspend fun withNativeTalk(
     history: () -> String = { """{"messages":[{"role":"assistant","content":[{"type":"text","text":"Synthetic native reply"}]}]}""" },
+    interceptRequest: (JsonObject, WebSocket) -> Boolean = { _, _ -> false },
     block: suspend (RealtimePlaybackProof, ConcurrentLinkedQueue<JsonObject>) -> Unit,
   ) {
     installSpeechRecognitionService()
     val sends = ConcurrentLinkedQueue<JsonObject>()
     val relayCreates = ConcurrentLinkedQueue<JsonObject>()
     withStartedTalk(
+      interceptRequest = interceptRequest,
       responseForRequest = { request, _ ->
         when (request.getValue("method").jsonPrimitive.content) {
           "talk.config" -> {
@@ -3639,20 +3641,18 @@ class TalkModeManagerTest {
   @Test
   fun chatFinalWaitOutlastsItsWindowWhileTheGatewayReportsTheRunInFlight() =
     runBlocking {
-      val historyReads = AtomicInteger()
+      val historyRead = CompletableDeferred<Unit>()
       withNativeTalk(history = {
-        historyReads.incrementAndGet()
+        historyRead.complete(Unit)
         """{"messages":[],"inFlightRun":{"runId":"slow-run","text":""}}"""
       }) { proof, _ ->
-        val wait = proof.scope.async { proof.manager.waitForChatFinal("slow-run") }
-        proof.scheduler.runCurrent()
+        val wait = proof.scope.async(UnconfinedTestDispatcher(proof.scheduler)) { proof.manager.waitForChatFinal("slow-run") }
         proof.scheduler.advanceTimeBy(45_001)
-        awaitTalkWork(proof) { historyReads.get() == 1 }
+        withTimeout(5_000) { historyRead.await() }
         assertFalse("A run the Gateway still executes must outlast the observation window", wait.isCompleted)
 
         proof.manager.handleGatewayEvent("chat", """{"runId":"slow-run","sessionKey":"main","state":"final"}""")
-        awaitTalkWork(proof) { wait.isCompleted }
-        assertTrue(wait.await())
+        assertTrue(withTimeout(5_000) { wait.await() })
       }
     }
 
@@ -3660,11 +3660,60 @@ class TalkModeManagerTest {
   fun chatFinalWaitFallsThroughWhenTheGatewayNoLongerReportsTheRun() =
     runBlocking {
       withNativeTalk(history = { """{"messages":[],"inFlightRun":{"runId":"other-run","text":""}}""" }) { proof, _ ->
-        val wait = proof.scope.async { proof.manager.waitForChatFinal("run-missing-final") }
-        proof.scheduler.runCurrent()
+        val wait = proof.scope.async(UnconfinedTestDispatcher(proof.scheduler)) { proof.manager.waitForChatFinal("run-missing-final") }
         proof.scheduler.advanceTimeBy(45_001)
-        awaitTalkWork(proof) { wait.isCompleted }
-        assertFalse(wait.await())
+        assertFalse(withTimeout(5_000) { wait.await() })
+      }
+    }
+
+  @Test
+  fun chatFinalCompletionAndCleanupDoNotWaitForHistoryProbe() =
+    runBlocking {
+      for (complete in listOf(true, false)) {
+        val historyRequested = CompletableDeferred<Unit>()
+        val aborts = ConcurrentLinkedQueue<JsonObject>()
+        withNativeTalk(interceptRequest = { request, _ ->
+          val method = request.getValue("method").jsonPrimitive.content
+          if (method == "chat.abort") aborts.add(request)
+          if (method == "chat.history") {
+            historyRequested.complete(Unit)
+            true // Leave the history request unanswered while the run completes or Talk stops.
+          } else {
+            false
+          }
+        }) { proof, _ ->
+          val wait = proof.scope.async(UnconfinedTestDispatcher(proof.scheduler)) { proof.manager.waitForChatFinal("slow-run") }
+          proof.scheduler.advanceTimeBy(45_001)
+          withTimeout(5_000) { historyRequested.await() }
+
+          if (complete) {
+            proof.manager.handleGatewayEvent("chat", """{"runId":"slow-run","sessionKey":"main","state":"final"}""")
+            assertTrue(withTimeout(5_000) { wait.await() })
+          } else {
+            proof.manager.stopAllCapture()
+            withTimeout(5_000) { wait.join() }
+            assertTrue(wait.isCancelled)
+          }
+          assertTrue("Stopping observation must leave accepted Gateway work running", aborts.isEmpty())
+        }
+      }
+    }
+
+  @Test
+  fun chatFinalWaitRecoversWhenHistoryProbeFails() =
+    runBlocking {
+      withNativeTalk(interceptRequest = { request, socket ->
+        if (request.getValue("method").jsonPrimitive.content == "chat.history") {
+          val id = request.getValue("id").jsonPrimitive.content
+          socket.send("""{"type":"res","id":"$id","ok":false,"error":{"code":"UNAVAILABLE","message":"Synthetic history failure"}}""")
+          true
+        } else {
+          false
+        }
+      }) { proof, _ ->
+        val wait = proof.scope.async(UnconfinedTestDispatcher(proof.scheduler)) { proof.manager.waitForChatFinal("slow-run") }
+        proof.scheduler.advanceTimeBy(45_001)
+        assertFalse(withTimeout(5_000) { wait.await() })
       }
     }
 
