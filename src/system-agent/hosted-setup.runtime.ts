@@ -47,6 +47,8 @@ export async function runHostedSetup(params: {
   label: string;
   runtime?: RuntimeEnv;
   beforePersistentApply: (runtime: RuntimeEnv) => Promise<void>;
+  /** Checked by the config writer right before publication; the commit can wait on locks. */
+  assertBeforePublish?: () => void;
   afterWrite?: import("../config/runtime-snapshot.js").ConfigWriteAfterWrite;
   run: (context: { baseConfig: OpenClawConfig; runtime: RuntimeEnv }) => Promise<
     | {
@@ -77,6 +79,9 @@ export async function runHostedSetup(params: {
       const committed = await writeWizardConfigFile(result.nextConfig, {
         allowConfigSizeDrop: false,
         baseHash: snapshot.hash,
+        ...(params.assertBeforePublish
+          ? { writeOptions: { assertBeforePublish: params.assertBeforePublish } }
+          : {}),
         ...(params.afterWrite ? { afterWrite: params.afterWrite } : {}),
       });
       await result.afterWrite?.(committed.path);
@@ -97,6 +102,7 @@ export async function runHostedChannelSetup(
     label: "Channel setup",
     runtime,
     beforePersistentApply,
+    assertBeforePublish: assertPersistentEffectCurrent,
     run: async ({ baseConfig, runtime: setupRuntime }) => {
       const beforePersistentEffect = async () => await beforePersistentApply(setupRuntime);
       const channelSetup = createChannelSetupHooks({
