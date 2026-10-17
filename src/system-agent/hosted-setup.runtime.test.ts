@@ -7,6 +7,7 @@ import type { SetupChannelsOptions } from "../channels/plugins/setup-wizard-type
 import type { ChannelPlugin } from "../channels/plugins/types.public.js";
 import { committedConfigFiles as hostedConfigFiles } from "../commands/committed-config.test-support.js";
 import { withCommandPluginMetadata } from "../commands/config-validation.js";
+import { coerceSecretRef } from "../config/types.secrets.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import {
   bindPluginMetadataSnapshotCache,
@@ -28,6 +29,7 @@ import {
 import { createInstallAccountPolicyFixture } from "../plugins/test-helpers/install-account-policy.test-support.js";
 import { normalizeAccountId } from "../routing/account-id.js";
 import { resolveChannelAccountEntry } from "../routing/account-lookup.js";
+import { readSecretStoreValue } from "../secrets/store/secret-store.js";
 import { createChannelTestPluginBase } from "../test-utils/channel-plugins.js";
 import {
   fakeOverviewLoader,
@@ -514,10 +516,20 @@ describe("SystemAgentChatEngine runtime", () => {
         expect(stopped.text).toContain("configuration changed during channel setup");
         expect(mocks.writeWizardConfigFile).toHaveBeenCalledWith(
           expect.objectContaining({
-            channels: expect.objectContaining({ telegram: { botToken: "123:abc" } }),
+            channels: expect.objectContaining({
+              telegram: {
+                botToken: { source: "store", provider: "default", id: expect.any(String) },
+              },
+            }),
           }),
           expect.objectContaining({ baseHash: "base-hash" }),
         );
+        const written: OpenClawConfig = mocks.writeWizardConfigFile.mock.calls[0]?.[0];
+        const ref = coerceSecretRef(written.channels?.telegram?.botToken);
+        expect(await readSecretStoreValue({ scope: { kind: "team" }, name: ref!.id })).toEqual({
+          ok: true,
+          value: "123:abc",
+        });
         expect(currentConfig).toEqual(changedConfig);
       } else if (phase === "write") {
         expect(mocks.writeWizardConfigFile).not.toHaveBeenCalled();

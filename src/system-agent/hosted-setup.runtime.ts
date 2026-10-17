@@ -98,23 +98,34 @@ export async function runHostedChannelSetup(
     runtime,
     beforePersistentApply,
     run: async ({ baseConfig, runtime: setupRuntime }) => {
+      const beforePersistentEffect = async () => await beforePersistentApply(setupRuntime);
       const channelSetup = createChannelSetupHooks({
         runtime: setupRuntime,
-        beforePersistentEffect: async () => await beforePersistentApply(setupRuntime),
+        beforePersistentEffect,
       });
+      const nextConfig = await setupChannels(baseConfig, setupRuntime, prompter, {
+        initialSelection: [channel],
+        forceAllowFromChannels: [channel],
+        allowIMessageInstall: true,
+        allowSignalInstall: true,
+        deferStatusUntilSelection: true,
+        quickstartDefaults: true,
+        skipDmPolicyPrompt: true,
+        skipConfirm: true,
+        beforePersistentEffect,
+        ...(assertPersistentEffectCurrent ? { assertPersistentEffectCurrent } : {}),
+        onPostWriteHook: channelSetup.onPostWriteHook,
+      });
+      const { storeChannelSetupCredentials } =
+        await import("../commands/channels/plugin-config-persistence.js");
       return {
-        nextConfig: await setupChannels(baseConfig, setupRuntime, prompter, {
-          initialSelection: [channel],
-          forceAllowFromChannels: [channel],
-          allowIMessageInstall: true,
-          allowSignalInstall: true,
-          deferStatusUntilSelection: true,
-          quickstartDefaults: true,
-          skipDmPolicyPrompt: true,
-          skipConfirm: true,
-          beforePersistentEffect: async () => await beforePersistentApply(setupRuntime),
-          ...(assertPersistentEffectCurrent ? { assertPersistentEffectCurrent } : {}),
-          onPostWriteHook: channelSetup.onPostWriteHook,
+        nextConfig: await storeChannelSetupCredentials({
+          cfg: nextConfig,
+          previousConfig: baseConfig,
+          beforePersistentEffect,
+          ...(assertPersistentEffectCurrent
+            ? { assertCurrent: assertPersistentEffectCurrent }
+            : {}),
         }),
         afterWrite: async (configPath) => await channelSetup.runPostWriteHooks(configPath),
       };
