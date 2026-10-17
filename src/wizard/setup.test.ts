@@ -912,6 +912,27 @@ describe("runSetupWizard", () => {
     ).toBe(false);
   });
 
+  it("checks the hosted session before committing the channel step config", async () => {
+    const beforeConfig = { agents: { defaults: { workspace: "/tmp/workspace" } } };
+    setupChannels.mockImplementationOnce(async () => ({
+      ...beforeConfig,
+      channels: { telegram: { enabled: true } },
+    }));
+    readConfigFileSnapshot.mockResolvedValueOnce(configSnapshot(beforeConfig));
+    const assertPersistentEffectCurrent = vi.fn(() => {
+      throw new Error("Gateway caller authority is no longer active.");
+    });
+
+    await expect(
+      runWizard({ skipChannels: undefined, assertPersistentEffectCurrent }),
+    ).rejects.toThrow("Gateway caller authority is no longer active.");
+
+    expect(assertPersistentEffectCurrent).toHaveBeenCalledOnce();
+    expect(
+      replaceConfigFile.mock.calls.some(([params]) => params.nextConfig.channels?.telegram),
+    ).toBe(false);
+  });
+
   it("honors a provider-required picker while keeping existing model settings", async () => {
     const modelSelection = { promptWhenAuthChoiceProvided: true, allowKeepCurrent: false };
     promptDefaultModel.mockResolvedValueOnce({ model: "ollama/llama3" });

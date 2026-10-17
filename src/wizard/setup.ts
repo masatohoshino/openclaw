@@ -628,6 +628,7 @@ async function runSetupWizardOnce(
       beforePersistentEffect: opts.beforePersistentEffect,
       assertCurrent: opts.assertPersistentEffectCurrent,
     });
+    opts.assertPersistentEffectCurrent?.();
     const committed = await commitSetupConfigFile(nextConfig, { allowConfigSizeDrop: false });
     await channelSetup.runPostWriteHooks(committed.path);
     nextConfig = committed.nextConfig;

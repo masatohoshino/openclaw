@@ -87,6 +87,14 @@ function sanitizeWizardResultForClient<T extends { step?: WizardStep }>(result: 
 type WizardRequestScope = ReturnType<typeof getPluginRuntimeGatewayRequestScope>;
 const wizardRequestScopes = new WeakMap<WizardSession, WizardRequestScope>();
 
+/** Durable effects need a live session and the current authority of the client that answered last. */
+function assertWizardPersistentEffectCurrent(session: WizardSession): void {
+  session.assertPersistentEffectCurrent();
+  if (wizardRequestScopes.get(session)?.hasCurrentClientAuthority?.() === false) {
+    throw new Error("Gateway caller authority is no longer active.");
+  }
+}
+
 function wizardSessionHandler<T extends { sessionId: string }>(
   method: string,
   validate: Validator<T>,
@@ -131,7 +139,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
                   // even if the client cancels mid-write.
                   beforePersistentEffect: async () => wizardSession.lockCancellation(),
                   assertPersistentEffectCurrent: () =>
-                    wizardSession.assertPersistentEffectCurrent(),
+                    assertWizardPersistentEffectCurrent(wizardSession),
                 },
                 runtime,
                 prompter,
@@ -146,7 +154,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
                   beforePersistentEffect: async () =>
                     wizardSession.lockCancellationForPreparation(),
                   assertPersistentEffectCurrent: () =>
-                    wizardSession.assertPersistentEffectCurrent(),
+                    assertWizardPersistentEffectCurrent(wizardSession),
                 },
                 runtime,
                 prompter,
