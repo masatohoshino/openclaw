@@ -43,7 +43,9 @@ it("adopts channel ingress before the sign-in wait so /login cancel gets through
       deviceCodeSent.resolve();
       const signal = expectDefined(opts.signal, "expected login signal");
       return await new Promise<never>((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        signal.addEventListener("abort", () => reject(new Error("Codex login cancelled")), {
+          once: true,
+        });
       });
     });
     const replies = new Map<string, ReplyPayload | undefined>();
