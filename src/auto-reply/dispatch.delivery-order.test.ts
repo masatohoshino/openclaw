@@ -1,6 +1,6 @@
 /** Tests foreground reply delivery ordering for buffered inbound dispatch. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
+import { createDeferred, raceWithTimeoutResult } from "../../test/helpers/promise.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resetGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { expectedNoQueuedReplyResult } from "./reply/dispatch-result-expectations.test-support.js";
@@ -448,37 +448,10 @@ describe("foreground reply delivery order", () => {
     ]);
   });
 
-  it("delivers same-session /status while an earlier foreground turn still holds the fence", async () => {
-    const deliveries: Delivery[] = [];
-    const olderStarted = createDeferred();
-    const releaseOlderFinal = createDeferred();
-
-    hoisted.dispatchReplyFromConfigMock.mockImplementation(
-      async (params: DispatchReplyFromConfigParams) => {
-        if (params.ctx.MessageSid === "old-message") {
-          olderStarted.resolve();
-          await releaseOlderFinal.promise;
-          params.dispatcher.sendFinalReply({ text: "old final" });
-          return queuedFinalResult();
-        }
-        if (params.ctx.MessageSid === "status-message") {
-          params.dispatcher.sendFinalReply({ text: "🧠 Model: mock | ⚙️ Status: ok" });
-          return queuedFinalResult();
-        }
-        throw new Error(`unexpected test message ${params.ctx.MessageSid ?? "<missing>"}`);
-      },
-    );
-
-    const olderDispatch = dispatchWithDeliveries(
-      buildForegroundCtx({ MessageSid: "old-message" }),
-      deliveries,
-    );
-    await olderStarted.promise;
-
-    const statusDispatch = dispatchWithDeliveries(
-      buildForegroundCtx({
-        MessageSid: "status-message",
-        CommandAuthorized: true,
+  it.each([
+    {
+      source: "a marked text command",
+      command: {
         CommandSource: "text",
         CommandTurn: {
           kind: "text-slash",
@@ -487,22 +460,67 @@ describe("foreground reply delivery order", () => {
           commandName: "status",
           body: "/status",
         },
-        Body: "/status",
-        RawBody: "/status",
-        CommandBody: "/status",
-        BodyForAgent: "/status",
-      }),
-      deliveries,
-    );
+      },
+    },
+    // Channels such as IRC pass command authorization without marking the command source.
+    { source: "an unmarked command", command: { CommandSource: undefined } },
+  ] satisfies Array<{ source: string; command: Partial<MsgContext> }>)(
+    "delivers same-session /status from $source while an earlier foreground turn still holds the fence",
+    async ({ command }) => {
+      const deliveries: Delivery[] = [];
+      const olderStarted = createDeferred();
+      const releaseOlderFinal = createDeferred();
 
-    await expect(statusDispatch).resolves.toEqual(settledFinalResult());
-    expect(deliveries).toEqual([{ kind: "final", text: "🧠 Model: mock | ⚙️ Status: ok" }]);
+      hoisted.dispatchReplyFromConfigMock.mockImplementation(
+        async (params: DispatchReplyFromConfigParams) => {
+          if (params.ctx.MessageSid === "old-message") {
+            olderStarted.resolve();
+            await releaseOlderFinal.promise;
+            params.dispatcher.sendFinalReply({ text: "old final" });
+            return queuedFinalResult();
+          }
+          if (params.ctx.MessageSid === "status-message") {
+            params.dispatcher.sendFinalReply({ text: "🧠 Model: mock | ⚙️ Status: ok" });
+            return queuedFinalResult();
+          }
+          throw new Error(`unexpected test message ${params.ctx.MessageSid ?? "<missing>"}`);
+        },
+      );
 
-    releaseOlderFinal.resolve();
-    await expect(olderDispatch).resolves.toEqual(settledFinalResult());
-    expect(deliveries).toEqual([
-      { kind: "final", text: "🧠 Model: mock | ⚙️ Status: ok" },
-      { kind: "final", text: "old final" },
-    ]);
-  });
+      const olderDispatch = dispatchWithDeliveries(
+        buildForegroundCtx({ MessageSid: "old-message" }),
+        deliveries,
+      );
+      await olderStarted.promise;
+
+      const statusDispatch = dispatchWithDeliveries(
+        buildForegroundCtx({
+          MessageSid: "status-message",
+          CommandAuthorized: true,
+          ...command,
+          Body: "/status",
+          RawBody: "/status",
+          CommandBody: "/status",
+          BodyForAgent: "/status",
+        }),
+        deliveries,
+      );
+
+      await expect(
+        raceWithTimeoutResult<Awaited<typeof statusDispatch> | "pending">(
+          statusDispatch,
+          200,
+          "pending",
+        ),
+      ).resolves.toEqual(settledFinalResult());
+      expect(deliveries).toEqual([{ kind: "final", text: "🧠 Model: mock | ⚙️ Status: ok" }]);
+
+      releaseOlderFinal.resolve();
+      await expect(olderDispatch).resolves.toEqual(settledFinalResult());
+      expect(deliveries).toEqual([
+        { kind: "final", text: "🧠 Model: mock | ⚙️ Status: ok" },
+        { kind: "final", text: "old final" },
+      ]);
+    },
+  );
 });

@@ -9,7 +9,10 @@ import {
   resolveCommandTurnContext,
   resolveCommandTurnTargetSessionKey,
 } from "./command-turn-context.js";
-import { isExplicitCommandTurnContext } from "./command-turn-detection.js";
+import {
+  isExplicitCommandTurnContext,
+  resolveExplicitCommandTurnContext,
+} from "./command-turn-detection.js";
 
 const emptyConfig = {} as const satisfies OpenClawConfig;
 
@@ -217,5 +220,41 @@ describe("resolveCommandTurnContext", () => {
       }),
     ).toBeUndefined();
     expect(isExplicitCommandTurn(undefined)).toBe(false);
+  });
+});
+
+describe("resolveExplicitCommandTurnContext", () => {
+  it("reads an authorized unmarked control command as an authorized text command", () => {
+    expect(
+      resolveExplicitCommandTurnContext(
+        { CommandAuthorized: true, CommandBody: "/login cancel" },
+        emptyConfig,
+      ),
+    ).toMatchObject({
+      kind: "text-slash",
+      source: "text",
+      authorized: true,
+      body: "/login cancel",
+    });
+  });
+
+  it("keeps an unauthorized unmarked command a normal turn", () => {
+    expect(
+      resolveExplicitCommandTurnContext(
+        { CommandAuthorized: false, CommandBody: "/login cancel" },
+        emptyConfig,
+      ),
+    ).toMatchObject({ kind: "normal", authorized: false });
+  });
+
+  it("leaves a marked command turn as the channel resolved it", () => {
+    const input = {
+      CommandSource: "text",
+      CommandAuthorized: false,
+      CommandBody: "/status",
+    } as const;
+    expect(resolveExplicitCommandTurnContext(input, emptyConfig)).toEqual(
+      resolveCommandTurnContext(input),
+    );
   });
 });

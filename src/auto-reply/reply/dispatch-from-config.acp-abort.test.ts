@@ -32,6 +32,7 @@ import {
 } from "./dispatch-from-config.shared.test-harness.js";
 import { createAcpRuntime } from "./dispatch-from-config.test-support.js";
 import { expectedNoQueuedReplyResult } from "./dispatch-result-expectations.test-support.js";
+import { reserveReplyAdmissionTicket } from "./reply-admission-ticket.js";
 import {
   REPLY_OPERATION_RUN_STATE,
   resolveReplyOperationAgentTurn,
@@ -1130,6 +1131,47 @@ describe("dispatchReplyFromConfig ACP abort", () => {
     expect(replyRunRegistry.get(sourceSessionKey)).toBeUndefined();
     targetOperation.complete();
     expect(getActiveReplyRunCount()).toBe(0);
+  });
+
+  it("admits an authorized /login cancel from a channel without command source past the admission ticket", async () => {
+    const sessionKey = "agent:main:irc:direct:owner";
+    // The pending /login turn still holds this session's admission ticket.
+    const pendingLoginTicket = reserveReplyAdmissionTicket([sessionKey]);
+    const replyResolver = vi.fn(async () => ({ text: "Provider login cancelled." }));
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "irc",
+      Surface: "irc",
+      CommandSource: undefined,
+      CommandAuthorized: true,
+      SessionKey: sessionKey,
+      Body: "/login cancel",
+      RawBody: "/login cancel",
+      CommandBody: "/login cancel",
+      BodyForAgent: "/login cancel",
+    });
+
+    const dispatchPromise = dispatchReplyFromConfig({
+      ctx,
+      cfg: createDispatchConfig(),
+      dispatcher,
+      replyResolver,
+    });
+    try {
+      await expect(
+        raceWithTimeoutResult(
+          dispatchPromise.then(() => "settled" as const),
+          200,
+          "pending" as const,
+        ),
+      ).resolves.toBe("settled");
+      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
+        text: "Provider login cancelled.",
+      });
+    } finally {
+      pendingLoginTicket?.release();
+      await Promise.allSettled([dispatchPromise]);
+    }
   });
 
   it("does not let a current-session fast abort abort its own dispatch operation", async () => {

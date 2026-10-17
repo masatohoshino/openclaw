@@ -3,9 +3,11 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isControlCommandMessage } from "./command-detection.js";
 import {
+  createCommandTurnContext,
   isExplicitCommandTurn,
   resolveCommandBody,
   resolveCommandTurnContext,
+  type CommandTurnContext,
   type CommandTurnContextInput,
 } from "./command-turn-context.js";
 
@@ -39,4 +41,23 @@ export function isExplicitCommandTurnContext(
       botUsername: normalizeOptionalString(input.BotUsername),
     })
   );
+}
+
+/**
+ * Resolves the command turn, treating an authorized control command from a channel that
+ * leaves command source unmarked as an authorized text-slash turn.
+ */
+export function resolveExplicitCommandTurnContext(
+  input: CommandTurnContextInput,
+  cfg: OpenClawConfig,
+): CommandTurnContext {
+  const commandTurn = resolveCommandTurnContext(input);
+  if (commandTurn.kind !== "normal" || !isExplicitCommandTurnContext(input, cfg)) {
+    return commandTurn;
+  }
+  return createCommandTurnContext("text", {
+    authorized: true,
+    commandName: commandTurn.commandName,
+    body: commandTurn.body,
+  });
 }
