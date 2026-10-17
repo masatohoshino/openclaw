@@ -15,14 +15,9 @@ import type {
   OpenClawPluginServiceContext,
 } from "../api.js";
 import { isInternalDiagnosticEventMetadata, redactSensitiveText } from "../api.js";
+import { seconds, type LabelSet } from "./prometheus-format.js";
 import {
-  escapeHelp,
-  formatLabels,
-  formatPrometheusNumber,
-  seconds,
-  type LabelSet,
-} from "./prometheus-format.js";
-import {
+  AGENT_DURATION_BUCKETS_SECONDS,
   createPrometheusMetricStore,
   type PrometheusMetricStore,
 } from "./prometheus-metric-store.js";
@@ -50,52 +45,6 @@ function safeErrorMessage(err: unknown): string {
       .replace(/[\r\n\t\u2028\u2029]/gu, " "),
     500,
   );
-}
-
-function renderPrometheusMetrics(store: PrometheusMetricStore): string {
-  const snapshot = store.snapshot();
-  const lines: string[] = [];
-  const emitted = new Set<string>();
-
-  const emitHeader = (name: string, type: "counter" | "gauge" | "histogram", help: string) => {
-    if (emitted.has(name)) {
-      return;
-    }
-    emitted.add(name);
-    lines.push(`# HELP ${name} ${escapeHelp(help)}`);
-    lines.push(`# TYPE ${name} ${type}`);
-  };
-
-  for (const [type, entries] of [
-    ["counter", snapshot.counters],
-    ["gauge", snapshot.gauges],
-  ] as const) {
-    entries.sort(([left], [right]) => left.localeCompare(right));
-    for (const [key, sample] of entries) {
-      const name = key.split("|", 1)[0] ?? "";
-      emitHeader(name, type, sample.help);
-      lines.push(`${name}${formatLabels(sample.labels)} ${formatPrometheusNumber(sample.value)}`);
-    }
-  }
-
-  snapshot.histograms.sort(([left], [right]) => left.localeCompare(right));
-  for (const [key, sample] of snapshot.histograms) {
-    const name = key.split("|", 1)[0] ?? "";
-    emitHeader(name, "histogram", sample.help);
-    for (let index = 0; index < sample.buckets.length; index += 1) {
-      lines.push(
-        `${sample.bucketPrefixes[index]}${formatPrometheusNumber(sample.counts[index] ?? 0)}`,
-      );
-    }
-    lines.push(
-      `${sample.bucketPrefixes[sample.buckets.length]}${formatPrometheusNumber(sample.count)}`,
-    );
-    lines.push(`${name}_sum${sample.labels} ${formatPrometheusNumber(sample.sum)}`);
-    lines.push(`${name}_count${sample.labels} ${formatPrometheusNumber(sample.count)}`);
-  }
-
-  lines.push("");
-  return lines.join("\n");
 }
 
 function webhookLabels(
@@ -126,10 +75,13 @@ function recordDiagnosticEvent(
       }
       return;
     case "diagnostic.phase.completed":
+    case "secret.egress":
+    case "tool.catalog":
     case "gateway.rpc":
     case "gateway.http.cancelled":
     case "diagnostic.gc":
     case "gateway.event_loop.sample":
+    case "gateway.main_thread.stall":
       recordOperationTimingEvent(store, evt, metadata);
       return;
     case "model.usage":
@@ -149,6 +101,7 @@ function recordDiagnosticEvent(
         "Agent run duration in seconds.",
         labels,
         seconds(evt.durationMs),
+        AGENT_DURATION_BUCKETS_SECONDS,
       );
       store.counter("openclaw_run_completed_total", "Agent runs completed by outcome.", labels);
       return;
@@ -172,6 +125,7 @@ function recordDiagnosticEvent(
         "Model request or synthetic agent-turn duration in seconds.",
         labels,
         seconds(evt.durationMs),
+        AGENT_DURATION_BUCKETS_SECONDS,
       );
       store.counter(
         "openclaw_model_call_total",
@@ -268,6 +222,7 @@ function recordDiagnosticEvent(
         "Agent harness run duration in seconds.",
         labels,
         seconds(evt.durationMs),
+        AGENT_DURATION_BUCKETS_SECONDS,
       );
       store.counter(
         "openclaw_harness_run_total",
@@ -360,6 +315,7 @@ function recordDiagnosticEvent(
         "Inbound message dispatch duration in seconds.",
         labels,
         seconds(evt.durationMs),
+        AGENT_DURATION_BUCKETS_SECONDS,
       );
       return;
     }
@@ -594,7 +550,7 @@ function createMetricsHandler(store: PrometheusMetricStore): OpenClawPluginHttpR
       return true;
     }
 
-    const body = renderPrometheusMetrics(store);
+    const body = store.render();
     res.statusCode = 200;
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
@@ -704,7 +660,7 @@ export function createDiagnosticsPrometheusExporter() {
 
   return {
     handler: createMetricsHandler(store),
-    render: () => renderPrometheusMetrics(store),
+    render: store.render,
     service,
   };
 }

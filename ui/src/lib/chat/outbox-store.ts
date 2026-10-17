@@ -146,12 +146,8 @@ export function notifyStoredChatOutboxChanges(): void {
 }
 
 function handleStoredChatOutboxStorageChange(event: StorageEvent): void {
-  if (event.key === null && event.storageArea) {
-    projectedStoreByStorage.get(event.storageArea)?.clear();
-    notifyStoredChatOutboxChanges();
-    return;
-  }
   if (
+    (event.key === null && event.storageArea) ||
     event.key?.startsWith(STORAGE_KEY_PREFIX) ||
     event.key?.startsWith(LEGACY_STORAGE_KEY_PREFIX) ||
     event.key?.startsWith(PREVIOUS_STORAGE_KEY_PREFIX) ||
@@ -644,9 +640,6 @@ export function writeStoredOutboxStore(
   ) {
     options.beforeCommit?.();
     storage.removeItem(target.key);
-    if (storage.getItem(target.key) !== null) {
-      throw new Error("Chat outbox removal verification failed");
-    }
     retireRemovedOutboxPayloads(storage, target, previous, null);
     return;
   }
@@ -661,12 +654,9 @@ export function writeStoredOutboxStore(
     ...(store.legacyReceipts ? { legacyReceipts: store.legacyReceipts } : {}),
   };
   const payload = JSON.stringify(retainedStore);
-  // Verification precedes deleting any legacy source, including quota/no-op writes.
+  // Native Storage throws on failure; retire legacy sources only after this write succeeds.
   options.beforeCommit?.();
   storage.setItem(target.key, payload);
-  if (storage.getItem(target.key) !== payload) {
-    throw new Error("Chat outbox write verification failed");
-  }
   for (const source of pendingLegacyTransfers.get(store) ?? []) {
     if (storage.getItem(source.key) === source.raw) {
       try {

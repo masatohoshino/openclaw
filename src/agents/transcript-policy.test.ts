@@ -7,7 +7,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
 import {
   shouldAllowProviderOwnedThinkingReplay,
-  shouldMergeConsecutiveUserTurns,
+  shouldMergeConsecutiveTurns,
   validateAnthropicTurns,
 } from "./embedded-agent-helpers/turns.js";
 import type { AgentMessage } from "./runtime/index.js";
@@ -159,6 +159,7 @@ describe("resolveTranscriptPolicy", () => {
     expect(policy.applyGoogleTurnOrdering).toBe(true);
     expect(policy.validateGeminiTurns).toBe(true);
     expect(policy.validateAnthropicTurns).toBe(true);
+    expect(policy.appendOnlyRuntimeContext).toBe(true);
   }
 
   function makeOpenAiCompatibleReasoningModel(
@@ -267,6 +268,8 @@ describe("resolveTranscriptPolicy", () => {
   });
 
   it.each([
+    "deepseek-v4-pro",
+    "deepseek/deepseek-v4-flash",
     "kimi-for-coding",
     "moonshotai/kimi-k2.6",
     "moonshot/kimi-k2.7-code",
@@ -455,7 +458,7 @@ describe("resolveTranscriptPolicy", () => {
         },
       });
       expect(policy.inHistorySystemUpdates).toBe(expected);
-      expect(policy.appendOnlyRuntimeContext).toBe(expected);
+      expect(policy.appendOnlyRuntimeContext).toBe(api === "openai-completions" || expected);
     }
   });
 
@@ -562,14 +565,14 @@ describe("resolveTranscriptPolicy", () => {
       modelApi: "ollama",
     });
     expect(policy.preserveSignatures).toBe(false);
-    expect(policy.appendOnlyRuntimeContext).toBe(false);
+    expect(policy.appendOnlyRuntimeContext).toBe(true);
   });
 
   it.each([
     ["claude-fable-5-1", true],
     ["claude-mythos-5-1", false],
     ["claude-fable-5", false],
-  ])("scopes persisted context and user-turn merging for %s", (modelId, appendOnly) => {
+  ])("scopes persisted context and consecutive-turn merging for %s", (modelId, appendOnly) => {
     const messages: AgentMessage[] = [
       { role: "user", content: "First request", timestamp: 1 },
       { role: "user", content: "Second request", timestamp: 2 },
@@ -579,7 +582,7 @@ describe("resolveTranscriptPolicy", () => {
         const policy = resolveTranscriptPolicy({ provider, modelId, modelApi });
         expect(policy.appendOnlyRuntimeContext).toBe(appendOnly);
         const replay = validateAnthropicTurns(messages, {
-          mergeConsecutiveUserTurns: shouldMergeConsecutiveUserTurns(policy, modelApi),
+          mergeConsecutiveTurns: shouldMergeConsecutiveTurns(policy, modelApi),
         });
         expect(replay).toEqual(
           appendOnly && modelApi === "anthropic-messages"
