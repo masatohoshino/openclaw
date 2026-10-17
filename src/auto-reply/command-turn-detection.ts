@@ -10,6 +10,7 @@ import {
   type CommandTurnContext,
   type CommandTurnContextInput,
 } from "./command-turn-context.js";
+import { shouldHandleTextCommands } from "./commands-text-routing.js";
 
 /** Returns true when inbound metadata or command text identifies an explicit command turn. */
 export function isExplicitCommandTurnContext(
@@ -45,14 +46,19 @@ export function isExplicitCommandTurnContext(
 
 /**
  * Resolves the command turn, treating an authorized control command from a channel that
- * leaves command source unmarked as an authorized text-slash turn.
+ * leaves command source unmarked as an authorized text-slash turn. Where the surface does
+ * not handle text commands, the typed command stays ordinary input.
  */
 export function resolveExplicitCommandTurnContext(
-  input: CommandTurnContextInput,
+  input: CommandTurnContextInput & { Surface?: string; Provider?: string },
   cfg: OpenClawConfig,
 ): CommandTurnContext {
   const commandTurn = resolveCommandTurnContext(input);
-  if (commandTurn.kind !== "normal" || !isExplicitCommandTurnContext(input, cfg)) {
+  if (
+    commandTurn.kind !== "normal" ||
+    !isExplicitCommandTurnContext(input, cfg) ||
+    !shouldHandleTextCommands({ cfg, surface: input.Surface ?? input.Provider ?? "" })
+  ) {
     return commandTurn;
   }
   return createCommandTurnContext("text", {

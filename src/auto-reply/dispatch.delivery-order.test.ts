@@ -1,8 +1,10 @@
 /** Tests foreground reply delivery ordering for buffered inbound dispatch. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred, raceWithTimeoutResult } from "../../test/helpers/promise.js";
+import { createDeferred } from "../../test/helpers/promise.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resetGlobalHookRunner } from "../plugins/hook-runner-global.js";
+import { setActivePluginRegistry } from "../plugins/runtime.js";
+import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import { expectedNoQueuedReplyResult } from "./reply/dispatch-result-expectations.test-support.js";
 import type { ReplyDispatchBeforeDeliver } from "./reply/reply-dispatcher.js";
 import type { ReplyDispatchBeforeDeliverOptions } from "./reply/reply-dispatcher.types.js";
@@ -95,10 +97,11 @@ function dispatchWithDeliveries(
     onSettled?: () => object | void | Promise<object | void>;
     onFreshSettledDelivery?: () => object | void | Promise<object | void>;
   } = {},
+  cfg: OpenClawConfig = {},
 ) {
   return dispatchInboundMessageWithBufferedDispatcher({
     ctx,
-    cfg: {} as OpenClawConfig,
+    cfg,
     dispatcherOptions: {
       ...dispatcherOptions,
       deliver:
@@ -118,6 +121,7 @@ describe("foreground reply delivery order", () => {
 
   afterEach(() => {
     resetGlobalHookRunner();
+    setActivePluginRegistry(createTestRegistry());
   });
 
   it("retains a waiting successor so a third foreground final cannot overtake", async () => {
@@ -461,12 +465,43 @@ describe("foreground reply delivery order", () => {
           body: "/status",
         },
       },
+      cfg: {},
+      expected: ["status", "old"],
     },
     // Channels such as IRC pass command authorization without marking the command source.
-    { source: "an unmarked command", command: { CommandSource: undefined } },
-  ] satisfies Array<{ source: string; command: Partial<MsgContext> }>)(
-    "delivers same-session /status from $source while an earlier foreground turn still holds the fence",
-    async ({ command }) => {
+    {
+      source: "an unmarked command",
+      command: { CommandSource: undefined },
+      cfg: {},
+      expected: ["status", "old"],
+    },
+    // With text commands off on a native-command surface, typed /status is ordinary input.
+    {
+      source: "an unmarked command where text commands are off",
+      command: { CommandSource: undefined },
+      cfg: { commands: { text: false } },
+      expected: ["old", "status"],
+    },
+  ] satisfies Array<{
+    source: string;
+    command: Partial<MsgContext>;
+    cfg: OpenClawConfig;
+    expected: string[];
+  }>)(
+    "orders same-session /status from $source against an earlier foreground turn",
+    async ({ command, cfg, expected }) => {
+      setActivePluginRegistry(
+        createTestRegistry([
+          {
+            pluginId: "whatsapp",
+            source: "test",
+            plugin: createChannelTestPluginBase({
+              id: "whatsapp",
+              capabilities: { chatTypes: ["direct"], nativeCommands: true },
+            }),
+          },
+        ]),
+      );
       const deliveries: Delivery[] = [];
       const olderStarted = createDeferred();
       const releaseOlderFinal = createDeferred();
@@ -476,11 +511,13 @@ describe("foreground reply delivery order", () => {
           if (params.ctx.MessageSid === "old-message") {
             olderStarted.resolve();
             await releaseOlderFinal.promise;
-            params.dispatcher.sendFinalReply({ text: "old final" });
+            params.dispatcher.sendFinalReply({ text: "old" });
             return queuedFinalResult();
           }
           if (params.ctx.MessageSid === "status-message") {
-            params.dispatcher.sendFinalReply({ text: "🧠 Model: mock | ⚙️ Status: ok" });
+            params.dispatcher.sendFinalReply({ text: "status" });
+            // A fenced /status can deliver only after the older turn sends its final.
+            releaseOlderFinal.resolve();
             return queuedFinalResult();
           }
           throw new Error(`unexpected test message ${params.ctx.MessageSid ?? "<missing>"}`);
@@ -490,6 +527,8 @@ describe("foreground reply delivery order", () => {
       const olderDispatch = dispatchWithDeliveries(
         buildForegroundCtx({ MessageSid: "old-message" }),
         deliveries,
+        {},
+        cfg,
       );
       await olderStarted.promise;
 
@@ -504,23 +543,15 @@ describe("foreground reply delivery order", () => {
           BodyForAgent: "/status",
         }),
         deliveries,
+        {},
+        cfg,
       );
 
-      await expect(
-        raceWithTimeoutResult<Awaited<typeof statusDispatch> | "pending">(
-          statusDispatch,
-          200,
-          "pending",
-        ),
-      ).resolves.toEqual(settledFinalResult());
-      expect(deliveries).toEqual([{ kind: "final", text: "🧠 Model: mock | ⚙️ Status: ok" }]);
-
-      releaseOlderFinal.resolve();
-      await expect(olderDispatch).resolves.toEqual(settledFinalResult());
-      expect(deliveries).toEqual([
-        { kind: "final", text: "🧠 Model: mock | ⚙️ Status: ok" },
-        { kind: "final", text: "old final" },
+      await expect(Promise.all([olderDispatch, statusDispatch])).resolves.toEqual([
+        settledFinalResult(),
+        settledFinalResult(),
       ]);
+      expect(deliveries.map((delivery) => delivery.text)).toEqual(expected);
     },
   );
 });

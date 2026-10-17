@@ -32,7 +32,7 @@ import {
 } from "./dispatch-from-config.shared.test-harness.js";
 import { createAcpRuntime } from "./dispatch-from-config.test-support.js";
 import { expectedNoQueuedReplyResult } from "./dispatch-result-expectations.test-support.js";
-import { reserveReplyAdmissionTicket } from "./reply-admission-ticket.js";
+import { REPLY_ADMISSION_TICKET } from "./reply-admission-ticket.js";
 import {
   REPLY_OPERATION_RUN_STATE,
   resolveReplyOperationAgentTurn,
@@ -1133,18 +1133,38 @@ describe("dispatchReplyFromConfig ACP abort", () => {
     expect(getActiveReplyRunCount()).toBe(0);
   });
 
-  it("admits an authorized /login cancel from a channel without command source past the admission ticket", async () => {
-    const sessionKey = "agent:main:irc:direct:owner";
-    // The pending /login turn still holds this session's admission ticket.
-    const pendingLoginTicket = reserveReplyAdmissionTicket([sessionKey]);
+  it.each([
+    {
+      name: "admits an authorized /login cancel from a channel without command source past the admission ticket",
+      surface: "irc",
+      cfg: createDispatchConfig(),
+      expected: "settled",
+    },
+    {
+      name: "keeps a typed /login cancel behind the admission ticket where text commands are off",
+      surface: "discord",
+      cfg: { ...createDispatchConfig(), commands: { text: false } },
+      expected: "waiting",
+    },
+  ] as const)("$name", async ({ surface, cfg, expected }) => {
+    // The pending /login turn holds the admission ticket this turn inherits.
+    const waitStarted = createDeferred();
+    const admit = createDeferred<boolean>();
+    const admissionTicket = {
+      wait: vi.fn(async () => {
+        waitStarted.resolve();
+        return await admit.promise;
+      }),
+      release: vi.fn(),
+    };
     const replyResolver = vi.fn(async () => ({ text: "Provider login cancelled." }));
     const dispatcher = createDispatcher();
     const ctx = buildTestCtx({
-      Provider: "irc",
-      Surface: "irc",
+      Provider: surface,
+      Surface: surface,
       CommandSource: undefined,
       CommandAuthorized: true,
-      SessionKey: sessionKey,
+      SessionKey: `agent:main:${surface}:direct:owner`,
       Body: "/login cancel",
       RawBody: "/login cancel",
       CommandBody: "/login cancel",
@@ -1153,25 +1173,23 @@ describe("dispatchReplyFromConfig ACP abort", () => {
 
     const dispatchPromise = dispatchReplyFromConfig({
       ctx,
-      cfg: createDispatchConfig(),
+      cfg,
       dispatcher,
       replyResolver,
+      replyOptions: { [REPLY_ADMISSION_TICKET]: admissionTicket },
     });
     try {
       await expect(
-        raceWithTimeoutResult(
+        Promise.race([
+          waitStarted.promise.then(() => "waiting" as const),
           dispatchPromise.then(() => "settled" as const),
-          200,
-          "pending" as const,
-        ),
-      ).resolves.toBe("settled");
-      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
-        text: "Provider login cancelled.",
-      });
+        ]),
+      ).resolves.toBe(expected);
     } finally {
-      pendingLoginTicket?.release();
+      admit.resolve(true);
       await Promise.allSettled([dispatchPromise]);
     }
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "Provider login cancelled." });
   });
 
   it("does not let a current-session fast abort abort its own dispatch operation", async () => {
