@@ -29,7 +29,7 @@ import {
 import { createInstallAccountPolicyFixture } from "../plugins/test-helpers/install-account-policy.test-support.js";
 import { normalizeAccountId } from "../routing/account-id.js";
 import { resolveChannelAccountEntry } from "../routing/account-lookup.js";
-import { readSecretStoreValue } from "../secrets/store/secret-store.js";
+import { listSecretStoreEntries, readSecretStoreValue } from "../secrets/store/secret-store.js";
 import { createChannelTestPluginBase } from "../test-utils/channel-plugins.js";
 import {
   fakeOverviewLoader,
@@ -533,6 +533,7 @@ describe("SystemAgentChatEngine runtime", () => {
         expect(currentConfig).toEqual(changedConfig);
       } else if (phase === "write") {
         expect(mocks.writeWizardConfigFile).not.toHaveBeenCalled();
+        expect(await listSecretStoreEntries({ scope: { kind: "team" } })).toEqual([]);
       } else {
         expect(mocks.writeWizardConfigFile).toHaveBeenCalledOnce();
         expect(hook.run).not.toHaveBeenCalled();

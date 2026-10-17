@@ -4,6 +4,9 @@ import { __setFsSafeTestHooksForTest } from "@openclaw/fs-safe/test-hooks";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { storeChannelSetupCredentials } from "../../commands/channels/plugin-config-persistence.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { coerceSecretRef } from "../../config/types.secrets.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
 import {
   bindPluginMetadataSnapshotCache,
@@ -24,6 +27,8 @@ import {
   runWithGatewayIndependentRootWorkAdmission,
 } from "../../process/gateway-work-admission.js";
 import type { RuntimeEnv } from "../../runtime.js";
+import { listSecretStoreEntries, readSecretStoreValue } from "../../secrets/store/secret-store.js";
+import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import type { WizardPrompter } from "../../wizard/prompts.js";
 import { createWizardSessionTracker } from "../server-wizard-sessions.js";
 
@@ -692,6 +697,73 @@ describe("wizard setup ownership", () => {
 
     await cancelWizardSessions(tracker.wizardSessions);
   });
+
+  it.each(["running", "cancelled"] as const)(
+    "gates a classic setup channel credential write on a %s session",
+    async (state) => {
+      await withOpenClawTestState({ label: `wizard-channel-credential-${state}` }, async () => {
+        const reachedCommit = createDeferred();
+        const continueCommit = createDeferred();
+        let committed: OpenClawConfig | undefined;
+        const tracker = createWizardSessionTracker();
+        const wizardRunner: SetupWizardRunner = async (opts, _runtime, prompter) => {
+          const token = await prompter.text({ message: "Bot token", sensitive: true });
+          reachedCommit.resolve();
+          await continueCommit.promise;
+          committed = await storeChannelSetupCredentials({
+            cfg: { channels: { telegram: { botToken: token } } },
+            previousConfig: {},
+            ...(opts.beforePersistentEffect
+              ? { beforePersistentEffect: opts.beforePersistentEffect }
+              : {}),
+            ...(opts.assertPersistentEffectCurrent
+              ? { assertCurrent: opts.assertPersistentEffectCurrent }
+              : {}),
+          });
+          await prompter.note("Saved");
+        };
+        const context = { ...tracker, wizardRunner };
+        const start = await invokeWizard("wizard.start", { mode: "local" }, context);
+        const step = start.step as { id: string };
+        const next = invokeWizard(
+          "wizard.next",
+          { sessionId: start.sessionId, answer: { stepId: step.id, value: "123:wizard-token" } },
+          context,
+        );
+        await reachedCommit.promise;
+        if (state === "cancelled") {
+          const cancelRespond = vi.fn();
+          await expectDefined(
+            wizardHandlers["wizard.cancel"],
+            "wizard.cancel test invariant",
+          )({
+            params: { sessionId: start.sessionId },
+            respond: cancelRespond,
+            context,
+          } as never);
+          expect(cancelRespond.mock.calls[0]?.[1]).toMatchObject({ status: "cancelled" });
+        }
+        continueCommit.resolve();
+        const result = await next;
+        const entries = await listSecretStoreEntries({ scope: { kind: "team" } });
+
+        if (state === "cancelled") {
+          expect(result).toMatchObject({ done: true, status: "cancelled" });
+          expect(committed).toBeUndefined();
+          expect(entries).toEqual([]);
+        } else {
+          expect(result).toMatchObject({ done: false, step: { message: "Saved" } });
+          const ref = coerceSecretRef(committed?.channels?.telegram?.botToken);
+          expect(entries.map((entry) => entry.name)).toEqual([ref?.id]);
+          expect(await readSecretStoreValue({ scope: { kind: "team" }, name: ref!.id })).toEqual({
+            ok: true,
+            value: "123:wizard-token",
+          });
+        }
+        await cancelWizardSessions(tracker.wizardSessions);
+      });
+    },
+  );
 });
 
 describe("wizard step serialization", () => {

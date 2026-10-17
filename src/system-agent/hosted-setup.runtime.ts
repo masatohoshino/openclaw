@@ -123,9 +123,7 @@ export async function runHostedChannelSetup(
           cfg: nextConfig,
           previousConfig: baseConfig,
           beforePersistentEffect,
-          ...(assertPersistentEffectCurrent
-            ? { assertCurrent: assertPersistentEffectCurrent }
-            : {}),
+          assertCurrent: assertPersistentEffectCurrent,
         }),
         afterWrite: async (configPath) => await channelSetup.runPostWriteHooks(configPath),
       };

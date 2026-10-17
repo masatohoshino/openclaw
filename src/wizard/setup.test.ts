@@ -891,6 +891,27 @@ describe("runSetupWizard", () => {
     );
   });
 
+  it("checks the hosted session before saving a classic channel credential", async () => {
+    const beforeConfig = { agents: { defaults: { workspace: "/tmp/workspace" } } };
+    setupChannels.mockImplementationOnce(async () => ({
+      ...beforeConfig,
+      channels: { telegram: { botToken: "123:setup-token" } },
+    }));
+    readConfigFileSnapshot.mockResolvedValueOnce(configSnapshot(beforeConfig));
+    const beforePersistentEffect = vi.fn(async () => {
+      throw new Error("Setup session is no longer active");
+    });
+
+    await expect(runWizard({ skipChannels: undefined, beforePersistentEffect })).rejects.toThrow(
+      "Setup session is no longer active",
+    );
+
+    expect(beforePersistentEffect).toHaveBeenCalledOnce();
+    expect(
+      replaceConfigFile.mock.calls.some(([params]) => params.nextConfig.channels?.telegram),
+    ).toBe(false);
+  });
+
   it("honors a provider-required picker while keeping existing model settings", async () => {
     const modelSelection = { promptWhenAuthChoiceProvided: true, allowKeepCurrent: false };
     promptDefaultModel.mockResolvedValueOnce({ model: "ollama/llama3" });

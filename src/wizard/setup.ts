@@ -50,8 +50,14 @@ import { resolveSetupWorkspaceSelection, validateSetupWorkspacePath } from "./se
 
 type SetupFlowChoice = WizardFlow | "import" | "keep-model";
 
+/** A Gateway-hosted session binds the channel credential writes to its live, uncancelled state. */
+export type SetupWizardOptions = OnboardOptions & {
+  beforePersistentEffect?: () => Promise<void>;
+  assertPersistentEffectCurrent?: () => void;
+};
+
 export async function runSetupWizard(
-  opts: OnboardOptions,
+  opts: SetupWizardOptions,
   runtimeInput: RuntimeEnv | undefined,
   prompter: WizardPrompter,
 ) {
@@ -62,7 +68,7 @@ export async function runSetupWizard(
 }
 
 async function runSetupWizardOnce(
-  initialOpts: OnboardOptions,
+  initialOpts: SetupWizardOptions,
   runtimeInput: RuntimeEnv | undefined,
   prompter: WizardPrompter,
 ) {
@@ -619,6 +625,8 @@ async function runSetupWizardOnce(
     nextConfig = await storeChannelSetupCredentials({
       cfg: nextConfig,
       previousConfig: configBeforeChannels,
+      beforePersistentEffect: opts.beforePersistentEffect,
+      assertCurrent: opts.assertPersistentEffectCurrent,
     });
     const committed = await commitSetupConfigFile(nextConfig, { allowConfigSizeDrop: false });
     await channelSetup.runPostWriteHooks(committed.path);
