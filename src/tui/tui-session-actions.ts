@@ -14,12 +14,7 @@ import {
 } from "../routing/session-key.js";
 import { createTuiRefreshCoalescer } from "./coalesced-refresh.js";
 import type { ChatLog } from "./components/chat-log.js";
-import type {
-  TuiAgentsList,
-  TuiBackend,
-  TuiSessionList,
-  TuiSessionMutationResult,
-} from "./tui-backend.js";
+import type { TuiAgentsList, TuiBackend, TuiSessionMutationResult } from "./tui-backend.js";
 import {
   formatPrimitiveString,
   extractTextFromMessage,
@@ -49,7 +44,12 @@ import {
 } from "./tui-session-projection.js";
 import * as submit from "./tui-submit-state.js";
 import { renderTuiHistoryToolResult } from "./tui-tool-activity.js";
-import type { TuiHistoryLoadResult, TuiOptions, TuiStateAccess } from "./tui-types.js";
+import type {
+  TuiHistoryLoadResult,
+  TuiOptions,
+  TuiSessionRow,
+  TuiStateAccess,
+} from "./tui-types.js";
 
 type SessionActionContext = {
   client: TuiBackend;
@@ -359,7 +359,7 @@ export function createSessionActions(context: SessionActionContext) {
    * Applies the row a selected-session event carries. Rows the picker hides
    * fall back to the description path, which reports them as missing.
    */
-  const applySessionEventRow = (row: TuiSessionList["sessions"][number]) => {
+  const applySessionEventRow = (row: TuiSessionRow) => {
     if (!isListedTuiSession(row)) {
       return false;
     }

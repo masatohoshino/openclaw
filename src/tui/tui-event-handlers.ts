@@ -38,6 +38,7 @@ import type {
   SessionChangedEvent,
   SessionMessageEvent,
   TuiHistoryLoadResult,
+  TuiSessionRow,
 } from "./tui-types.js";
 
 const ACTIVITY_PHASES = new Set(["start", "finishing", "end", "error"]);
@@ -57,7 +58,7 @@ type EventHandlerContext = Omit<
   };
   updateFooter: () => void;
   loadHistory: () => Promise<TuiHistoryLoadResult>;
-  applySessionEventRow?: (row: NonNullable<SessionMessageEvent["session"]>) => boolean;
+  applySessionEventRow?: (row: TuiSessionRow) => boolean;
   noteLocalRunId?: (runId: string) => void;
   isLocalBtwRunId?: (runId: string) => boolean;
   forgetLocalBtwRunId?: (runId: string) => void;

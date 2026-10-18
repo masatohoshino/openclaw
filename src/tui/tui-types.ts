@@ -4,7 +4,6 @@ import type { AgentSummary as GatewayAgentSummary } from "../../packages/gateway
 import type { SessionGoal } from "../config/sessions/types.js";
 import type { SessionScope } from "../config/types.base.js";
 import type { GatewayAgentRuntime } from "../shared/session-types.js";
-import type { TuiSessionList } from "./tui-backend.js";
 import type { TuiPendingSubmit } from "./tui-submit-state.js";
 
 /** Exact pre-probed Gateway target and its selection provenance for an in-process handoff. */
@@ -103,7 +102,7 @@ export type SessionMessageEvent = {
   messageId?: string;
   messageSeq?: number;
   /** Recipient-authorized session row the Gateway attaches to each message. */
-  session?: TuiSessionList["sessions"][number];
+  session?: TuiSessionRow;
 };
 
 export type AgentEvent = {
@@ -145,6 +144,32 @@ export type SessionInfo = {
   effectiveResponseUsage?: ResponseUsageMode;
   updatedAt?: number | null;
   displayName?: string;
+};
+
+/** Session row the Gateway lists, describes and attaches to session messages. */
+export type TuiSessionRow = Omit<SessionInfo, "effectiveResponseUsage"> & {
+  key: string;
+  sessionId?: string;
+  archived?: boolean;
+  incognito?: boolean;
+  sendPolicy?: string;
+  label?: string;
+  provider?: string;
+  groupChannel?: string;
+  space?: string;
+  subject?: string;
+  chatType?: string;
+  origin?: {
+    label?: string;
+    provider?: string;
+    surface?: string;
+  };
+  lastChannel?: string;
+  lastProvider?: string;
+  lastTo?: string;
+  lastAccountId?: string;
+  derivedTitle?: string;
+  lastMessagePreview?: string;
 };
 
 export type { SessionScope } from "../config/types.base.js";
