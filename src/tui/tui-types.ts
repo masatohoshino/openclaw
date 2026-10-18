@@ -4,6 +4,7 @@ import type { AgentSummary as GatewayAgentSummary } from "../../packages/gateway
 import type { SessionGoal } from "../config/sessions/types.js";
 import type { SessionScope } from "../config/types.base.js";
 import type { GatewayAgentRuntime } from "../shared/session-types.js";
+import type { TuiSessionList } from "./tui-backend.js";
 import type { TuiPendingSubmit } from "./tui-submit-state.js";
 
 /** Exact pre-probed Gateway target and its selection provenance for an in-process handoff. */
@@ -101,6 +102,8 @@ export type SessionMessageEvent = {
   message?: unknown;
   messageId?: string;
   messageSeq?: number;
+  /** Recipient-authorized session row the Gateway attaches to each message. */
+  session?: TuiSessionList["sessions"][number];
 };
 
 export type AgentEvent = {

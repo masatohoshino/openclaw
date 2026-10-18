@@ -57,6 +57,7 @@ type EventHandlerContext = Omit<
   };
   updateFooter: () => void;
   loadHistory: () => Promise<TuiHistoryLoadResult>;
+  applySessionEventRow?: (row: NonNullable<SessionMessageEvent["session"]>) => boolean;
   noteLocalRunId?: (runId: string) => void;
   isLocalBtwRunId?: (runId: string) => boolean;
   forgetLocalBtwRunId?: (runId: string) => void;
@@ -70,6 +71,7 @@ export function createEventHandlers(context: EventHandlerContext) {
     state,
     setActivityStatus,
     refreshSessionInfo,
+    applySessionEventRow,
     loadHistory,
     noteLocalRunId,
     isLocalRunId,
@@ -530,7 +532,10 @@ export function createEventHandlers(context: EventHandlerContext) {
       }
     }
 
-    if (runCoordinator.routeSessionMessageRefresh(Boolean(liveUserMessage || authoritativeRunId))) {
+    if (
+      runCoordinator.routeSessionMessageRefresh(Boolean(liveUserMessage || authoritativeRunId)) &&
+      !(evt.session && applySessionEventRow?.(evt.session))
+    ) {
       void refreshSessionInfo?.();
     }
   });
