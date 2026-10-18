@@ -232,6 +232,37 @@ describe("Git checkout execution", () => {
     },
   );
 
+  it("fetches only release tags before stable candidate admission", async () => {
+    const target = await advanceRemote();
+    await git(remote, "tag", "v2026.9.2", target);
+    await git(remote, "checkout", "-b", "unrelated", beforeSha);
+    await fs.writeFile(path.join(remote, "unrelated.txt"), "unrelated branch content");
+    await git(remote, "add", ".");
+    await git(remote, "commit", "-m", "unrelated remote work");
+    const unrelated = await git(remote, "rev-parse", "HEAD:unrelated.txt");
+    const inspections: string[] = [];
+    const execute = runCommand;
+    runCommand = (argv, options) => {
+      const inspection = argv.find((arg) => arg.startsWith("--git-dir="));
+      if (inspection) {
+        inspections.push(inspection);
+      }
+      return execute(argv, options);
+    };
+    const result = await update({
+      channel: "stable",
+      inspectGitTarget: async () => {
+        const object = await runCommandWithTimeout(
+          ["git", "--no-lazy-fetch", inspections.at(-1)!, "cat-file", "-e", unrelated],
+          { timeoutMs: 5000 },
+        );
+        expect(object.code).not.toBe(0);
+      },
+    });
+    expect(result).toMatchObject({ status: "ok", after: { sha: target } });
+    await expectRuntime(root, target);
+  });
+
   it("refuses an option-shaped upstream before downloading unrelated branches", async () => {
     await advanceRemote();
     await git(remote, "checkout", "-b", "unrelated", beforeSha);

@@ -82,9 +82,8 @@ function fixture(releaseRemote = "upstream", forkRemote?: string) {
   // Advance main independently of the corrected, already-installed release.
   git(seed, "tag", "-f", "v2026.9.1");
   git(seed, "commit", "--allow-empty", "-m", "next development commit");
-  const branch = git(seed, "rev-parse", "HEAD");
   git(seed, "push", "origin", "main", "+refs/tags/v2026.9.1:refs/tags/v2026.9.1");
-  return { root, seed, oldTag, release, branch, releaseRemote };
+  return { root, seed, oldTag, release, releaseRemote };
 }
 
 async function update(setup: ReturnType<typeof fixture>, channel: "stable" | "beta" = "stable") {
@@ -158,13 +157,13 @@ it.each([
       status: "skipped",
       reason: "already-current",
     });
+    // Release channels select tags only; the private inspection repo keeps its branch snapshot.
     expect(fetches).toEqual([
-      expect.objectContaining({ code: 0, tag: setup.oldTag, branch: setup.branch }),
       {
         code: 0,
         tag: setup.release,
         local: setup.oldTag,
-        branch: setup.branch,
+        branch: setup.release,
         argv: [
           "fetch",
           "--no-tags",
@@ -181,18 +180,14 @@ it.each([
   },
 );
 
-it("rejects a non-fast-forward protected branch before forcing tags", async () => {
+it("leaves a protected branch mapping untouched while forcing tags", async () => {
   const setup = fixture();
   git(setup.root, "branch", "protected", setup.release);
   git(setup.root, "config", "remote.upstream.fetch", "refs/heads/main:refs/heads/protected");
   git(setup.seed, "push", "--force", "origin", `${setup.oldTag}:refs/heads/main`);
   const { result, fetches } = await update(setup);
-  expect(result).toMatchObject({ status: "error", reason: "fetch-failed" });
-  expect(result.steps.find((step) => step.name.includes("fetch"))?.stderrTail).toContain(
-    "non-fast-forward",
-  );
-  expect(fetches).toHaveLength(1);
-  expect(fetches[0]?.tag).toBe(setup.oldTag);
+  expect(result).toMatchObject({ status: "skipped", reason: "already-current" });
+  expect(fetches.map((fetch) => fetch.argv.at(-1))).toEqual(["+refs/tags/*:refs/tags/*"]);
   expect(git(setup.root, "rev-parse", "protected")).toBe(setup.release);
 });
 

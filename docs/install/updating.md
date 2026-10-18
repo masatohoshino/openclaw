@@ -967,6 +967,8 @@ switch to the supported checkout and build flow. Other explicit package specs
 keep their package-manager behavior. Dev target inspection fetches only the selected
 upstream source, respecting the repository's ref mappings and exclusions. It does
 not download unrelated branches or change the repository's shallow boundary.
+Stable and beta Git updates, and the release check in `openclaw update status --json`,
+fetch only release tags from the release remote.
 
 On source installs, Doctor and plugin updates keep plugins built with the host.
 A registry plugin with the same version string can target a different SDK, so

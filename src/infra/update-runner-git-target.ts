@@ -460,12 +460,11 @@ export async function fetchGitUpdateTarget(params: {
         : await readGitUpdateFetchTarget(readGit, DEV_BRANCH, true);
   // Implicit Dev updates use the same live source as discovery. Only an explicit
   // detached target may search for its requested object on other remotes.
+  // Release channels select from tags only, so they fetch no branches here.
   const authority =
-    channel !== "dev"
-      ? tagRemote
-      : devTarget?.mode === "detached"
-        ? (targetRemote ?? (targetRef?.startsWith("refs/heads/") ? "origin" : undefined))
-        : devSource?.remote;
+    channel === "dev" && devTarget?.mode === "detached"
+      ? (targetRemote ?? (targetRef?.startsWith("refs/heads/") ? "origin" : undefined))
+      : devSource?.remote;
   if (channel === "dev" && devTarget?.mode !== "detached" && !devSource) {
     return devTarget ? { ...result(false), reason: "tracked-upstream-invalid" } : result(true);
   }
