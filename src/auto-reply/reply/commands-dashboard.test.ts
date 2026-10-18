@@ -91,6 +91,19 @@ describe("dashboard command", () => {
     expect(params.command.commandBodyNormalized).toBe(prompt);
   });
 
+  it("accepts requirements that start on the line after the command", async () => {
+    const params = buildParams("/dashboard\nShow these panels:\n- CPU per agent");
+
+    const result = await handleDashboardCommand(params, true);
+
+    expect(result?.explicitSkillSelections).toEqual([
+      { name: "control-ui", path: "/bundled/skills/control-ui/SKILL.md" },
+    ]);
+    expect(params.ctx.BodyForAgent).toContain(
+      "Dashboard requirements:\nShow these panels:\n- CPU per agent",
+    );
+  });
+
   it("preserves additional explicit skills used by dashboard requirements", async () => {
     const params = buildParams("/dashboard include $release_notes", [
       controlUiSkill,
