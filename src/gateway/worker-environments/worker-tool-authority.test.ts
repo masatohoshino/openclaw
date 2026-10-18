@@ -57,6 +57,10 @@ function resolvedAuthority(
 }
 
 async function authority(overrides: TurnOverrides = {}, computerAvailable = false) {
+  return (await authorityTools(overrides, computerAvailable)).map((tool) => tool.name);
+}
+
+async function authorityTools(overrides: TurnOverrides = {}, computerAvailable = false) {
   const input = turn(overrides);
   const resolved = await resolvedAuthority(input, computerAvailable);
   const { policy, capabilityProfile, exec, execUnavailable } = resolved;
@@ -97,7 +101,7 @@ async function authority(overrides: TurnOverrides = {}, computerAvailable = fals
     undefined,
     { tools, policy },
   );
-  return applyEmbeddedAttemptToolsAllow(codingTools, input.toolsAllow).map((tool) => tool.name);
+  return applyEmbeddedAttemptToolsAllow(codingTools, input.toolsAllow);
 }
 
 afterEach(() => {
@@ -319,7 +323,13 @@ describe("resolveWorkerToolAuthority", () => {
       "write",
       "apply_patch",
     ]);
-    expect(await authority(sender)).toEqual(["read"]);
+    // The sender overlay keeps the session's definitions and refuses the denied calls.
+    const senderTools = await authorityTools(sender);
+    expect(senderTools.map((tool) => tool.name)).toEqual(["read", "write", "apply_patch"]);
+    for (const name of ["write", "apply_patch"]) {
+      const refused = await senderTools.find((tool) => tool.name === name)!.execute(name, {});
+      expect(refused.details).toMatchObject({ gated: true });
+    }
     expect(
       await authority({
         messageProvider: "whatsapp",

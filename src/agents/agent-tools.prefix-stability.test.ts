@@ -116,6 +116,43 @@ describe("session tool surface", () => {
   );
 });
 
+describe("tools.toolsBySender tool surface", () => {
+  // The documented shape: one trusted sender keeps every tool, everyone else loses mutations.
+  const senderConfig: OpenClawConfig = {
+    ...config,
+    tools: {
+      ...config.tools,
+      toolsBySender: {
+        "id:alice": {},
+        "*": { deny: ["exec", "process", "write", "edit", "apply_patch"] },
+      },
+    },
+  };
+  const groupTurn = (senderId: string): ToolOptions => ({
+    ...session,
+    config: senderConfig,
+    sessionKey: "agent:main:telegram:group:team",
+    messageTo: "telegram:group:team",
+    runId: `run-${senderId}`,
+    trigger: "user",
+    senderId,
+    senderIsOwner: false,
+    sourceReplyDeliveryMode: "automatic",
+  });
+
+  it("offers one session's tool definitions to every sender and refuses denied calls", async () => {
+    setRuntimeConfigSnapshot(senderConfig);
+    expect(toolSurface(groupTurn("bob"))).toEqual(toolSurface(groupTurn("alice")));
+    const refused = await createOpenClawCodingTools(groupTurn("bob"))
+      .find((tool) => tool.name === "write")!
+      .execute("refused-write", {});
+    expect(refused.details).toMatchObject({ gated: true });
+    expect(JSON.stringify(refused.content)).toContain(
+      "write is not allowed for the sender of this message (tools.toolsBySender)",
+    );
+  });
+});
+
 describe("source-bound completion tool surface", () => {
   // A completion handoff is source-bound; the message tool enforces that per call.
   const assemble = (sourceReplyOnly: boolean) =>

@@ -82,6 +82,7 @@ import {
   hasRestrictiveAllowPolicy,
   normalizeToolPolicyName,
   replaceWithEffectiveToolAllowlist,
+  toolPolicyRestrictsTools,
 } from "./tool-policy.js";
 import {
   createToolSearchTools,
@@ -566,12 +567,21 @@ function* assembleOpenClawCodingTools(
   const inheritableTools = completeTurnTools(
     messageInvocationPolicy.filter(capabilityProfile, onPolicyFilter),
   );
+  // Global and agent tools.toolsBySender follow the sender of each message, so they gate
+  // calls like a completion handoff instead of changing the session's tool definitions.
+  // Group-level toolsBySender stays inside the group policy and still filters.
+  const narrowedBy =
+    capabilityProfile.policy.requesterPolicySource === "completion-handoff"
+      ? "completion-handoff"
+      : toolPolicyRestrictsTools(capabilityProfile.policy.senderPolicy)
+        ? "sender"
+        : undefined;
   const turnSurface = resolveTurnToolSurface({
     turnTools: inheritableTools,
-    sessionTools:
-      capabilityProfile.policy.requesterPolicySource === "completion-handoff"
-        ? completeTurnTools(messageInvocationPolicy.filter(capabilityProfile, undefined, "session"))
-        : undefined,
+    sessionTools: narrowedBy
+      ? completeTurnTools(messageInvocationPolicy.filter(capabilityProfile, undefined, "session"))
+      : undefined,
+    narrowedBy,
     ownerOnlyDenied: new Set(ownerOnlyCoreToolDenylist),
     withheld: unavailablePublicationTool,
   });

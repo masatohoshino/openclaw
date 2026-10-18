@@ -15,6 +15,12 @@ export async function expectOwnerGated(tools: readonly GateableTool[], ...names:
   }
 }
 
+export async function expectSenderGated(tools: readonly GateableTool[], ...names: string[]) {
+  for (const name of names) {
+    await expectGated(tools, name, `${name} is not allowed for the sender of this message`);
+  }
+}
+
 export async function expectGated(tools: readonly GateableTool[], name: string, reason: string) {
   const tool = tools.find((candidate) => candidate.name === name);
   if (!tool) {
