@@ -32,7 +32,7 @@ import {
   getActiveAgentRingZeroTools,
   mergeAgentRingZeroTools,
 } from "./agent-tools.ring-zero-context.js";
-import { resolveTurnToolSurface } from "./agent-tools.turn-authority.js";
+import { resolveTurnNarrowing, resolveTurnToolSurface } from "./agent-tools.turn-authority.js";
 import type { AnyAgentTool } from "./agent-tools.types.js";
 import { waitForExecScope } from "./bash-process-registry.js";
 import { resolveProcessToolScopeKey } from "./bash-process-scope.js";
@@ -82,7 +82,6 @@ import {
   hasRestrictiveAllowPolicy,
   normalizeToolPolicyName,
   replaceWithEffectiveToolAllowlist,
-  toolPolicyRestrictsTools,
 } from "./tool-policy.js";
 import {
   createToolSearchTools,
@@ -567,15 +566,7 @@ function* assembleOpenClawCodingTools(
   const inheritableTools = completeTurnTools(
     messageInvocationPolicy.filter(capabilityProfile, onPolicyFilter),
   );
-  // Global and agent tools.toolsBySender follow the sender of each message, so they gate
-  // calls like a completion handoff instead of changing the session's tool definitions.
-  // Group-level toolsBySender stays inside the group policy and still filters.
-  const narrowedBy =
-    capabilityProfile.policy.requesterPolicySource === "completion-handoff"
-      ? "completion-handoff"
-      : toolPolicyRestrictsTools(capabilityProfile.policy.senderPolicy)
-        ? "sender"
-        : undefined;
+  const narrowedBy = resolveTurnNarrowing(capabilityProfile.policy);
   const turnSurface = resolveTurnToolSurface({
     turnTools: inheritableTools,
     sessionTools: narrowedBy

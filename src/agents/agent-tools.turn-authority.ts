@@ -3,7 +3,25 @@ import {
   markAgentToolExecutionUnavailable,
 } from "./agent-tool-availability.js";
 import { copyAgentToolMetadata } from "./agent-tool-metadata.js";
+import { toolPolicyRestrictsTools, type ToolPolicyLike } from "./tool-policy.js";
 import type { AnyAgentTool } from "./tools/common.js";
+
+type TurnNarrowing = "completion-handoff" | "sender";
+
+/**
+ * Names the per-turn policy that narrows the session's tool surface. Global and agent
+ * tools.toolsBySender follow the sender of each message; group-level toolsBySender stays
+ * inside the group policy and still filters.
+ */
+export function resolveTurnNarrowing(policy: {
+  requesterPolicySource: string;
+  senderPolicy?: ToolPolicyLike;
+}): TurnNarrowing | undefined {
+  if (policy.requesterPolicySource === "completion-handoff") {
+    return "completion-handoff";
+  }
+  return toolPolicyRestrictsTools(policy.senderPolicy) ? "sender" : undefined;
+}
 
 /**
  * Offers the session's tool surface on every turn, so the provider prompt prefix
@@ -18,7 +36,7 @@ export function resolveTurnToolSurface(params: {
   /** The session surface, when per-turn policy narrows it; defaults to `turnTools`. */
   sessionTools?: AnyAgentTool[];
   /** The per-turn policy that narrows `sessionTools`; names it in the refusal. */
-  narrowedBy?: "completion-handoff" | "sender";
+  narrowedBy?: TurnNarrowing;
   ownerOnlyDenied: ReadonlySet<string>;
   /** A tool exported to descendants but never offered on this turn. */
   withheld?: AnyAgentTool;
