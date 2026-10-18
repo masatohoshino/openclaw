@@ -18,10 +18,13 @@ type VectorProviderFinding = ProviderFailure & {
   configPrefix: string;
 };
 
+type SelectInspectedProvider = (config: OpenClawConfig, agentId: string) => string | null;
+
 type InspectConfiguredProvider = (params: {
   config: OpenClawConfig;
   agentId: string;
   env: NodeJS.ProcessEnv;
+  provider: string;
 }) => Promise<ProviderFailure | null>;
 
 function listConfiguredAgentIds(config: unknown): string[] {
@@ -107,10 +110,16 @@ export async function collectVectorProviderFindings(
     env: NodeJS.ProcessEnv;
     stateDir: string;
   },
+  selectProvider: SelectInspectedProvider,
   inspectProvider: InspectConfiguredProvider,
 ): Promise<VectorProviderFinding[]> {
   const findings: VectorProviderFinding[] = [];
   for (const agentId of listConfiguredAgentIds(params.config)) {
+    // Reading the index snapshots the whole agent database; skip it when no finding can follow.
+    const provider = selectProvider(params.config, agentId);
+    if (!provider) {
+      continue;
+    }
     // A custom agentDir does not move the canonical per-agent memory index.
     const agentDatabasePath = path.join(
       params.stateDir,
@@ -127,6 +136,7 @@ export async function collectVectorProviderFindings(
       config: params.config,
       agentId,
       env: params.env,
+      provider,
     });
     if (failure) {
       findings.push({

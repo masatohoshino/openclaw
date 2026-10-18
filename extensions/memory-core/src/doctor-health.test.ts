@@ -288,10 +288,14 @@ describe("managed local embedding setup health check", () => {
       const check = captureCheck(async () => null);
       await expect(check.detect(checkContext)).resolves.toEqual([]);
       await expect(
-        collectVectorProviderFindings({ config, env, stateDir }, async () => ({
-          provider: "local",
-          reason: "Synthetic provider setup requirement",
-        })),
+        collectVectorProviderFindings(
+          { config, env, stateDir },
+          () => "local",
+          async () => ({
+            provider: "local",
+            reason: "Synthetic provider setup requirement",
+          }),
+        ),
       ).resolves.toEqual([
         {
           agentId: "main",
@@ -336,5 +340,19 @@ describe("managed local embedding setup health check", () => {
           "Keep the current Gateway running, resolve the database inspection error, then rerun this check.",
       },
     ]);
+  });
+
+  it("does not read agent databases for providers that cannot produce a finding", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-setup-remote-provider-"));
+    roots.add(stateDir);
+    const databasePath = path.join(stateDir, "agents", "main", "agent", "openclaw-agent.sqlite");
+    await fs.mkdir(path.dirname(databasePath), { recursive: true });
+    // Any read of this file fails, so an empty result proves the database was never snapshotted.
+    await fs.writeFile(databasePath, "not a sqlite database");
+    const inspect = vi.fn<InspectManagedLocalEmbeddingSetup>(async () => null);
+    const check = captureCheck(inspect);
+
+    await expect(check.detect(context(stateDir, "openai"))).resolves.toEqual([]);
+    expect(inspect).not.toHaveBeenCalled();
   });
 });

@@ -92,20 +92,15 @@ function createManagedLocalEmbeddingSetupCheck(
             env,
             stateDir: resolveStateDir(env),
           },
+          (config, agentId) => {
+            const provider = resolveSelectedMemoryProvider(config, agentId);
+            return provider === LOCAL_MEMORY_EMBEDDING_PROVIDER_ID ? provider : null;
+          },
           async (params) => {
-            const provider = resolveSelectedMemoryProvider(params.config, params.agentId);
-            if (provider !== LOCAL_MEMORY_EMBEDDING_PROVIDER_ID) {
-              return null;
-            }
-            const failure = await state.inspectEmbeddingProviderSetup({
-              config: params.config,
-              env: params.env,
-              agentId: params.agentId,
-              provider,
-            });
+            const failure = await state.inspectEmbeddingProviderSetup(params);
             if (failure === undefined) {
               return {
-                provider,
+                provider: params.provider,
                 reason: MISSING_LOCAL_MEMORY_EMBEDDING_PROVIDER_MESSAGE,
                 requirement: "memory-embedding-provider-plugin",
                 fixHint:
