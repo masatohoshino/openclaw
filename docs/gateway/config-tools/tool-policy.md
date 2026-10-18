@@ -247,6 +247,8 @@ Keys use explicit prefixes: `channel:<channelId>:<senderId>`, `id:<senderId>`, `
 
 Per-agent `agents.entries.*.tools.toolsBySender` overrides the global sender match when it matches, even with an empty `{}` policy.
 
+Global and per-agent sender policy is checked when a tool runs: every sender in a session sees the same tool definitions, so the prompt cache survives a change of sender, and a call the sender's policy denies is refused. Group and channel `toolsBySender` entries still remove tools from the list.
+
 ## `tools.elevated`
 
 Controls elevated exec access outside the sandbox:
