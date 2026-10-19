@@ -24,6 +24,7 @@ import {
   normalizeAgentRuntimeTools,
   projectRuntimeToolInputSchema,
   resolveAgentDir,
+  resolveMessageToolSourceReplyFinal,
   resolveToolExecutionErrorKind,
   runAgentHarnessAfterToolCallHook,
   sanitizeToolResult,
@@ -64,7 +65,6 @@ type ToolDelivery = AgentHarnessMessagingDeliveryFacts &
   >;
 
 export type AgentsApiToolExecutionResult = AgentsApiFunctionResult & {
-  sourceReplyDelivered?: true;
   terminate?: true;
 };
 
@@ -462,9 +462,14 @@ export async function buildAgentsApiToolSurface(
                 result: raw,
                 isError: rawIsError,
               });
+              // An omitted final takes the run's default; cron sends do not end the turn.
+              const sourceReplyFinal = resolveMessageToolSourceReplyFinal(
+                executedArgs,
+                params.messageToolFinalByDefault,
+              );
               terminate =
-                sourceReplyDelivered ||
-                (raw.terminate === true && !(sourceRouteDelivered && executedArgs.final === false));
+                (sourceReplyDelivered && sourceReplyFinal) ||
+                (raw.terminate === true && !(sourceRouteDelivered && !sourceReplyFinal));
               if (sourceReplyDelivered) {
                 delivery.sourceReplyDelivered = true;
               }
@@ -479,7 +484,7 @@ export async function buildAgentsApiToolSurface(
                 messagingContext,
                 delivery,
                 signal,
-                sourceRouteDelivered ? executedArgs.final !== false : undefined,
+                sourceRouteDelivered ? sourceReplyFinal : undefined,
               );
               // Presentation failures cannot downgrade a completed host mutation's receipt.
               observeTerminal(
@@ -539,7 +544,6 @@ export async function buildAgentsApiToolSurface(
       );
       return {
         ...nativeResult,
-        ...(sourceReplyDelivered ? { sourceReplyDelivered: true as const } : {}),
         ...(terminate ? { terminate: true as const } : {}),
       };
     },
@@ -565,7 +569,10 @@ function recordDelivery(
       recordAgentHarnessMessagingDelivery({
         facts: delivery,
         sourceReplyPayload: payload,
-        sourceReplyFinal: args.final !== false,
+        sourceReplyFinal: resolveMessageToolSourceReplyFinal(
+          args,
+          params.messageToolFinalByDefault,
+        ),
       });
     } else {
       const routedArgs = {

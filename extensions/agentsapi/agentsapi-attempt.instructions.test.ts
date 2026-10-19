@@ -404,9 +404,13 @@ describe("Agents API agent workspace instructions", () => {
 
     now.mockReturnValue(Date.parse("2026-09-26T12:00:00-07:00"));
     watchedSessionsContextMock.mockResolvedValueOnce("Watched fixture session: fixture-two");
-    await fixture.run(binding, { sourceReplyDeliveryMode: "message_tool_only" });
+    await fixture.run(binding, {
+      sourceReplyDeliveryMode: "message_tool_only",
+      messageToolFinalByDefault: false,
+    });
     expect(promptFixture.turnInputs[1]).toContain("Current date: 2026-09-26");
     expect(promptFixture.turnInputs[1]).toContain("Use `message(action=send)`");
+    expect(promptFixture.turnInputs[1]).toContain("A send ends this turn only with `final=true`.");
     expect(promptFixture.turnInputs[1]).toContain("Watched fixture session: fixture-two");
     expect(watchedSessionsContextMock).toHaveBeenLastCalledWith(
       expect.objectContaining({

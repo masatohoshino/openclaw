@@ -210,6 +210,7 @@ async function buildAgentsApiTurnContext(
       sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
       messageToolAvailable: toolNames.has("message"),
       requireExplicitMessageTarget: params.requireExplicitMessageTarget,
+      messageToolFinalByDefault: params.messageToolFinalByDefault,
     }),
     params.permissionChange?.notice,
     await prepareWatchedSessionsHarnessContext({

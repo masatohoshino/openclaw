@@ -5,7 +5,8 @@ import type { AgentHarnessAttemptParamsV2 } from "openclaw/plugin-sdk/agent-harn
 import { AuthStorage, ModelRegistry } from "openclaw/plugin-sdk/agent-sessions";
 import { createAgentHarnessHostCapabilitiesForTest } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { withOpenClawTestState } from "openclaw/plugin-sdk/test-state";
-import { afterEach, assert, expect, it, vi } from "vitest";
+import { Type } from "typebox";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { buildAgentsApiToolSurface } from "./agentsapi-tools.js";
 import { createModel } from "./agentsapi.test-support.js";
 
@@ -64,6 +65,38 @@ it("retains default media access in full mode and forwards turn exec restriction
       });
       expect(construction.mock.calls[0]?.[0]).toMatchObject({
         exec: { security: "deny", ask: "always" },
+      });
+    },
+  );
+});
+
+describe("a delivered send to a configured delivery target", () => {
+  // Shape of a cron send: the delivery target is the current source and the
+  // message tool confirms the source reply.
+  it.each([
+    { finalByDefault: false, final: undefined, ends: false },
+    { finalByDefault: false, final: true, ends: true },
+    // Chat turns keep the default: an omitted final ends the turn.
+    { finalByDefault: undefined, final: undefined, ends: true },
+  ])(
+    "ends the native turn only when final resolves true (default $finalByDefault, final $final)",
+    async ({ finalByDefault, final, ends }) => {
+      await withMessageToolSurface(finalByDefault, async (surface) => {
+        const result = await surface.execute({
+          type: "function_call",
+          turn_id: "send-turn",
+          call_id: "send-call",
+          name: "message",
+          arguments: {
+            action: "send",
+            message: "daily drop",
+            ...(final === undefined ? {} : { final }),
+          },
+        });
+
+        expect(result.terminate).toBe(ends ? true : undefined);
+        // Delivery facts do not depend on whether the turn ends.
+        expect(surface.delivery.sourceReplyDelivered).toBe(true);
       });
     },
   );
@@ -177,6 +210,78 @@ async function withToolSurface(
       for (const cleanup of cleanups.toReversed()) {
         await cleanup("Permission test complete");
       }
+      host.close();
+    }
+  });
+}
+
+async function withMessageToolSurface(
+  messageToolFinalByDefault: boolean | undefined,
+  run: (surface: Awaited<ReturnType<typeof buildAgentsApiToolSurface>>) => Promise<void>,
+) {
+  await withOpenClawTestState({ label: "agentsapi-message-finality" }, async (state) => {
+    const authStorage = AuthStorage.inMemory();
+    const controller = new AbortController();
+    const attempt = {
+      agentId: "main",
+      sessionId: "cron-session",
+      sessionKey: "agent:main:cron:daily",
+      sessionFile: state.statePath("cron-session.jsonl"),
+      workspaceDir: state.workspaceDir,
+      agentDir: state.agentDir(),
+      config: { plugins: { allow: [] }, skills: { load: { watch: false } } },
+      runId: "cron-run",
+      prompt: "Send the daily drop, then record it.",
+      timeoutMs: 5_000,
+      abortSignal: controller.signal,
+      provider: "openai",
+      modelId: "fixture-model",
+      model: createModel(),
+      authStorage,
+      modelRegistry: ModelRegistry.inMemory(authStorage),
+      authProfileStore: { version: 1 as const, profiles: {} },
+      thinkLevel: "off" as const,
+      ...(messageToolFinalByDefault === undefined ? {} : { messageToolFinalByDefault }),
+    };
+    const host = await createAgentHarnessHostCapabilitiesForTest({
+      attempt,
+      pluginId: "agentsapi",
+    });
+    try {
+      const surface = await buildAgentsApiToolSurface(
+        {
+          ...attempt,
+          hostCapabilities: {
+            ...host.capabilities,
+            createToolSurfaceAsync: async () => [
+              {
+                name: "message",
+                label: "Message",
+                description: "Fixture message tool",
+                parameters: Type.Object({}, { additionalProperties: true }),
+                execute: async () => ({
+                  content: [{ type: "text", text: '{"ok":true}' }],
+                  details: {
+                    ok: true,
+                    messageDelivery: {
+                      status: "settled",
+                      partialDelivery: false,
+                      createdThreadIds: [],
+                      sourceReplyDelivered: true,
+                    },
+                  },
+                }),
+              },
+            ],
+          },
+        },
+        controller.signal,
+        host.capabilities.assertActive,
+        () => {},
+      );
+      await run(surface);
+    } finally {
+      controller.abort();
       host.close();
     }
   });
