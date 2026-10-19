@@ -669,6 +669,12 @@ remain separate, with no cached readiness result shared between them.
 
 ### Startup on multi-agent hosts
 
+Startup and Gateway agent listing share the configured-plus-reserved agent roster.
+Existing native databases for reserved system agents (`openclaw` and `crestodian`)
+receive inspection and deferred session preparation without an `agents.entries`
+entry. Registered databases that no configured or reserved agent owns remain
+skipped; use Doctor to inspect their retained data.
+
 Foreground startup agent-database checks and session startup maintenance are
 limited to two databases at a time. Each inspection's
 size-derived foreground allowance starts when its scheduled inspection begins, so waiting for a
@@ -805,12 +811,12 @@ uninstalled copies from its identity-marked staging directories, retains any
 exchanged originals, and skips files that already have NOCOW. Unmarked backups
 from older or unknown operations are never deleted automatically.
 
-The official Debian bookworm Docker image cannot perform this optional repair:
-its coreutils 9.1 `mv` lacks `--exchange`/`--no-copy`, and it does not include
-`fuser` (the `psmisc` package) or `getfacl`/`setfacl` (the `acl` package).
-A derived image needs those tools and an exchange-capable GNU `mv`, as well as
-kernel/filesystem support on the mounted state volume. Updates still proceed
-with the existing stores.
+The official Debian trixie Docker image includes an exchange-capable GNU `mv`,
+`fuser` (`psmisc`), `getfacl`/`setfacl` (`acl`), and `lsattr`/`chattr`
+(`e2fsprogs`). The mounted state volume still needs kernel/filesystem support.
+Older bookworm-based images lack the required tools; recreate the container
+with a current image before retrying. Unsupported hosts still proceed with
+updates using the existing stores.
 
 After publication, Doctor re-records the identity of each destination database
 it rewrites so `update cleanup` eligibility survives the rewrite. Recorded

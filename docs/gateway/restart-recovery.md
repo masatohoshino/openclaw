@@ -817,6 +817,11 @@ Three complementary mechanisms mark sessions whose turn did not finish:
   clears the prior interruption and is not replayed. Stale transcript lock files
   are cleaned up at the same time.
 
+Startup selects these candidates in the session database worker, so unrelated
+session summaries do not cross into the Gateway process. Pending canonical
+validation still runs when no recovery candidate exists, and marking rechecks
+the current row and live ownership before committing.
+
 Agents still undergoing database startup inspection retain their recovery work.
 When admission finishes, the same startup recovery owner scans their stores with
 the original cutoff, so newly admitted turns are not mistaken for crash orphans.
@@ -1286,7 +1291,23 @@ existing restart delivery and continuation behavior.
   waits for workers or database admission. Within `deliveryMs`,
   `deliveryNoticesMs` measures blocked-notice selection and persistence, and
   `retryWaitMs` measures retry backoff; these nested totals are not additional
-  phase time. Notice selection can wait for database writer admission even
+  phase time. Registry activation includes `registryActivationBindMs`,
+  `registryActivationRequestersMs`, `registryActivationResumeMs`, and
+  `registryActivationInterruptedMs`. Binding includes
+  `registryActivationAuthorityRestoreMs` (original operator authority and
+  requester reads) and `registryActivationPublishMs` (recovered owner writes,
+  including writer admission). Resume includes `registryActivationReserveMs`
+  (controller reservations) and `registryActivationSessionReadMs` (unfinished
+  child session reads). `registryActivationYieldMs` totals cooperative event-loop
+  waits across binding and resume. These are elapsed, overlapping totals, not
+  CPU time or a separate measurement of database queue time. Inventory hydration
+  precedes activation; `registryLoadMs` measures loading the activation module.
+  `registryActivationRuns` counts the captured inventory,
+  `registryActivationActiveRuns` counts visited nonterminal runs,
+  `registryActivationRecoveredRuns` counts restored Gateway owners, and
+  `registryActivationPublishedRuns` counts initial and recovered Gateway bindings.
+  Counts and partial timings remain visible on failure, without per-run output.
+  Notice selection can wait for database writer admission even
   when an unchanged notice does not need another write. Set
   `OPENCLAW_GATEWAY_STARTUP_TRACE=1` to also log each individual span. The phase
   runs after readiness; its duration does not measure time until the Gateway
