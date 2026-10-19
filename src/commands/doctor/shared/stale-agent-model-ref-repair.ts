@@ -8,6 +8,7 @@ import {
   tryResolveDefaultAgentId,
 } from "../../../agents/agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../../agents/defaults.js";
+import { parseModelCatalogJson } from "../../../agents/model-catalog-json.js";
 import { normalizeProviderId } from "../../../agents/model-selection.js";
 import type { OpenClawConfigWithLegacyRoster } from "../../../config/legacy.roster.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
@@ -131,8 +132,8 @@ function collectPersistedProviderIds(params: {
     };
   }
   try {
-    const parsed = JSON.parse(raw) as { providers?: unknown };
-    if (!isRecord(parsed.providers)) {
+    const parsed = parseModelCatalogJson(raw);
+    if (!isRecord(parsed) || !isRecord(parsed.providers)) {
       return { providerIds: new Set() };
     }
     return {
