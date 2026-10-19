@@ -1,7 +1,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { expect, onTestFinished, vi } from "vitest";
 import type { ChatAttachment } from "../../lib/chat/chat-types.ts";
-import { renderPaneLegacyContent } from "../../test-helpers/chat-pane-embedded-panels.ts";
+import { mountSolid } from "../../test-helpers/mount-solid.ts";
 import { flush, waitForSolid } from "../../test-helpers/solid-settle.ts";
 import * as attachmentPayloadStore from "./attachment-payload-store.ts";
 import { renderChatView } from "./chat-view.test-helpers.ts";
@@ -14,7 +14,7 @@ export function createAttachmentSidebarHarness() {
     if (content.kind !== "attachment") {
       throw new Error("Expected an attachment side panel");
     }
-    renderPaneLegacyContent(content.renderActions?.(), container);
+    mountSolid(() => content.renderActions?.(), { container });
   });
   return { container, open };
 }
@@ -76,9 +76,16 @@ export async function getAttachmentMenuOption(container: Element, label: string)
   );
   trigger.click();
   await waitForSolid(() => expect(trigger.getAttribute("aria-expanded")).toBe("true"));
-  return Array.from(
-    container.querySelectorAll<HTMLButtonElement>(".agent-chat__attach-menu-option"),
-  ).find((button) => button.textContent?.trim() === label);
+  // Join the first open's content load before checking its rendered option.
+  await import("./components/chat-composer-plus-menu-content.tsx");
+  return waitForSolid(() =>
+    expectDefined(
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>(".agent-chat__attach-menu-option"),
+      ).find((button) => button.textContent?.trim() === label),
+      `attachment menu option: ${label}`,
+    ),
+  );
 }
 
 export function selectAttachmentMenuOption(button: HTMLButtonElement | undefined) {
