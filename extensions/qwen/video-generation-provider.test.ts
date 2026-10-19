@@ -156,4 +156,17 @@ describe("qwen video generation provider", () => {
       expect(postJsonRequestMock).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects an invalid configured baseUrl instead of submitting to DashScope intl", async () => {
+    await expect(
+      qwenVideoGenerationProvider.generateVideo({
+        provider: "qwen",
+        model: "wan2.6-t2v",
+        prompt: "animate this shot",
+        cfg: qwenConfig({ baseUrl: "https://[" }),
+      }),
+    ).rejects.toThrow("Invalid Qwen baseUrl: value is not a valid URL");
+
+    expect(postJsonRequestMock).not.toHaveBeenCalled();
+  });
 });

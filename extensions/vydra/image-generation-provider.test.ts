@@ -54,6 +54,17 @@ describe("vydra image-generation provider", () => {
     });
   });
 
+  it("rejects an invalid configured baseUrl instead of posting to hosted Vydra", async () => {
+    const fetchMock = stubFetch();
+    await expect(
+      provider.generateImage({
+        ...request,
+        cfg: { models: { providers: { vydra: { baseUrl: "https://[", models: [] } } } },
+      }),
+    ).rejects.toThrow("Invalid Vydra baseUrl: value is not a valid URL");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps generated image downloads above the configured media cap", async () => {
     stubFetch(completedImage(), binaryResponse("over-cap", "image/png"));
     const result = await provider.generateImage({

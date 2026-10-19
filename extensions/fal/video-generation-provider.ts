@@ -25,7 +25,6 @@ import {
 } from "openclaw/plugin-sdk/video-generation";
 import { resolveFalHttpRequestConfig } from "./http-config.js";
 
-const DEFAULT_FAL_QUEUE_BASE_URL = "https://queue.fal.run";
 const DEFAULT_FAL_VIDEO_MODEL = "fal-ai/minimax/video-01-live";
 const HEYGEN_VIDEO_AGENT_MODEL = "fal-ai/heygen/v2/video-agent";
 const SEEDANCE_2_TEXT_IMAGE_VIDEO_MODELS = [
@@ -174,7 +173,8 @@ async function downloadFalVideo(url: string, maxBytes: number): Promise<Generate
 function resolveFalQueueBaseUrl(baseUrl: string): string {
   const url = URL.parse(baseUrl);
   if (!url) {
-    return DEFAULT_FAL_QUEUE_BASE_URL;
+    // Never fall back to hosted fal: the key and prompt would go to a host nobody configured.
+    throw new Error("Invalid fal baseUrl: value is not a valid URL");
   }
   if (url.hostname === "fal.run") {
     url.hostname = "queue.fal.run";

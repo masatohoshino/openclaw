@@ -16,7 +16,12 @@ function resolveQwenVideoBaseUrl(configuredBaseUrl: string | undefined): string 
   if (!direct) {
     return DEFAULT_QWEN_VIDEO_BASE_URL;
   }
-  return URL.parse(direct)?.toString() ?? DEFAULT_QWEN_VIDEO_BASE_URL;
+  const url = URL.parse(direct);
+  if (!url) {
+    // Never fall back to DashScope intl: the key and prompt would go to an unconfigured host.
+    throw new Error("Invalid Qwen baseUrl: value is not a valid URL");
+  }
+  return url.toString();
 }
 
 function resolveDashscopeAigcApiBaseUrl(baseUrl: string): string {
