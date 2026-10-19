@@ -32,9 +32,8 @@ export const handleDashboardCommand: CommandHandler = defineAuthorizedTextComman
         "Dashboard support is unavailable because the control-ui skill is unavailable for this agent.",
       );
     }
-    const trimmed = requirements.trim();
-    const request = trimmed
-      ? `${DEFAULT_DASHBOARD_REQUEST}\n\nDashboard requirements:\n${trimmed}`
+    const request = requirements
+      ? `${DEFAULT_DASHBOARD_REQUEST}\n\nDashboard requirements:\n${requirements}`
       : DEFAULT_DASHBOARD_REQUEST;
     const expanded = expandExplicitSkillReferences({
       text: `$${controlUi.name} ${request}`,

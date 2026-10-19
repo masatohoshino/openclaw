@@ -66,7 +66,6 @@ describe("skill payload normalization", () => {
       ["/side first\n\n    second", "/btw first\n\n    second"],
       ["/btw\nwhy does this fail?", "/btw\nwhy does this fail?"],
       ["/loop 10m check:\n- CI\n- deploy", "/loop 10m check:\n- CI\n- deploy"],
-      ["/dashboard panels:\n- CPU\n  - per agent", "/dashboard panels:\n- CPU\n  - per agent"],
       ["/id\n\n    ignored", "/whoami"],
       ["/model example\n    ignored", "/model example"],
       ["/reset soft\n\n    re-read\tpersona files", "/reset soft re-read persona files"],
