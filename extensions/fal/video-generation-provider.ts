@@ -173,7 +173,6 @@ async function downloadFalVideo(url: string, maxBytes: number): Promise<Generate
 function resolveFalQueueBaseUrl(baseUrl: string): string {
   const url = URL.parse(baseUrl);
   if (!url) {
-    // Never fall back to hosted fal: the key and prompt would go to a host nobody configured.
     throw new Error("Invalid fal baseUrl: value is not a valid URL");
   }
   if (url.hostname === "fal.run") {

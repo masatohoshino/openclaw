@@ -8,7 +8,6 @@ export const DEFAULT_VYDRA_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
 export function normalizeVydraBaseUrl(value: string | undefined): string {
   const url = URL.parse(normalizeOptionalString(value) ?? DEFAULT_VYDRA_BASE_URL);
   if (!url) {
-    // Only a blank URL uses hosted Vydra; an invalid custom one must not receive the key.
     throw new Error("Invalid Vydra baseUrl: value is not a valid URL");
   }
   if (url.hostname === "vydra.ai") {
