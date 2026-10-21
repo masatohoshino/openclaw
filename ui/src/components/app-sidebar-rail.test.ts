@@ -538,6 +538,32 @@ describe("personal navigation rail", () => {
     expect(fetchAvatar).toHaveBeenCalledOnce();
   });
 
+  it("updates the avatar of a retained pinned person when owner metadata changes", async () => {
+    const { sidebar, sessions, result } = await fixture({ sidebarEntries: ["person:other"] });
+    const pin = rail(sidebar, "person:other");
+    const person = link(sidebar, "person:other");
+    const avatar = person.querySelector(".viewer-avatar")!;
+    expect(avatar.getAttribute("aria-label")).toBe("Other");
+    expect(avatar.querySelector(".viewer-avatar__initials")?.textContent).toBe("O");
+
+    sessions.publishList({
+      agentId: "main",
+      result: {
+        ...result,
+        owners: result.owners!.map((owner) =>
+          owner.id === "other" ? Object.assign({}, owner, { label: "Updated Person" }) : owner,
+        ),
+      },
+    });
+    await settleLitElement(sidebar);
+    expect(rail(sidebar, "person:other")).toBe(pin);
+    expect(link(sidebar, "person:other")).toBe(person);
+    expect(person.getAttribute("aria-label")).toBe("Updated Person");
+    expect(person.querySelector(".viewer-avatar")).toBe(avatar);
+    expect(avatar.getAttribute("aria-label")).toBe("Updated Person");
+    expect(avatar.querySelector(".viewer-avatar__initials")?.textContent).toBe("UP");
+  });
+
   it("pins a person with native drag and retains a safe destination after they go offline", async () => {
     const { sidebar, dom } = await fixture();
     dom.query<HTMLButtonElement>('[data-navigation-view="online"]')!.click();
@@ -699,6 +725,40 @@ describe("personal navigation rail", () => {
     expect(dom.query('.sidebar-rail a[aria-label="Current title"]')).not.toBeNull();
   });
 
+  it("uses rows loaded during bootstrap instead of describing queued pins", async () => {
+    const { sidebar, sessions, result, dom } = await fixture();
+    const loadedKey = "agent:main:loaded-during-bootstrap";
+    const outsideKey = "agent:other:outside-window";
+    const bootstrap = sidebar.sessionDataContext!.connectionBootstrap;
+    bootstrap.setForegroundRoute("agent:main:selected");
+    const read = vi.spyOn(sessions.sessions, "describe").mockResolvedValue({
+      session: { ...result.sessions[1]!, key: outsideKey, label: "Outside window" },
+    });
+    sidebar.sidebarEntries = [loadedKey, outsideKey].map((key) => `session:${key}`);
+    await sidebar.updateComplete;
+    expect(read).not.toHaveBeenCalled();
+
+    sessions.publishList({
+      agentId: "main",
+      result: {
+        ...result,
+        sessions: [
+          ...result.sessions,
+          { ...result.sessions[1]!, key: loadedKey, label: "Live row", boardFace: "dashboard" },
+        ],
+      },
+    });
+    await sidebar.updateComplete;
+    bootstrap.setForegroundRoute(null);
+    await bootstrap.run({}, async () => {});
+    await settleLitElement(sidebar);
+
+    expect(read).toHaveBeenCalledExactlyOnceWith({ key: outsideKey });
+    expect(link(sidebar, `session:${loadedKey}`).getAttribute("aria-label")).toBe("Live row");
+    expect(link(sidebar, `session:${loadedKey}`).getAttribute("href")).toContain("dashboard");
+    expect(dom.query('.sidebar-rail a[aria-label="Outside window"]')).not.toBeNull();
+  });
+
   it("paints a burst of unloaded pins together without changing their saved order", async () => {
     const { sidebar, sessions, result, dom } = await fixture();
     const frames = new Map<number, FrameRequestCallback>();
@@ -794,6 +854,30 @@ describe("personal navigation rail", () => {
       expect(showToast).not.toHaveBeenCalled();
     },
   );
+
+  it("discovers MCP apps only while Pages is mounted", async () => {
+    const { sidebar, gateway } = await fixture();
+    const request = vi.spyOn(gateway.gateway.snapshot.client!, "request").mockResolvedValue({
+      servers: [],
+    });
+    const discoveries = () =>
+      request.mock.calls.filter(([method]) => method === "mcp.app.discover");
+    gateway.publish({ hello: gatewayHelloForMethods(["mcp.app.discover"]) });
+    await sidebar.updateComplete;
+    gateway.publishEvent("config.changed", {});
+    await sidebar.updateComplete;
+    expect(discoveries()).toHaveLength(0);
+
+    await click(sidebar, '[data-navigation-view="pages"]');
+    await waitForSolid(() => expect(discoveries()).toHaveLength(1));
+    await click(sidebar, '[data-navigation-view="sessions"]');
+    gateway.publishEvent("config.changed", {});
+    await sidebar.updateComplete;
+    expect(discoveries()).toHaveLength(1);
+
+    await click(sidebar, '[data-navigation-view="pages"]');
+    await waitForSolid(() => expect(discoveries()).toHaveLength(2));
+  });
 
   it("does not recreate catalog observations in an update queued before removal", async () => {
     const { sidebar, sessions, gateway } = await fixture();

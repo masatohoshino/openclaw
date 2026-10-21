@@ -364,7 +364,6 @@ async function createInstance(
             params: { transport: "sse", openaiWsWarmup: false },
           },
         },
-        heartbeat: { every: "0m" },
         skipBootstrap: true,
         skills: [],
         timeoutSeconds: 120,
@@ -401,7 +400,7 @@ function connectInstance(
       mode: profiled ? "test" : "backend",
       scopes: ["operator.admin", "operator.read", "operator.write"],
       deviceIdentity: loadOrCreateDeviceIdentity({
-        path: instance.state.path("device.sqlite"),
+        path: instance.state.path("device", "client", "credentials.sqlite"),
       }),
     },
     {

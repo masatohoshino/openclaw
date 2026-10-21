@@ -50,8 +50,6 @@ vi.mock("./status.scan-overview.js", () => ({
     const scan = await mocks.scan(opts);
     return {
       ...scan,
-      coldStart: false,
-      hasConfiguredChannels: false,
       skipColdStartNetworkChecks: false,
       gatewaySnapshot: {
         gatewayConnection: scan.gatewayConnection,
@@ -578,6 +576,34 @@ describe("status commands", () => {
     expect(payload.gateway.authWarning).toBe("gateway.auth.token unavailable");
     expect(payload.secretDiagnostics).toContain("gateway.auth.token unavailable");
     expect(mocks.runtime.error).not.toHaveBeenCalled();
+  });
+
+  it("shows runtime-only degraded secrets without changing JSON diagnostics", async () => {
+    setScan({
+      secretDiagnostics: [],
+      summary: {
+        ...currentScan.summary,
+        degradedSecretOwners: [
+          {
+            ownerKind: "capability",
+            ownerId: "tts",
+            state: "unavailable",
+            degradationState: "cold",
+            paths: ["tts.providers.elevenlabs.apiKey"],
+            reason: "secret reference was not found",
+          },
+        ],
+      },
+    });
+    const text = await runStatusOutput();
+    expect(text).toContain("Secret diagnostics:");
+    expect(text).toContain(
+      "cold capability:tts (tts.providers.elevenlabs.apiKey): secret reference was not found",
+    );
+    expect(text).toContain("Retry: openclaw secrets reload");
+    const json = JSON.parse(await runStatusOutput({ json: true }));
+    expect(json.secretDiagnostics).toEqual([]);
+    expect(json.degradedSecretOwners).toEqual(currentScan.summary.degradedSecretOwners);
   });
 
   it("distinguishes service-wrapper secret diagnostics from the CLI context", async () => {
