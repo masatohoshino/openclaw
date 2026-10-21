@@ -349,6 +349,7 @@ when initialization must finish before the child runs.
     default alongside named accounts supply `hasImplicitDefaultAccount`, using the same
     credential-readiness rule as account listing. The shared surface then includes that
     default as a consumer of root secrets. Keep field activation rules in `collect`.
+    `createSimpleChannelSecretContract` accepts the same `hasImplicitDefaultAccount` option.
 
     Config-backed logout handlers can use `clearAccountFieldsFromConfigSection`
     from `openclaw/plugin-sdk/channel-config-helpers`. Pass `cfg`, `sectionKey`,

@@ -131,6 +131,9 @@ export function createSimpleChannelSecretContract(params: {
     | "channel-surface"
     | "channel-only"
     | { kind: "surface-inheritance"; collectionFields: readonly string[] };
+  hasImplicitDefaultAccount?: (
+    params: ChannelSecretCollectorParams & { channel: Record<string, unknown> },
+  ) => boolean;
 }): {
   secretTargetRegistryEntries: SecretTargetRegistryEntry[];
   collectRuntimeConfigAssignments: (params: {
@@ -181,7 +184,10 @@ export function createSimpleChannelSecretContract(params: {
       return;
     }
 
-    const surface = resolveChannelAccountSurface(channel);
+    const surface = resolveChannelAccountSurface(
+      channel,
+      params.hasImplicitDefaultAccount?.({ ...collectorParams, channel }),
+    );
     for (const field of collectionFields) {
       const topInactiveReason =
         params.mode === "channel-surface"

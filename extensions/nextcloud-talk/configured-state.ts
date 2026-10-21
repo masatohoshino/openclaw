@@ -9,6 +9,20 @@ import type { CoreConfig, NextcloudTalkAccountConfig } from "./src/types.js";
 
 type NextcloudAccount = NonNullable<NonNullable<CoreConfig["channels"]>["nextcloud-talk"]>;
 
+/** Root credentials start an implicit default account, also next to named accounts. */
+export function hasNextcloudTalkImplicitDefaultAccount(
+  cfg: OpenClawConfig,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  const channel = cfg.channels?.["nextcloud-talk"];
+  return Boolean(
+    channel?.baseUrl?.trim() &&
+    (hasConfiguredAccountValue(channel.botSecret) ||
+      channel.botSecretFile?.trim() ||
+      env.NEXTCLOUD_TALK_BOT_SECRET?.trim()),
+  );
+}
+
 const {
   listAccountIds: listNextcloudTalkAccountIds,
   resolveDefaultAccountId: resolveDefaultNextcloudTalkAccountId,
@@ -16,15 +30,7 @@ const {
 } = createAccountListHelpers<NextcloudTalkAccountConfig>("nextcloud-talk", {
   normalizeAccountId,
   omitKeys: ["defaultAccount"],
-  hasImplicitDefaultAccount: (cfg) => {
-    const channel = cfg.channels?.["nextcloud-talk"];
-    return Boolean(
-      channel?.baseUrl?.trim() &&
-      (hasConfiguredAccountValue(channel.botSecret) ||
-        channel.botSecretFile?.trim() ||
-        process.env.NEXTCLOUD_TALK_BOT_SECRET?.trim()),
-    );
-  },
+  hasImplicitDefaultAccount: (cfg) => hasNextcloudTalkImplicitDefaultAccount(cfg, process.env),
 });
 export {
   listNextcloudTalkAccountIds,

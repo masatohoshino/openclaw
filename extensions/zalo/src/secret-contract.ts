@@ -1,6 +1,7 @@
 import {
   collectConditionalChannelFieldAssignments,
   createChannelSecretContract,
+  hasConfiguredSecretInputValue,
   hasOwnProperty,
   normalizeSecretStringValue,
 } from "openclaw/plugin-sdk/channel-secret-basic-runtime";
@@ -9,6 +10,11 @@ export const channelSecrets = createChannelSecretContract({
   channelKey: "zalo",
   account: ["botToken", "webhookSecret"],
   channel: ["botToken", "webhookSecret"],
+  // Same credential sources as the implicit default in account listing (accounts.ts).
+  hasImplicitDefaultAccount: ({ channel, context, defaults }) =>
+    [channel.botToken, channel.tokenFile, context.env.ZALO_BOT_TOKEN].some((value) =>
+      hasConfiguredSecretInputValue(value, defaults),
+    ),
   collect(params) {
     const { channel: zalo } = params;
     collectConditionalChannelFieldAssignments({
