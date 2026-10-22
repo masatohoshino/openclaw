@@ -137,15 +137,18 @@ describe("ordinary session event execution", () => {
     automation.deliveryAttemptFence = { beforeAttempt: async () => {}, assertCurrent: vi.fn() };
     const followupRun = createFollowupRun();
     followupRun.run.scheduledAutomation = automation;
-    let capability: ReturnType<typeof resolveMessageActionTurnAuthorization>;
+    const redeemAs: Record<string, ReturnType<typeof resolveMessageActionTurnAuthorization>> = {};
     state.runEmbeddedAgentMock.mockImplementationOnce(async (run) => {
-      capability = resolveMessageActionTurnAuthorization({
-        token: run.messageActionTurnCapability,
-        agentId: "main",
-        runId,
-        sessionKey: policySessionKey,
-        sessionId: "session",
-      });
+      // Another peer's policy key and the shared execution key must not redeem this turn's grant.
+      for (const sessionKey of [policySessionKey, "agent:main:irc:default:direct:bob", "main"]) {
+        redeemAs[sessionKey] = resolveMessageActionTurnAuthorization({
+          token: run.messageActionTurnCapability,
+          agentId: "main",
+          runId,
+          sessionKey,
+          sessionId: "session",
+        });
+      }
       return { payloads: [{ text: "done" }], meta: {} };
     });
     const { replyOperation } = createMockReplyOperation();
@@ -156,7 +159,9 @@ describe("ordinary session event execution", () => {
     });
 
     expect(result.outcome).toMatchObject({ kind: "settled", status: "ok" });
-    expect(capability?.deliveryAttempt).toBeDefined();
+    expect(redeemAs[policySessionKey]?.deliveryAttempt).toBeDefined();
+    expect(redeemAs["agent:main:irc:default:direct:bob"]).toBeUndefined();
+    expect(redeemAs.main).toBeUndefined();
   });
 
   it.each(["embedded", "cli"] as const)(
