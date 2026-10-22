@@ -1,28 +1,37 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { exactBoardWidgetHeightPx } from "../../lib/board/grid.ts";
-// Side-effect import: test-support only type-imports the component, so the
-// custom element must be registered here for mount() to render anything.
+import { exactBoardWidgetHeightPx, FINE_POINTER_QUERY } from "../../lib/board/grid.ts";
 import "./board-view.ts";
-import { boardWidget, callbacks, mount, snapshot } from "./board-view.test-support.ts";
+import {
+  boardWidget,
+  callbacks,
+  mount,
+  openBoardMenu,
+  snapshot,
+} from "./board-view.test-support.ts";
 
 afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
 });
 
+const resizeOp = (sizeW: number, sizeH: number, heightMode: "auto" | "fixed") => ({
+  kind: "widget_resize",
+  name: "alpha",
+  sizeW,
+  sizeH,
+  heightMode,
+});
+
 describe("board widget sizing", () => {
   it("hugs auto cards to their exact content height inside the quantized cell", () => {
     const card = boardWidget({ sizeH: 6 });
-    // Every presentation reserves its border; cards also add 12px per edge.
+    // Borders + card padding; short content hugs below the cell minimum.
     expect(exactBoardWidgetHeightPx(card, 300)).toBe(326);
     expect(exactBoardWidgetHeightPx({ ...card, presentation: "frameless" }, 300)).toBe(302);
-    // Short content hugs below the 2-row cell minimum: the cell keeps its
-    // minimum span, only the card shrinks.
     expect(exactBoardWidgetHeightPx(card, 60)).toBe(86);
-    // At the 20-row cap the card fills the cell exactly and the body clips.
+    // Normal boards cap at 20 rows; documents can raise the cap.
     expect(exactBoardWidgetHeightPx(card, 10_000)).toBe(20 * 56 + 19 * 12);
     expect(exactBoardWidgetHeightPx(card, 10_000, 0, 240)).toBe(10_026);
-    // Coarse-pointer layouts keep the 38px bar in flow, joining the height.
     expect(exactBoardWidgetHeightPx(card, 300, 38)).toBe(364);
     expect(exactBoardWidgetHeightPx({ ...card, heightMode: "fixed" }, 300)).toBeUndefined();
     expect(exactBoardWidgetHeightPx(card, undefined)).toBeUndefined();
@@ -30,6 +39,16 @@ describe("board widget sizing", () => {
   });
 
   it("lets a dashboard document fit tall HTML content without an inner scroll viewport", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((media) => ({
+      media,
+      matches: media === FINE_POINTER_QUERY,
+      onchange: null,
+      addListener() {},
+      removeListener() {},
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent: () => true,
+    }));
     const view = await mount();
     view.fitAutoContent = true;
     await view.updateComplete;
@@ -54,38 +73,17 @@ describe("board widget sizing", () => {
   it("pins preset resizing and toggles height mode from the menu", async () => {
     const applyOps = vi.fn(async () => undefined);
     const view = await mount({ callbacks: callbacks({ applyOps }) });
-    const menu = view.querySelector(".board-widget__menu");
-    const preset = view.querySelector('wa-dropdown-item[value="resize:sm"]');
-    menu?.dispatchEvent(new CustomEvent("wa-select", { detail: { item: preset }, bubbles: true }));
-    await vi.waitFor(() =>
-      expect(applyOps).toHaveBeenCalledWith([
-        {
-          kind: "widget_resize",
-          name: "alpha",
-          sizeW: 3,
-          sizeH: 3,
-          heightMode: "fixed",
-        },
-      ]),
-    );
+    await openBoardMenu(view);
+    view.querySelector<HTMLButtonElement>('[data-value="resize:sm"]')!.click();
+    await vi.waitFor(() => expect(applyOps).toHaveBeenCalledWith([resizeOp(3, 3, "fixed")]));
     const cell = view.querySelector("openclaw-board-widget-cell");
-    await vi.waitFor(() => expect(cell?.querySelector("wa-dropdown-item")?.disabled).toBe(false));
-
-    // The menu item is a checkbox toggle: an auto widget pins to its current
-    // effective height, a fixed widget returns to auto.
-    const auto = view.querySelector('wa-dropdown-item[value="height:auto"]');
-    menu?.dispatchEvent(new CustomEvent("wa-select", { detail: { item: auto }, bubbles: true }));
     await vi.waitFor(() =>
-      expect(applyOps).toHaveBeenLastCalledWith([
-        {
-          kind: "widget_resize",
-          name: "alpha",
-          sizeW: 6,
-          sizeH: 4,
-          heightMode: "fixed",
-        },
-      ]),
+      expect(cell?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.disabled).toBe(false),
     );
+
+    await openBoardMenu(view);
+    view.querySelector<HTMLButtonElement>('[data-value="height:auto"]')!.click();
+    await vi.waitFor(() => expect(applyOps).toHaveBeenLastCalledWith([resizeOp(6, 4, "fixed")]));
   });
 
   it("returns a pinned widget to automatic height from the menu", async () => {
@@ -94,20 +92,10 @@ describe("board widget sizing", () => {
       snapshot: snapshot({ widgets: [boardWidget({ heightMode: "fixed" })] }),
       callbacks: callbacks({ applyOps }),
     });
-    const menu = view.querySelector(".board-widget__menu");
-    const auto = view.querySelector('wa-dropdown-item[value="height:auto"]');
-    expect(auto?.hasAttribute("checked")).toBe(false);
-    menu?.dispatchEvent(new CustomEvent("wa-select", { detail: { item: auto }, bubbles: true }));
-    await vi.waitFor(() =>
-      expect(applyOps).toHaveBeenLastCalledWith([
-        {
-          kind: "widget_resize",
-          name: "alpha",
-          sizeW: 6,
-          sizeH: 4,
-          heightMode: "auto",
-        },
-      ]),
-    );
+    await openBoardMenu(view);
+    const auto = view.querySelector<HTMLButtonElement>('[data-value="height:auto"]')!;
+    expect(auto.getAttribute("aria-checked")).toBe("false");
+    auto.click();
+    await vi.waitFor(() => expect(applyOps).toHaveBeenLastCalledWith([resizeOp(6, 4, "auto")]));
   });
 });

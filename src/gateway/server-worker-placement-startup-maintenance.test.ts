@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { withinTest } from "../../test/helpers/promise.js";
 import { observeHostDataSql } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import {
@@ -6,12 +7,14 @@ import {
   loadSessionEntryReadOnly,
   patchSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
-import { observeSessionMaintenanceChanges } from "../config/sessions/session-accessor.sqlite-maintenance.test-support.js";
+import { SESSION_ENTRY_MAINTENANCE_INTERVAL_MS } from "../config/sessions/session-accessor.sqlite-maintenance-age.js";
+import {
+  observeNextPeriodicMaintenance,
+  observeSessionMaintenanceChanges,
+} from "../config/sessions/session-accessor.sqlite-maintenance.test-support.js";
 import { applySessionEntryLifecycleMutation } from "../config/sessions/session-accessor.sqlite-projection.js";
-import * as reclamationRun from "../config/sessions/session-accessor.sqlite-reclamation-run.js";
 import { prepareSessionMaintenancePreservation } from "../config/sessions/store-maintenance-preserve.js";
 import { resolveMaintenanceConfigFromInput } from "../config/sessions/store-maintenance.js";
-import { createDeferredCore } from "../shared/deferred.js";
 import { resolveOpenClawAgentSqlitePath } from "../state/openclaw-agent-db.js";
 import * as stateReads from "../state/openclaw-state-db-readonly.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
@@ -98,6 +101,8 @@ function createMaintenanceRuntime(params: {
   runtimeFactoryMocks.createDiskSpace.mockReturnValue({
     read: vi.fn(),
     version: vi.fn(() => 0),
+    invalidate: vi.fn(),
+    nextSweepAtMs: () => Infinity,
     sweep: vi.fn().mockResolvedValue(undefined),
   });
   runtimeFactoryMocks.createDispatch.mockReturnValue({
@@ -117,9 +122,11 @@ function createMaintenanceRuntime(params: {
       goneEnvironmentIds.has(environmentId)
         ? { state: "destroyed" as const, leaseId: null }
         : { state: "attached" as const, leaseId: "cloud-lease" },
-    subscribeMachineShapeChanged: vi.fn(() => vi.fn()),
+    machineShapeNotifications: { onChanged: (_profileId: string) => {} },
     installReconcileEnvironmentGuard: vi.fn(() => vi.fn()),
     start: vi.fn(),
+    isStopping: () => false,
+    beginClose: vi.fn(),
     stop,
   };
   const runtime = createGatewayWorkerPlacementRuntime({
@@ -128,9 +135,18 @@ function createMaintenanceRuntime(params: {
     getCommittedRuntimeConfig: getRuntimeConfig,
     cancelSessionWork: vi.fn(async () => {}),
     placements: {
+      subscribeChanges: (
+        listener: Parameters<WorkerSessionPlacementStore["subscribeChanges"]>[0],
+      ) => params.preservationStore?.subscribeChanges(listener) ?? (() => {}),
       workspaceResultInstanceId: () => "gateway-test",
-      get: (sessionId: string) =>
+      getAsync: async (sessionId: string) =>
         params.placements.find((placement) => placement.sessionId === sessionId),
+      getManyAsync: async (sessionIds: readonly string[]) =>
+        new Map(
+          params.placements
+            .filter((placement) => sessionIds.includes(placement.sessionId))
+            .map((placement) => [placement.sessionId, placement]),
+        ),
       listAsync: async () => params.placements,
       listForReconcileAsync: async (sessionKey?: string) =>
         params.preservationStore
@@ -151,7 +167,7 @@ function createMaintenanceRuntime(params: {
               assertCurrent: () => {},
               release: () => {},
             },
-      retireSessionPlacement: vi.fn(),
+      retireSessionPlacementAsync: vi.fn(async () => {}),
       pruneOrphanedWorkspaceReconciliations: async () => {
         await params.onRecovery?.();
         if (params.recoveryError) {
@@ -447,6 +463,7 @@ describe("worker placement session maintenance ownership", () => {
         | Awaited<ReturnType<WorkerSessionPlacementStore["prepareRuntimeRefresh"]>>
         | undefined;
       try {
+        vi.mocked(getRuntimeConfig).mockReturnValue(cfg);
         createMaintenanceRuntime({ placements: [placement] });
         const options = createRetention.mock.calls.at(-1)?.[0];
         const additionalManifestRefs = options?.additionalManifestRefs;
@@ -472,17 +489,18 @@ describe("worker placement session maintenance ownership", () => {
       } finally {
         prepared?.release();
         createRetention.mockRestore();
+        vi.mocked(getRuntimeConfig).mockReturnValue({});
       }
     });
   });
 
-  it.each([
+  it.for([
     { maintenance: "dashboard archive", sessionKey: "agent:main:dashboard:cloud-owned" },
     { maintenance: "stale pruning", sessionKey: "agent:main:explicit:cloud-owned-prune" },
     { maintenance: "entry capping", sessionKey: "agent:main:explicit:cloud-owned-cap" },
   ] as const)(
     "preserves active placements during $maintenance and releases them for maintenance after stop",
-    async ({ maintenance, sessionKey }) => {
+    async ({ maintenance, sessionKey }, { signal }) => {
       await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
         const now = Date.now();
         const placement = createPlacementFixture(sessionKey);
@@ -534,23 +552,15 @@ describe("worker placement session maintenance ownership", () => {
             () => triggerEntry,
             { fallbackEntry: triggerEntry, replaceEntry: true, maintenanceConfig },
           );
-        const agePublished = createDeferredCore();
-        const reclaim = reclamationRun.runSqliteSessionReclamation;
-        const ageObserver = vi
-          .spyOn(reclamationRun, "runSqliteSessionReclamation")
-          .mockImplementation(async (params) => {
-            const result = await reclaim(params);
-            if (params.plan.kind === "maintenance-age") {
-              agePublished.resolve();
-            }
-            return result;
-          });
+        const settled = observeNextPeriodicMaintenance(
+          (delay) => delay >= SESSION_ENTRY_MAINTENANCE_INTERVAL_MS / 2,
+        );
 
         try {
           const sentinelArchived = observeSessionMaintenanceChanges(storePath, sentinelKey);
           await triggerMaintenance();
-          await sentinelArchived;
-          await agePublished.promise;
+          await withinTest(sentinelArchived, signal);
+          await settled(signal);
           await vi.waitFor(() => {
             expect(loadSessionEntry(sessionScope(sentinelKey))).toMatchObject({
               sessionId: sentinelEntry.sessionId,
@@ -570,7 +580,7 @@ describe("worker placement session maintenance ownership", () => {
           triggerEntry.updatedAt -= 1;
           const placementArchived = observeSessionMaintenanceChanges(storePath, sessionKey);
           await triggerMaintenance();
-          await placementArchived;
+          await withinTest(placementArchived, signal);
           await vi.waitFor(() => {
             expect(loadSessionEntry(sessionScope(sessionKey))).toMatchObject({
               sessionId: placement.sessionId,
@@ -578,7 +588,6 @@ describe("worker placement session maintenance ownership", () => {
             });
           });
         } finally {
-          ageObserver.mockRestore();
           await sidecar.stop();
         }
       });

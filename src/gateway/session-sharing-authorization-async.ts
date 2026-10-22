@@ -4,6 +4,8 @@ import {
   retainPreparedSessionSharingFacts,
   projectSessionSharingEntry,
 } from "../config/sessions/session-accessor.sqlite-entry-cache.js";
+import { SessionCanonicalKeyMigrationRequiredError } from "../config/sessions/session-canonical-key-error.js";
+import { releaseSessionSourceAuthorities } from "../config/sessions/session-source-authority.js";
 import { readDatabasePathIdentitySync } from "../infra/sqlite-worker-identity.js";
 import { errorShapeFromError } from "./error-shape.js";
 import { isSessionTargetMethod } from "./session-method-policy.js";
@@ -99,6 +101,9 @@ export async function resolveSessionMutationAuthorizationAsync(
   };
   let references = 0;
   const retain = () => {
+    if (!active) {
+      throw new Error("Session authorization has been released");
+    }
     references += 1;
     let retained = true;
     return () => {
@@ -137,6 +142,7 @@ export async function resolveSessionMutationAuthorizationAsync(
         sessionKey: target.sessionKey,
         agentId: input.agentId,
         allowMissing: true,
+        followLifecycle: params.method === "chat.send",
       });
       reads.push(retained);
       const initialFacts = retained.readCurrent(cfg);
@@ -157,6 +163,7 @@ export async function resolveSessionMutationAuthorizationAsync(
         readSource,
         bindCreation: retained.bindCreation,
         followRegistration: retained.followRegistration,
+        prepareRead: retained.prepareRead,
         read: () => {
           const facts = readCurrent();
           return {
@@ -204,6 +211,23 @@ export async function resolveSessionMutationAuthorizationAsync(
       return result;
     }
     const authorization = result.authorization;
+    const prepareWorkerGrant = authorization.prepareWorkerGrant;
+    if (prepareWorkerGrant) {
+      authorization.prepareWorkerGrant = async (source) => {
+        const releaseAuthorization = retain();
+        try {
+          const grant = await prepareWorkerGrant(source);
+          return {
+            ...grant,
+            release: () =>
+              releaseSessionSourceAuthorities([{ release: releaseAuthorization }, grant]),
+          };
+        } catch (error) {
+          await releaseSessionSourceAuthorities([{ release: releaseAuthorization }], [error]);
+          throw error;
+        }
+      };
+    }
     return {
       ...result,
       authorization: {
@@ -234,6 +258,7 @@ export async function resolveSessionMutationAuthorizationAsync(
           const retained = retainPreparedSessionSharingFacts({
             databaseIdentity: identity.key,
             sessionKey: created.sessionKey,
+            followLifecycle: params.method === "chat.send",
             entry: projectSessionSharingEntry(created.entry),
             membership: new Set(),
           });
@@ -273,6 +298,7 @@ export async function resolveSessionMutationAuthorizationAsync(
               target.storageTarget.agentId === created.agentId,
           );
           if (selected) {
+            selected.prepareRead = retained.prepareRead;
             selected.read = read;
             selected.readSource = created.readSource ?? selected.readSource;
           } else {
@@ -285,6 +311,7 @@ export async function resolveSessionMutationAuthorizationAsync(
                 storePath: created.storePath,
               },
               readSource: created.readSource,
+              prepareRead: retained.prepareRead,
               read,
               bindCreation: () => {},
             });
@@ -294,7 +321,11 @@ export async function resolveSessionMutationAuthorizationAsync(
     };
   } catch (error) {
     release();
-    if (!talk && !(error instanceof AgentSelectionRequiredError)) {
+    if (
+      !talk &&
+      !(error instanceof AgentSelectionRequiredError) &&
+      !(error instanceof SessionCanonicalKeyMigrationRequiredError)
+    ) {
       throw error;
     }
     return {

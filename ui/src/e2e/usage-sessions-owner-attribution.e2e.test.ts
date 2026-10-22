@@ -12,9 +12,11 @@ import {
   type OpenClawTestState,
 } from "../../../src/test-utils/openclaw-test-state.ts";
 import { getFreePort } from "../../../src/test-utils/ports.ts";
-import type { ApplicationContext } from "../app/context.ts";
-import { COMMUNITY_INVITE_KEY } from "../components/community-invite-state.ts";
-import { waitForControlUiGatewayReady } from "../test-helpers/control-ui-e2e-readiness.ts";
+import { evaluateControlUiContext } from "../test-helpers/control-ui-e2e-context.ts";
+import {
+  controlUiE2eWaitTimeoutMs,
+  waitForControlUiGatewayReady,
+} from "../test-helpers/control-ui-e2e-readiness.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
 const suite = createControlUiE2eSuite({
@@ -43,12 +45,6 @@ async function capture(page: Page, name: string) {
   });
 }
 
-async function prepareUsageProofPage(page: Page) {
-  await page.addInitScript((key) => {
-    window.localStorage.setItem(key, JSON.stringify({ dismissedAtMs: 1770000000000 }));
-  }, COMMUNITY_INVITE_KEY);
-}
-
 async function dragTimelineRange(page: Page, fraction: number) {
   const panel = page.locator(".session-detail-panel");
   const handle = panel.locator(".chart-handle-right");
@@ -72,12 +68,10 @@ async function requestGateway<T>(
   methodName: string,
   requestParams: Record<string, unknown>,
 ) {
-  return await page.evaluate(
-    async ({ method, params }) => {
-      const app = document.querySelector("openclaw-app") as
-        | (HTMLElement & { runtime?: { context: ApplicationContext } })
-        | null;
-      const client = app?.runtime?.context.gateway.snapshot.client;
+  return await evaluateControlUiContext(
+    page,
+    async (context, { method, params }) => {
+      const client = context.gateway.snapshot.client;
       if (!client) {
         throw new Error("Usage proof has no connected Gateway client");
       }
@@ -217,7 +211,6 @@ suite.define(() => {
               viewport,
             },
             async ({ page }) => {
-              await prepareUsageProofPage(page);
               const pageErrors: string[] = [];
               page.on("pageerror", (error) => pageErrors.push(String(error)));
 
@@ -251,6 +244,8 @@ suite.define(() => {
                   name: `Molty (agent:${agentId})`,
                   exact: true,
                 });
+                // Usage rows can render before the agent-name roster finishes.
+                await chip.waitFor({ state: "attached", timeout: controlUiE2eWaitTimeoutMs });
                 await expect.poll(() => chip.getAttribute("data-agent-id")).toBe(agentId);
                 await expect.poll(() => ownerRow.locator(".agent-row-chip").count()).toBe(1);
               }
@@ -338,7 +333,6 @@ suite.define(() => {
           await suite.withPage(
             { locale: "en-US", timezoneId: "UTC", serviceWorkers: "block", viewport },
             async ({ page }) => {
-              await prepareUsageProofPage(page);
               const key = "agent:opus:usage-instance-proof";
               const gatewayUrl = new URL(`ws://127.0.0.1:${port}`).href;
               const pageErrors: string[] = [];
@@ -555,11 +549,13 @@ suite.define(() => {
               expect(await selectedReplacement.getAttribute("aria-label")).toBe(
                 "Replacement usage session",
               );
-              expect(
-                observedOverviews
-                  .slice(focusOverviewStart)
-                  .some((overview) => overview.session?.sessionId === replacementId),
-              ).toBe(true);
+              await expect
+                .poll(() =>
+                  observedOverviews
+                    .slice(focusOverviewStart)
+                    .some((overview) => overview.session?.sessionId === replacementId),
+                )
+                .toBe(true);
               expect(connections).toBe(selectedConnections);
               if (pointCount === 2) {
                 await moveOriginalRange();

@@ -23,12 +23,14 @@ import {
   resolveAuthProfileMetadata,
   resolveExplicitAuthOrderSelection,
 } from "../../agents/auth-profiles.js";
+import { refreshRuntimeAuthProfileStoreSources } from "../../agents/auth-profiles/runtime-snapshots.js";
 import type { RuntimeAuthProfileStore } from "../../agents/auth-profiles/types.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { providerUsageLabel, resolveUsageProviderId } from "../../infra/provider-usage.shared.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { refreshActiveProviderAuthRuntimeSnapshot } from "../../secrets/runtime.js";
+import { createChatAbortOps } from "../chat-abort-ops.js";
 import { abortChatRunsForProvider } from "../chat-abort.js";
 import { refreshModelAuthStateAfterMutation } from "../model-auth-refresh.js";
 import { hasGatewayAdminScope } from "../operator-scopes.js";
@@ -41,7 +43,7 @@ import {
 import { resolveModelAuthAgentScope } from "./model-auth-agent-scope.js";
 import { modelsAuthRefreshHandlers } from "./models-auth-refresh.js";
 import { readModelAuthStatusFacts } from "./models-auth-status-facts.js";
-import { readProviderUsageStaleWhileRevalidate } from "./models-auth-status-usage-cache.js";
+import { readProviderUsage } from "./models-auth-status-usage-cache.js";
 import type {
   ModelAuthExpiry,
   ModelAuthLogoutResult,
@@ -310,22 +312,12 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       const { runIds: abortedRunIds } =
         selection.profileIds || apiKeyOnly
           ? { runIds: [] as string[] }
-          : abortChatRunsForProvider(
-              {
-                chatAbortControllers: context.chatAbortControllers,
-                chatRunState: context.chatRunState,
-                removeChatRun: context.removeChatRun,
-                agentRunSeq: context.agentRunSeq,
-                broadcast: context.broadcast,
-                nodeSendToSession: context.nodeSendToSession,
-              },
-              {
-                cfg,
-                providerId: authProvider,
-                agentId: scope.agentId,
-                stopReason: "auth-revoked",
-              },
-            );
+          : abortChatRunsForProvider(createChatAbortOps(context), {
+              cfg,
+              providerId: authProvider,
+              agentId: scope.agentId,
+              stopReason: "auth-revoked",
+            });
       const refreshWarning = await refreshAfterCredentialMutation(context, scope.agentId);
       const warning = [configWarning, refreshWarning].filter(Boolean).join(" ");
       const result: ModelAuthLogoutResult = {
@@ -357,6 +349,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       }
       if (refreshRequested) {
         // Refresh into the transient prepared owner; mutations alone clear warmed auth state.
+        await refreshRuntimeAuthProfileStoreSources();
         await refreshActiveProviderAuthRuntimeSnapshot();
         cfg = context.getRuntimeConfig();
         scope = resolveScope(cfg);
@@ -410,7 +403,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         agentDir,
         store,
       });
-      const usageByProvider = readProviderUsageStaleWhileRevalidate({
+      const usageParams = {
         agentId,
         agentDir,
         authStore: providerUsageRuntime.store,
@@ -419,6 +412,10 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         forceRefresh: refreshRequested,
         providerIds: usageProviderIds,
         now,
+      };
+      const { usageByProvider, refreshAt: usageRefreshAt } = await readProviderUsage({
+        ...usageParams,
+        awaitRefresh: Boolean(params.refreshUsage),
       });
 
       const providers: ModelAuthStatusProvider[] = [];
@@ -528,7 +525,12 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
               : undefined,
         });
       }
-      const result: ModelAuthStatusResult = { ts: now, providers, providerCapabilities };
+      const result: ModelAuthStatusResult = {
+        ts: now,
+        providers,
+        providerCapabilities,
+        usageRefreshAt,
+      };
       respond(true, result, undefined);
     });
   },

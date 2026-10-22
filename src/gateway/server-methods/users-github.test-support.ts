@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import { ensureProfileForEmail } from "../../state/user-profiles.js";
+import type { UserProfile } from "../../state/user-profiles.types.js";
 import type { GatewayClient } from "./types.js";
 
 const network = vi.hoisted(() => ({
@@ -55,10 +55,8 @@ export function resetPersonalGitHubNetwork() {
   });
   network.verify.mockReset().mockImplementation(async (token) => {
     const native = token === "synthetic-native";
-    if (
-      !native &&
-      ![tokens.accessToken, "synthetic-rotated-access", "new-access"].includes(token)
-    ) {
+    const personalTokens = [tokens.accessToken, "synthetic-rotated-access", "new-access"];
+    if (!native && !personalTokens.includes(token)) {
       return { status: "unavailable" };
     }
     return {
@@ -87,13 +85,12 @@ export function resetPersonalGitHubNetwork() {
   });
 }
 
-export function createPersonalGitHubTestClient(
-  clients: Set<GatewayClient>,
+export function createGitHubTestClient(
+  profile: UserProfile,
   email: string,
   scopes: string[],
 ): GatewayClient {
-  const profile = ensureProfileForEmail(email);
-  const client: GatewayClient = {
+  return {
     connId: `connection-${profile.id}`,
     authenticatedUserId: email,
     authenticatedUserProfile: {
@@ -110,6 +107,4 @@ export function createPersonalGitHubTestClient(
       client: { id: "test", mode: "test", version: "1", platform: "test" },
     },
   };
-  clients.add(client);
-  return client;
 }

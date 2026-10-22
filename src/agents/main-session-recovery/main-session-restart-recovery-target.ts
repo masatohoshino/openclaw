@@ -1,11 +1,13 @@
 import path from "node:path";
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
+import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target-paths.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
 import { isPerAgentSessionStoreConfig } from "../../config/sessions/session-store-config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { resolveGatewaySessionStoreTargetInWorker } from "../../gateway/session-utils-store-worker.js";
+import { resolveSessionStoreIdentity } from "../../gateway/session-store-key.js";
+import { isTransientRestartRecoveryError } from "../../infra/restart-recovery-errors.js";
 import {
   LEGACY_IMPLICIT_AGENT_ID,
   classifySessionKeyShape,
@@ -64,17 +66,21 @@ export async function resolveRestartRecoveryDispatchTarget(
   }
   const storeAgentId = resolveRestartRecoveryStoreAgentId(params);
   try {
-    const target = await resolveGatewaySessionStoreTargetInWorker({
+    const target = resolveSessionStoreIdentity({
       cfg: params.cfg,
-      key: params.sessionKey,
-      projection: "list",
+      sessionKey: params.sessionKey,
       ...(storeAgentId ? { agentId: storeAgentId } : {}),
     });
     return !params.cfg.session?.store ||
-      path.resolve(target.storePath) === path.resolve(params.storePath)
+      path.resolve(
+        resolveSessionStorePathCore(params.cfg.session.store, { agentId: target.agentId }),
+      ) === path.resolve(params.storePath)
       ? { agentId: target.agentId, sessionKey: target.canonicalKey }
       : undefined;
   } catch (err) {
+    if (isTransientRestartRecoveryError(err)) {
+      throw err;
+    }
     mainSessionRecoveryLog.warn(
       `failed to resolve recovery store for ${params.sessionKey}: ${String(err)}`,
     );
@@ -82,10 +88,14 @@ export async function resolveRestartRecoveryDispatchTarget(
   }
 }
 
-/** Captures the durable continuation that a completed requester turn yielded to. */
+/**
+ * Captures the durable continuation that a completed requester turn yielded to. A retained
+ * yielded wake stays owed after its children retire; Stop also covers children without a report.
+ */
 export function captureYieldedMainSessionContinuation(params: {
   entry: SessionEntry;
   requester: RestartRecoveryDispatchTarget | undefined;
+  purpose: "recovery" | "stop";
 }): (() => boolean) | undefined {
   // A prepared final may not have reached its queue yet; main recovery still owns that debt.
   if (
@@ -106,7 +116,7 @@ export function captureYieldedMainSessionContinuation(params: {
   const owner = listRuns().find(
     (run) =>
       !run.collect &&
-      run.expectsCompletionMessage === true &&
+      (params.purpose === "stop" || run.expectsCompletionMessage === true) &&
       !run.requesterTurnRunId &&
       run.requesterSettleWake?.requesterYieldBatch === true &&
       run.requesterSettleWake.rearmGeneration !== undefined &&

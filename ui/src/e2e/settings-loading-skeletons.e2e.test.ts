@@ -6,6 +6,7 @@ import {
   startControlUiE2eServer,
   waitForControlUiRoute,
 } from "../test-helpers/control-ui-e2e.ts";
+import { sessionsUsageResponse } from "../test-helpers/sessions-usage-response.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
 const suite = createControlUiE2eSuite({
@@ -85,7 +86,7 @@ suite.define(() => {
           },
           "models.list": { models: [] },
           "models.authStatus": { providers: [], ts: Date.now() },
-          "sessions.usage": { aggregates: { byProvider: [] } },
+          "sessions.usage": sessionsUsageResponse(),
           "usage.status": { providers: [] },
         },
       });
@@ -101,7 +102,7 @@ suite.define(() => {
       await gateway.deferNext("models.authStatus");
       const agentPicker = page.locator(".settings-sidebar__agent openclaw-agent-select");
       await agentPicker.locator(".agent-select__trigger").click();
-      await agentPicker.locator('wa-dropdown-item[aria-label="Reviewer"]').click();
+      await agentPicker.getByRole("menuitemradio", { name: "Reviewer", exact: true }).click();
       await expect
         .poll(async () => (await agentPicker.locator(".agent-select__label").textContent())?.trim())
         .toBe("Reviewer");

@@ -1,3 +1,7 @@
+import type {
+  SystemAgentSetupAutoCandidate as SetupAutoCandidate,
+  SystemAgentSetupAutoResult as SetupAutoResult,
+} from "../../../../packages/gateway-protocol/src/schema/setup-inference.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { SystemAgentSetupActivateResult } from "../../api/types.ts";
 import type { ApplicationContext } from "../../app/context.ts";
@@ -12,23 +16,7 @@ import {
 } from "../model-setup/wizard-runner.ts";
 import { resolveCustodianConfiguredInferenceState } from "./custodian-session-variant.ts";
 
-// Wire result for the optional automatic setup capability.
-export type SetupAutoCandidate = {
-  kind: string;
-  label: string;
-  detail: string;
-  modelRef: string;
-  brandId?: string;
-  icon?: string;
-};
-export type SetupAutoResult = {
-  status: "configured" | "activated" | "needs-sign-in" | "unavailable";
-  selected?: SetupAutoCandidate;
-  alternatives: SetupAutoCandidate[];
-  attempts: { kind: string; label: string; error: string }[];
-  signIn?: { authOptionId: string; label: string };
-  installedPlugins: string[];
-};
+export type { SetupAutoCandidate, SetupAutoResult };
 
 const DISMISSED_KEY = "openclaw.custodian.setup-dismissed.v1:";
 
@@ -70,6 +58,10 @@ export class CustodianAutoSetup {
   });
 
   constructor(private readonly changed: () => void) {}
+
+  get operationEpoch(): number {
+    return this.epoch;
+  }
 
   get ready(): boolean {
     return this.result?.status === "configured" || this.result?.status === "activated";
@@ -126,7 +118,9 @@ export class CustodianAutoSetup {
     }
   }
 
-  async retry(): Promise<void> {
+  private async run(
+    task: (client: GatewayBrowserClient) => Promise<SetupAutoResult>,
+  ): Promise<void> {
     const client = this.client;
     if (!client || this.pending) {
       return;
@@ -136,12 +130,7 @@ export class CustodianAutoSetup {
     this.error = null;
     this.changed();
     try {
-      // Verification and plugin preparation can exceed a minute. The Gateway owns the lifetime.
-      const result = await client.request<SetupAutoResult>(
-        "openclaw.setup.auto",
-        {},
-        { timeoutMs: null },
-      );
+      const result = await task(client);
       if (epoch !== this.epoch || client !== this.client) {
         return;
       }
@@ -161,29 +150,28 @@ export class CustodianAutoSetup {
     }
   }
 
+  retry(): Promise<void> {
+    // Verification and plugin preparation can exceed a minute. The Gateway owns the lifetime.
+    return this.run((client) =>
+      client.request<SetupAutoResult>("openclaw.setup.auto", {}, { timeoutMs: null }),
+    );
+  }
+
   async activate(candidate: SetupAutoCandidate): Promise<void> {
-    const client = this.client;
     const previous = this.result;
-    if (!client || !previous || this.pending) {
+    if (!previous) {
       return;
     }
-    const epoch = ++this.epoch;
-    this.pending = true;
-    this.error = null;
-    this.changed();
-    try {
+    await this.run(async (client) => {
       const result = await client.request<SystemAgentSetupActivateResult>(
         "openclaw.setup.activate",
         { kind: candidate.kind },
         { timeoutMs: null },
       );
-      if (epoch !== this.epoch || client !== this.client) {
-        return;
-      }
       if (!result.ok) {
         throw new Error(result.error || t("custodian.autoSetup.failed"));
       }
-      this.result = {
+      return {
         ...previous,
         status: "activated",
         selected: { ...candidate, modelRef: result.modelRef ?? candidate.modelRef },
@@ -192,21 +180,11 @@ export class CustodianAutoSetup {
           ...previous.alternatives.filter((entry) => entry !== candidate),
         ],
       };
-      void this.context?.agents.refreshList();
-    } catch (error) {
-      if (epoch === this.epoch && client === this.client) {
-        this.error = formatUiError(error, t("custodian.autoSetup.failed"));
-      }
-    } finally {
-      if (epoch === this.epoch && client === this.client) {
-        this.pending = false;
-        this.changed();
-      }
-    }
+    });
   }
 
   async signIn(): Promise<void> {
-    const signIn = this.result?.signIn;
+    const signIn = this.result?.selected?.shared ? this.result.separateSignIn : this.result?.signIn;
     if (!this.client || !signIn || this.pending) {
       return;
     }
@@ -242,10 +220,14 @@ export class CustodianAutoSetup {
       await this.wizard.requestCancellation();
     } catch (error) {
       if (epoch === this.epoch) {
-        this.error = formatUiError(error, t("custodian.autoSetup.failed"));
-        this.changed();
+        this.reportError(error);
       }
     }
+  }
+
+  reportError(error: unknown): void {
+    this.error = formatUiError(error, t("custodian.autoSetup.failed"));
+    this.changed();
   }
 
   setWizardValue(value: unknown): void {
