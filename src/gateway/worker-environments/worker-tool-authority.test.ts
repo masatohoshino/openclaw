@@ -327,9 +327,12 @@ describe("resolveWorkerToolAuthority", () => {
       });
       // The requester's sender overlay keeps the definitions and refuses the denied calls.
       expect(tools.map((tool) => tool.name)).toEqual(["read", "write", "apply_patch"]);
-      for (const name of gated ? ["write", "apply_patch"] : []) {
-        const refused = await tools.find((tool) => tool.name === name)!.execute(name, {});
-        expect(refused.details).toMatchObject({ gated: true });
+      for (const name of ["write", "apply_patch"]) {
+        const call = tools.find((candidate) => candidate.name === name)!.execute(name, {});
+        // An authorized call reaches the executor, which rejects a call without input.
+        await (gated
+          ? expect(call).resolves.toMatchObject({ details: { gated: true } })
+          : expect(call).rejects.toThrow());
       }
     },
   );

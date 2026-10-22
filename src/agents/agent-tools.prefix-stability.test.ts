@@ -112,9 +112,10 @@ it("offers one session's tool definitions to every sender and refuses denied cal
       senderId,
     });
   expect(surface(groupTurn("bob"))).toEqual(surface(groupTurn("alice")));
-  const refused = await groupTurn("bob")
-    .find((tool) => tool.name === "write")!
-    .execute("refused-write", {});
+  const write = (senderId: string) => groupTurn(senderId).find((tool) => tool.name === "write")!;
+  // alice's call reaches the write executor, which rejects a call without a path.
+  await expect(write("alice").execute("alice-write", {})).rejects.toThrow();
+  const refused = await write("bob").execute("refused-write", {});
   expect(refused.details).toMatchObject({ gated: true });
   expect(JSON.stringify(refused.content)).toContain(
     "write is not allowed for the sender of this message (tools.toolsBySender)",
