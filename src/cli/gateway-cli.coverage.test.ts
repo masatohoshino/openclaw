@@ -115,8 +115,7 @@ async function expectGatewayExit(args: string[]) {
 }
 
 function expectGatewayCall(expected: Record<string, unknown>) {
-  expect(callGateway).toHaveBeenCalledOnce();
-  expect(callGateway.mock.calls[0]?.[0]).toEqual(expect.objectContaining(expected));
+  expect(callGateway).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(expected));
 }
 
 async function expectJsonValidationFailure(args: string[], message: unknown) {
@@ -209,12 +208,7 @@ describe("gateway-cli coverage", () => {
           "openai-codex/gpt-5.5": 2,
         },
       },
-      cacheStatus: {
-        status: "fresh",
-        cachedFiles: 1,
-        pendingFiles: 0,
-        staleFiles: 0,
-      },
+      cacheStatus: { status: "fresh", cachedFiles: 1, pendingFiles: 0, staleFiles: 0 },
     });
 
     await runGatewayCommand(["usage-cost", "--days", "7"]);
@@ -350,6 +344,9 @@ describe("gateway-cli coverage", () => {
         arch: process.arch,
         node: process.versions.node,
         uptimeMs: 2000,
+        openclawVersion: "2026.4.22-beta.1+fixture",
+        buildId: "2026.4.22-abcdef012345-2026-04-22T12-00-00.000Z",
+        commit: "abcdef0",
       },
       host: { hostname: "test-host" },
       evidence: {
@@ -418,6 +415,9 @@ describe("gateway-cli coverage", () => {
     expect(callGateway).not.toHaveBeenCalled();
     expect(output).toContain("Stability bundle");
     expect(output).toContain("gateway.restart_startup_failed");
+    expect(output).toContain("openclaw=2026.4.22-beta.1+fixture");
+    expect(output).toContain("build=2026.4.22-abcdef012345-2026-04-22T12-00-00.000Z");
+    expect(output).toContain("commit=abcdef0");
     expect(output).toContain("Memory pressure");
     expect(output).toContain("rss_threshold");
     expect(output).toContain("Largest session files");
@@ -431,30 +431,52 @@ describe("gateway-cli coverage", () => {
       name: "gateway diagnostics",
       args: ["diagnostics", "export"],
       timeoutMs: 3000,
+      json: true,
     },
     {
       name: "offline stability",
       args: ["--port", "19097", "stability", "--bundle", "latest", "--export"],
       timeoutMs: 10_000,
+      json: true,
     },
-  ])("writes $name export with a service-owned health snapshot", async ({ args, timeoutMs }) => {
-    callGateway.mockClear();
-    const tempDir = tempDirs.make("openclaw-gateway-cli-support-");
-    const outputPath = path.join(tempDir, "diagnostics.zip");
-    await withEnvAsync(
-      { OPENCLAW_STATE_DIR: tempDir, OPENCLAW_TEST_FILE_LOG: undefined },
-      async () => {
-        await runGatewayCommand([...args, "--output", outputPath, "--json"]);
-      },
-    );
+    {
+      name: "human gateway diagnostics",
+      args: ["diagnostics", "export"],
+      timeoutMs: 3000,
+      json: false,
+    },
+  ])(
+    "writes $name export with a service-owned health snapshot",
+    async ({ args, timeoutMs, json }) => {
+      callGateway.mockClear();
+      const tempDir = tempDirs.make("openclaw-gateway-cli-support-");
+      const outputPath = path.join(tempDir, "diagnostics.zip");
+      await withEnvAsync(
+        { OPENCLAW_STATE_DIR: tempDir, OPENCLAW_TEST_FILE_LOG: undefined },
+        async () => {
+          await runGatewayCommand([...args, "--output", outputPath, ...(json ? ["--json"] : [])]);
+        },
+      );
 
-    expectGatewayCall({ method: "health", timeoutMs, localPortOverride: undefined });
-    expect(fs.existsSync(outputPath)).toBe(true);
-    const output = runtimeLogs.join("\n");
-    expect(output).toContain('"path"');
-    expect(output).toContain("diagnostics.zip");
-    expect(output).toContain('"payloadFree": true');
-  });
+      expectGatewayCall({ method: "health", timeoutMs, localPortOverride: undefined });
+      expect(fs.existsSync(outputPath)).toBe(true);
+      const output = runtimeLogs.join("\n");
+      expect(output).toContain("diagnostics.zip");
+      if (json) {
+        expect(output).toContain('"path"');
+        expect(output).toContain('"payloadFree": true');
+      } else {
+        expect(runtimeLogs).toEqual([
+          "Diagnostics export",
+          `Path: ${outputPath}`,
+          expect.stringMatching(/^Size: /),
+          expect.stringMatching(/^Files: \d+$/),
+          "Privacy: payload-free stability, sanitized logs/status/health/config",
+        ]);
+        expect(defaultRuntime.writeJson).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it("gateway diagnostics export redacts namespaced paths in the ZIP across repeated exports", async () => {
     const stateDir = tempDirs.make("openclaw-gateway-redaction-");

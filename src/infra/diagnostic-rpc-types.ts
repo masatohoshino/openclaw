@@ -9,6 +9,27 @@ type DiagnosticSessionsListRetentionFields = {
   estimatedBytes: number;
 };
 
+/** Process totals for per-connection session-event field-hash vectors. */
+type DiagnosticSessionEventRetentionFields = {
+  type: "sessions.event.retention";
+  entries: number;
+  estimatedBytes: number;
+};
+
+export type SessionEventRowsResetCause =
+  | "close"
+  | "delivery-lost"
+  | "generation"
+  | "evicted"
+  | "projection";
+
+/** Number of retained wire baselines retired by one bounded lifecycle cause. */
+type DiagnosticSessionEventRowsResetFields = {
+  type: "sessions.event.rows.reset";
+  cause: SessionEventRowsResetCause;
+  count: number;
+};
+
 export type SessionsListBaseMissReason = "unknown-base" | "all-rows-changed";
 
 type DiagnosticSessionsListBaselineRetiredFields = {
@@ -38,6 +59,8 @@ type DiagnosticGatewayRpcFields = {
 } & (
   | {
       phase: "received";
+      /** Coarse handshake identity; never a device id, platform, or display name. */
+      clientKind?: "control-ui" | "macos" | "ios" | "android" | "cli" | "node" | "plugin" | "other";
       cronList?: {
         clientKind: GatewayClientId;
         source: "wire" | "internal";
@@ -91,6 +114,8 @@ type DiagnosticGatewayRpcFields = {
     }
 );
 
+export type GatewayWsPresenceMode = "delta" | "reset" | "legacy";
+
 export type GatewayWsSessionEventAttribution = {
   reason: string;
   delivery: "subscribed" | "roster";
@@ -103,7 +128,12 @@ type DiagnosticGatewayWsFields =
       event: string;
       count: number;
       bytes: number;
+      /** Post-codec payload bytes; excludes WebSocket and lower-level headers. */
+      wireBytes?: number;
+      /** Cumulative raw frame counts by fixed upper byte bound, including +Inf. */
+      frameBytes?: Record<string, number>;
       sessionEvent?: GatewayWsSessionEventAttribution;
+      presenceMode?: GatewayWsPresenceMode;
     }
   | { type: "gateway.ws.connections"; operators: number };
 
@@ -111,4 +141,6 @@ export type DiagnosticGatewayFields =
   | DiagnosticGatewayRpcFields
   | DiagnosticGatewayWsFields
   | DiagnosticSessionsListBaselineRetiredFields
-  | DiagnosticSessionsListRetentionFields;
+  | DiagnosticSessionsListRetentionFields
+  | DiagnosticSessionEventRetentionFields
+  | DiagnosticSessionEventRowsResetFields;

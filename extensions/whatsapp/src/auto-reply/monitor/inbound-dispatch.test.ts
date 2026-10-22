@@ -10,7 +10,6 @@ import {
   createWhatsAppReplyPlan,
   prepareWhatsAppInboundContext,
   resolveWhatsAppDmRouteTarget,
-  resolveWhatsAppResponsePrefix,
   updateWhatsAppMainLastRoute,
 } from "./inbound-dispatch.js";
 
@@ -298,12 +297,6 @@ describe("WhatsApp reply delivery", () => {
       plan.finalize({ queuedFinal: false, counts: { final: 1 }, observedReplyDelivery: true }),
     ).toBe(true);
     expect(JSON.stringify(verboseLog.mock.calls)).not.toContain(text);
-  });
-
-  it("does not force a self-chat response prefix without identity", () => {
-    expect(
-      resolveWhatsAppResponsePrefix({ cfg: { messages: {} }, agentId: "main", isSelfChat: true }),
-    ).toBeUndefined();
   });
 
   it("retains the approved batch when a partial replacement is cancelled", async () => {

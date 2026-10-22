@@ -8,7 +8,9 @@ import { createImageLightboxGallery } from "../../../components/image-lightbox-g
 import type { ImageLightboxItem } from "../../../components/image-lightbox.types.ts";
 import { cleanupSolid } from "../../../test-helpers/mount-solid.ts";
 import { mountSolid } from "../../../test-helpers/solid-render.tsx";
+import { waitForSolid } from "../../../test-helpers/solid-settle.ts";
 import { MessageGroup } from "./chat-message-group-view.tsx";
+import { readImageOriginalBlob } from "./chat-message-image-open.ts";
 import { MessageImages, type MessageImagesProps } from "./chat-message-images-solid.tsx";
 import {
   imageResponse,
@@ -114,6 +116,40 @@ function createGallery() {
 }
 
 describe("message image gallery loading", () => {
+  it.each([false, true])("reads full original bytes for managed=%s images", async (managed) => {
+    const source = managed ? managedSource() : "https://images.example.test/original.png";
+    stubObjectUrls();
+    const fetchImage = vi.fn(async () => imageResponse());
+    vi.stubGlobal("fetch", fetchImage);
+
+    const blob = await readImageOriginalBlob(
+      { url: source, mimeType: "image/png" },
+      { mediaOwner: onMediaChange },
+    );
+
+    expect(blob.type).toBe("image/png");
+    expect(await blob.text()).toBe("png");
+    expect(fetchImage).toHaveBeenCalledOnce();
+    expect(fetchImage.mock.calls[0]).toEqual([
+      source,
+      expect.objectContaining(
+        managed
+          ? { method: "GET", credentials: "same-origin", signal: expect.any(AbortSignal) }
+          : { credentials: "same-origin", referrerPolicy: "no-referrer" },
+      ),
+    ]);
+  });
+
+  it("rejects an unsuccessful original image download", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 503 })),
+    );
+    await expect(
+      readImageOriginalBlob({ url: "https://images.example.test/unavailable.png" }),
+    ).rejects.toThrow("Image download failed");
+  });
+
   it("renders canonical inbound transcript images through the authenticated media route", async () => {
     const source = `media://inbound/${crypto.randomUUID()}.png`;
     const filename = "café 雪 🦞.png";
@@ -353,15 +389,17 @@ describe("message attachment image gallery projection", () => {
         { onOpenImage },
       );
 
-      expect(
-        Array.from(
-          container.querySelectorAll(".chat-text strong, .chat-message-image"),
-          (element) =>
-            element instanceof HTMLImageElement
-              ? new URL(element.src).pathname
-              : element.textContent?.replace(/\s+/g, " ").trim(),
-        ),
-      ).toEqual(["Before", "/before.png", "After", "/after.png"]);
+      await waitForSolid(() =>
+        expect(
+          Array.from(
+            container.querySelectorAll(".chat-text strong, .chat-message-image"),
+            (element) =>
+              element instanceof HTMLImageElement
+                ? new URL(element.src).pathname
+                : element.textContent?.replace(/\s+/g, " ").trim(),
+          ),
+        ).toEqual(["Before", "/before.png", "After", "/after.png"]),
+      );
       const text = container.querySelector(".chat-text")?.textContent?.trim() ?? "";
       expect(text.startsWith("Introduction")).toBe(true);
       expect(text.endsWith("Closing paragraph")).toBe(true);
@@ -415,11 +453,16 @@ describe("message attachment image gallery projection", () => {
       }),
       index: 0,
     },
-  ])("projects $name into the gallery", ({ message, index }) => {
+  ])("projects $name into the gallery", async ({ message, index }) => {
     const onOpenImage = vi.fn<(item: ImageLightboxItem) => void>();
     renderMessage(message, "assistant", { onOpenImage });
+    await waitForSolid(() =>
+      expect(container.querySelectorAll(".chat-message-image-button")).toHaveLength(2),
+    );
+    await waitForSolid(() =>
+      expect(container.querySelectorAll(".chat-message-image")).toHaveLength(2),
+    );
     const tiles = container.querySelectorAll<HTMLButtonElement>(".chat-message-image-button");
-    expect(tiles).toHaveLength(2);
     tiles[index]?.click();
     expect(onOpenImage.mock.calls[0]?.[0].gallery).toMatchObject({
       index,

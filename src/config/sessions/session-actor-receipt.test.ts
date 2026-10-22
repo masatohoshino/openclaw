@@ -8,6 +8,12 @@ import type { SessionActorHotState } from "./session-actor-contract.js";
 import { createSessionActorCommittedOutcome } from "./session-actor-receipt.js";
 import { withActor, type Fixture, type Mutation } from "./session-actor-worker.test-support.js";
 
+// mock-isolation: Count real receipt encodings separately from residency/transport work.
+vi.mock("node:v8", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:v8")>();
+  return { ...actual, serialize: vi.fn(actual.serialize) };
+});
+
 // mock-isolation: The fixture owns its database lifetime without background maintenance.
 vi.mock("./session-accessor.sqlite-maintenance-kick.js", () => ({
   kickSessionEntryMaintenanceAfterWrite() {},
@@ -29,6 +35,7 @@ async function append(f: Fixture, eventJson: string, expected?: SessionActorHotS
     },
   };
   await f.prepare(command);
+  vi.mocked(serialize).mockClear();
   const outcome = f.mutate(command);
   assert(outcome.kind === "committed", "Expected transcript append commit");
   return { command, outcome };
@@ -41,8 +48,8 @@ function expectRetry(f: Fixture, command: Mutation) {
   });
 }
 
-it("publishes only newly committed events with exact stored UTF-8 sizes, including noncanonical JSON", async () => {
-  await withActor(async (f) => {
+it("publishes only newly committed events with exact stored UTF-8 sizes, including noncanonical JSON", () =>
+  withActor(async (f) => {
     runSqliteImmediateTransactionSync(f.database.db, () => {
       appendTranscriptEventsInTransaction(f.database, f.scope, [
         {
@@ -78,8 +85,7 @@ it("publishes only newly committed events with exact stored UTF-8 sizes, includi
         commandId: "model-change-retry",
       },
     });
-  });
-});
+  }));
 
 function hot(rawSeq: number, generation = "generation"): SessionActorHotState {
   return {
@@ -157,6 +163,13 @@ it("keeps append receipts independent of retained transcript length", async () =
         data: { content: "x".repeat(6 * 1024) },
       };
       const { command, outcome } = await append(f, JSON.stringify(event));
+      const fullReceiptEncodings = vi
+        .mocked(serialize)
+        .mock.calls.filter(
+          ([value]) =>
+            value?.kind === "committed" && value.receipt?.kind === "session-actor-committed",
+        );
+      expect(fullReceiptEncodings).toHaveLength(1);
       const bytes = serialize(outcome).byteLength;
       receiptBytes.push(bytes);
       expect(bytes).toBeLessThan(16 * 1024);

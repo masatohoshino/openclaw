@@ -30,6 +30,8 @@ import { sessionLog } from "./sessions-shared.js";
 import { sessionSubscriptionHandlers } from "./sessions-subscriptions.js";
 import type { RespondFn } from "./types.js";
 
+const diagnostics = channel("openclaw.session.list");
+
 const reusedRowMetrics = {
   pid: process.pid,
   threadId,
@@ -45,7 +47,6 @@ const reusedRowMetrics = {
 };
 
 function captureDiagnostics(events: unknown[]) {
-  const diagnostics = channel("openclaw.session.list");
   const collect = (event: unknown) => events.push(event);
   diagnostics.subscribe(collect);
   return { [Symbol.dispose]: () => diagnostics.unsubscribe(collect) };
@@ -92,8 +93,9 @@ async function prepareListFixture() {
   const client = identifiedClient("owner@example.com");
   await initializeSessionReadContext(context);
   const projection = getSessionRowProjection(context)!;
-  await projection.ensureMaterialized();
   const request = { agentId: "main", limit: 1 };
+  // Reuse metrics require actual display demand, not only catalog readiness.
+  await listSessions({ context, client, request });
   return { context, client, projection, list: () => listSessions({ context, client, request }) };
 }
 
@@ -130,20 +132,24 @@ function controlProjectionClock(afterRow?: () => void) {
     try {
       const recipient = prepare(...args);
       return (...viewer) => {
-        const presentation = recipient(...viewer);
+        const prepared = recipient(...viewer);
+        const presentation = prepared.getPresentation();
         return {
-          ...presentation,
-          snapshot(...rowArgs: Parameters<typeof presentation.snapshot>) {
-            try {
-              return presentation.snapshot(...rowArgs);
-            } finally {
-              presented();
-              clock += 20;
-              cpu.user += 750;
-              cpu.system += 250;
-              afterRow?.();
-            }
-          },
+          ...prepared,
+          getPresentation: () => ({
+            ...presentation,
+            snapshot(...rowArgs: Parameters<typeof presentation.snapshot>) {
+              try {
+                return presentation.snapshot(...rowArgs);
+              } finally {
+                presented();
+                clock += 20;
+                cpu.user += 750;
+                cpu.system += 250;
+                afterRow?.();
+              }
+            },
+          }),
         };
       };
     } finally {

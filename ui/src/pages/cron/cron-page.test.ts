@@ -11,6 +11,8 @@ import { waitForCronPage as waitFor } from "./cron-page.test-support.tsx";
 import { cronRpc, mountCronPage, emitEvent } from "./cron-rpc.test-support.ts";
 import {
   createCronViewJob,
+  createCronViewRun,
+  cronRunsResponse,
   getButtonByText,
   openCronMenu,
   scheduledJob,
@@ -25,13 +27,7 @@ function settle() {
 }
 
 function runPage(jobId: string, ts: number, summary: string) {
-  return {
-    entries: [{ ts, jobId, action: "finished", status: "ok", summary }],
-    total: 1,
-    offset: 0,
-    hasMore: false,
-    nextOffset: null,
-  };
+  return { ...cronRunsResponse([createCronViewRun({ jobId, ts, summary })]), nextOffset: null };
 }
 
 function pacedJob(id: string, overrides: Partial<CronJob> = {}) {
@@ -64,6 +60,33 @@ async function chooseOneTime(page: ReturnType<typeof harness.createPage>) {
 afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
+});
+
+it("allows offline drafting but disables submission without a live connection", async () => {
+  const request = harness.createRequest();
+  const gateway = harness.createGateway({ request } as unknown as GatewayBrowserClient, false);
+  gateway.emitSnapshot({
+    phase: "reconnecting",
+    hello: harness.operatorHello(["operator.admin"]),
+  });
+  const page = harness.createPage(harness.createContext(gateway), { render: true });
+  try {
+    (await dom.waitForElement(page, dom.testId("cron-new-task"))).click();
+    await page.settle();
+    page.patchForm({ name: "Offline draft", payloadText: "Review the garden" });
+    await page.settle();
+    expect(page.cron.cronFieldErrors).toEqual({});
+    expect(page.querySelector<HTMLInputElement>("#cron-name")!.matches(":disabled")).toBe(false);
+    for (const id of ["cron-submit", "cron-submit-run"]) {
+      const button = page.querySelector<HTMLButtonElement>(dom.testId(id))!;
+      expect(button.disabled, id).toBe(true);
+      button.click();
+    }
+    expect(request).not.toHaveBeenCalledWith("cron.add", expect.anything());
+    expect(page.cron.cronForm.name).toBe("Offline draft");
+  } finally {
+    page.remove();
+  }
 });
 
 it("does not treat an accepted edit as completion of a newer clone", async () => {
@@ -166,13 +189,8 @@ it.each([1, 2])("scopes %i attached jobs and opens a sole match", async (count) 
 });
 it.each(["visible", "later page"])("opens linked history for a job on %s", async (placement) => {
   const job = scheduledJob("linked-job", { agentId: "main", name: "Linked automation" });
-  const entry = (runId: string, ts: number, summary: string) => ({
-    runId,
-    ts,
-    summary,
-    jobId: job.id,
-    action: "finished",
-  });
+  const entry = (runId: string, ts: number, summary: string) =>
+    createCronViewRun({ runId, ts, summary, jobId: job.id, status: undefined });
   const jobs = createDeferred<CronJobsListResult>();
   const request = cronRpc(
     {
@@ -190,7 +208,7 @@ it.each(["visible", "later page"])("opens linked history for a job on %s", async
             : filter.runId
               ? [entry("cron:linked-job:1", 1, "Linked run")]
               : Array.from({ length: 50 }, (_, i) => entry(`recent-${i}`, i + 2, "Recent run"));
-        return { entries, total: entries.length, offset: 0, hasMore: false };
+        return cronRunsResponse(entries);
       },
       "models.list": () => ({ models: [] }),
     },
@@ -234,7 +252,6 @@ it.each(["visible", "later page"])("opens linked history for a job on %s", async
       id: job.id,
       runId: "cron:linked-job:1",
       query: undefined,
-      status: "all",
       statuses: undefined,
       deliveryStatuses: undefined,
     }),
@@ -318,9 +335,9 @@ it("clears a failed job link when opening another link", async () => {
   expect(page.textContent).not.toContain("Automation no longer exists");
 });
 
-it("drops pending heartbeat scratch when admin access is removed", async () => {
-  const job = createCronViewJob("heartbeat-job", {
-    payload: { kind: "heartbeat" },
+it("drops pending automation scratch when admin access is removed", async () => {
+  const job = createCronViewJob("migrated-job", {
+    payload: { kind: "agentTurn", message: "Review the checklist" },
     sessionTarget: "main",
   });
   const scratch = createDeferred<object>();
@@ -335,6 +352,9 @@ it("drops pending heartbeat scratch when admin access is removed", async () => {
   const row = `[data-test-id="cron-row-${job.id}"]`;
   await dom.waitForElement(page, row);
   dom.click(page, `${row} .cron-table__name-text`);
+  await dom.waitForElement(page, "openclaw-cron-scratch-editor");
+  expect(dom.callsFor(request, "cron.scratch.get")).toHaveLength(0);
+  getButtonByText(page, "Load scratch").click();
   await waitFor(() => expect(dom.callsFor(request, "cron.scratch.get")).toHaveLength(1));
   gateway.emitSnapshot({ hello: harness.operatorHello(["operator.read"]) });
   await page.settle();
@@ -345,7 +365,9 @@ it("drops pending heartbeat scratch when admin access is removed", async () => {
   });
   await settle();
   await page.settle();
-  expect(page.cron.cronForm.payloadText).toBe("");
+  expect(page.cron.cronForm.payloadText).toBe("Review the checklist");
+  expect(page.textContent).not.toContain("private checklist");
+  expect(page.querySelector("openclaw-cron-scratch-editor")).toBeNull();
 });
 
 it.each(["operator.write", "operator.read"])(
@@ -358,7 +380,7 @@ it.each(["operator.write", "operator.read"])(
     const request = cronRpc(
       {
         "cron.list": () => harness.cronListResponse([job]),
-        "cron.runs": () => ({ entries: [], total: 0, offset: 0, hasMore: false }),
+        "cron.runs": () => cronRunsResponse(),
         "models.list": () => ({ models: [] }),
       },
       () => ({}),
@@ -465,7 +487,7 @@ it.each([
         },
         "cron.list": () => harness.cronListResponse([]),
         "cron.get": () => selected,
-        "cron.runs": () => ({ entries: [], total: 0, offset: 0, hasMore: false }),
+        "cron.runs": () => cronRunsResponse(),
         "cron.run": () => ({ ok: true, enqueued: true, runId: "run-fresh" }),
         "models.list": () => ({ models: [] }),
       },
@@ -626,7 +648,7 @@ it("syncs form enabled after header pause and resets runs scope after remove", a
         removeRequested.resolve();
         return {};
       },
-      "cron.runs": () => ({ entries: [], total: 0, offset: 0, hasMore: false }),
+      "cron.runs": () => cronRunsResponse(),
       "models.list": () => ({ models: [] }),
     },
     () => ({}),
