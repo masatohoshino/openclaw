@@ -10,6 +10,7 @@ import { finalizeCronPromptForResolvedTools } from "../../cron/isolated-agent/ru
 import { resolveCronSourceDeliveryPlan } from "../../cron/isolated-agent/source-delivery-plan.js";
 import * as cronInference from "../../cron/run-inference.js";
 import type { CronAgentExecutionPhaseUpdate } from "../../cron/types.js";
+import { resolveMessageActionTurnAuthorization } from "../../gateway/message-action-turn-capability.js";
 import { onAgentEvent, type AgentEventPayload } from "../../infra/agent-events.js";
 import {
   consumeCronNextCheckProposal,
@@ -127,6 +128,35 @@ describe("ordinary session event execution", () => {
         includeReasoning: true,
       },
     });
+  });
+
+  it("binds the scheduled message capability to the runtime policy session", async () => {
+    const runId = "scheduled-policy-session";
+    const policySessionKey = "agent:main:irc:default:direct:alice";
+    const automation = createScheduledAutomation();
+    automation.deliveryAttemptFence = { beforeAttempt: async () => {}, assertCurrent: vi.fn() };
+    const followupRun = createFollowupRun();
+    followupRun.run.scheduledAutomation = automation;
+    let capability: ReturnType<typeof resolveMessageActionTurnAuthorization>;
+    state.runEmbeddedAgentMock.mockImplementationOnce(async (run) => {
+      capability = resolveMessageActionTurnAuthorization({
+        token: run.messageActionTurnCapability,
+        agentId: "main",
+        runId,
+        sessionKey: policySessionKey,
+        sessionId: "session",
+      });
+      return { payloads: [{ text: "done" }], meta: {} };
+    });
+    const { replyOperation } = createMockReplyOperation();
+
+    const result = await executeAgentTurn({
+      ...createMinimalRunAgentTurnParams({ followupRun, replyOperation, opts: { runId } }),
+      runtimePolicySessionKey: policySessionKey,
+    });
+
+    expect(result.outcome).toMatchObject({ kind: "settled", status: "ok" });
+    expect(capability?.deliveryAttempt).toBeDefined();
   });
 
   it.each(["embedded", "cli"] as const)(
