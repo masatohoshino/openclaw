@@ -14,6 +14,7 @@ type ProjectCatalogSnapshot = {
 export type ProjectCatalog = {
   readonly snapshot: ProjectCatalogSnapshot;
   readonly loading: boolean;
+  readonly pendingRead: Promise<void> | null;
   subscribe: (listener: () => void) => () => void;
   refresh: (invalidate?: boolean) => Promise<void>;
 };
@@ -73,7 +74,6 @@ function projectGitHubRepositories(
   });
 }
 
-/** One authorized registered-project read shared by New Session and cold chat. */
 export function projectsForGateway(gateway: ApplicationGateway): ProjectCatalog {
   const existing = catalogs.get(gateway);
   if (existing) {
@@ -167,6 +167,7 @@ export function projectsForGateway(gateway: ApplicationGateway): ProjectCatalog 
         }
       });
     pending = request;
+    notify();
     return request;
   };
   const catalog: ProjectCatalog = {
@@ -179,10 +180,14 @@ export function projectsForGateway(gateway: ApplicationGateway): ProjectCatalog 
     get loading() {
       return pending !== null;
     },
+    get pendingRead() {
+      return pending;
+    },
     refresh,
     subscribe(listener) {
       listeners.add(listener);
       if (!unsubscribe) {
+        // Gateway receipts refresh the shared authorized project catalog for New Session and cold chat.
         const unsubscribeGateway = gateway.subscribe(() => {
           if (synchronize()) {
             notify();

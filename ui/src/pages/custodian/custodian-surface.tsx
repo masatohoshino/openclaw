@@ -1,5 +1,5 @@
 import type { JSX } from "@solidjs/web";
-import { createEffect, createMemo, For, onCleanup, onSettled, Show } from "solid-js";
+import { createEffect, createMemo, Errored, For, Loading, onSettled, Show } from "solid-js";
 import { SYSTEM_AGENT_ID } from "../../../../src/system-agent/agent-id.js";
 import { MarkdownBlocks } from "../../components/markdown-blocks-owner.ts";
 import { handleMarkdownCodeBlockClick } from "../../components/markdown-code-blocks.ts";
@@ -17,7 +17,9 @@ import { resolveMessageVisibleContent } from "../../lib/chat/message-visibility.
 import { formatUiExternalText } from "../../lib/format-error.ts";
 import { useApplication } from "../../lib/reactive/context.ts";
 import { t } from "../../lib/reactive/i18n.ts";
+import { createPendingFocus } from "../../lib/reactive/pending-focus.ts";
 import { projectOwner } from "../../lib/reactive/projection.ts";
+import { createScrollPosition } from "../../lib/reactive/scroll-state.ts";
 import { defineSolidBridge, type SolidBridgeElement } from "../../lib/solid-bridge.ts";
 import "../../styles/chat/startup-layout.css";
 import "../../styles/chat/grouped.css";
@@ -38,7 +40,8 @@ import { ChatDivider } from "../chat/components/chat-divider.tsx";
 import { MessageGroup } from "../chat/components/chat-message-group-view.tsx";
 import { CustodianAlertCard } from "./custodian-alert-card.tsx";
 import { custodianAlertStore } from "./custodian-alert-store.ts";
-import { CustodianChannelOnboardingNudge, CustodianEventNudgeView } from "./custodian-nudge.tsx";
+import type { SetupAutoCandidate } from "./custodian-auto-setup.ts";
+import { CustodianEventNudgeView } from "./custodian-nudge.tsx";
 import { custodianSessionStore, type CustodianSessionStore } from "./custodian-session-store.ts";
 import { CustodianSetupCard } from "./custodian-setup-card.tsx";
 import {
@@ -167,10 +170,9 @@ export type CustodianSurfaceProps = {
   store: CustodianSessionStore;
   onboarding: boolean;
   newAgentIntent: boolean;
-  showChannelOnboardingNudge: boolean;
-  channelOnboardingError: string | null;
-  channelOnboardingRetrying: boolean;
-  onRetryChannelOnboarding: () => void;
+  channelOnboardingContent: JSX.Element;
+  activating: boolean;
+  onActivate?: (candidate: SetupAutoCandidate) => void;
   compact: boolean;
   historyContent: JSX.Element;
 };
@@ -183,6 +185,16 @@ function CustodianSurfaceView(props: CustodianSurfaceProps, host: CustodianSurfa
   const projection = createMemo(() => projectOwner(props.store, (store) => store));
   const alerts = projectOwner(custodianAlertStore, (store) => store.alert);
   const store = () => projection().read();
+  const transcriptStatus = createMemo(() => {
+    const transcript = store().transcript;
+    const completion = transcript.completion ?? Promise.resolve(transcript.status);
+    return completion.then((status) => {
+      if (status.error) {
+        throw new Error(status.error);
+      }
+      return status;
+    });
+  });
   const currentAlert = createMemo(() => {
     // Alert admission derives from the session's current authority as well as the alert store.
     projection().revision();
@@ -210,6 +222,10 @@ function CustodianSurfaceView(props: CustodianSurfaceProps, host: CustodianSurfa
     return () => {
       inputChanges.delete(host);
       queued = false;
+      if (textarea) {
+        disconnectTextareaOverflowObserver(textarea);
+      }
+      markdown?.dispose();
     };
   });
   const plugin = () => {
@@ -240,16 +256,14 @@ function CustodianSurfaceView(props: CustodianSurfaceProps, host: CustodianSurfa
   let textareaNode: HTMLTextAreaElement | null = null;
   let transcriptNode: HTMLDivElement | null = null;
   let markdown: MarkdownBlocks | undefined;
-  let lastMessageId: number | null = null;
   let lastPluginHelpFocus = 0;
-  // Keep textarea sizing, Markdown observers, focus, and scroll aligned with committed DOM.
+  // The composer and Markdown owners require committed nodes; alerts retain send admission.
   createEffect(
     () => ({
       source: store(),
       alert: alerts.read(),
-      focusRequest: pluginHelpFocusRequest(context),
     }),
-    ({ source, focusRequest }) => {
+    ({ source }) => {
       const nextTextarea = host.contains(textareaNode) ? textareaNode : null;
       if (textarea && textarea !== nextTextarea) {
         disconnectTextareaOverflowObserver(textarea);
@@ -271,31 +285,37 @@ function CustodianSurfaceView(props: CustodianSurfaceProps, host: CustodianSurfa
           (question, admission, display) => void source.send(question, display, false, admission),
         );
       }
-      if (
-        focusRequest > 0 &&
-        focusRequest !== lastPluginHelpFocus &&
-        !source.sensitive &&
-        !source.wizardInputPending &&
-        source.chatAvailable
-      ) {
-        lastPluginHelpFocus = focusRequest;
-        textarea?.focus();
-      }
-      const messageId = source.messages.at(-1)?.id ?? null;
-      if (messageId !== lastMessageId) {
-        lastMessageId = messageId;
-        const lastMessage = transcript?.lastElementChild;
-        if (lastMessage instanceof HTMLElement) {
-          lastMessage.scrollIntoView?.({ block: "nearest" });
-        }
-      }
     },
   );
-  onCleanup(() => {
-    if (textarea) {
-      disconnectTextareaOverflowObserver(textarea);
-    }
-    markdown?.dispose();
+  createPendingFocus(() => ({ source: store(), request: pluginHelpFocusRequest(context) }), {
+    requested: ({ request }) => request > 0 && request !== lastPluginHelpFocus,
+    ready: ({ source }) => !source.sensitive && !source.wizardInputPending && source.chatAvailable,
+    focus: ({ request }) => {
+      lastPluginHelpFocus = request;
+      if (host.contains(textareaNode)) {
+        textareaNode?.focus();
+      }
+    },
+  });
+  let revealedMessages = false;
+  createScrollPosition(() => {
+    const initialMessageId = store().messages.at(-1)?.id ?? null;
+    return {
+      reveal: {
+        identity: [initialMessageId],
+        target: () => {
+          // Initial empty chrome does not reveal; clearing an existing transcript still does.
+          if (initialMessageId === null && !revealedMessages) {
+            return undefined;
+          }
+          revealedMessages = true;
+          const lastMessage = host.contains(transcriptNode)
+            ? transcriptNode?.lastElementChild
+            : undefined;
+          return lastMessage instanceof HTMLElement ? lastMessage : undefined;
+        },
+      },
+    };
   });
   const handleKeydown = (event: KeyboardEvent) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
@@ -317,8 +337,25 @@ function CustodianSurfaceView(props: CustodianSurfaceProps, host: CustodianSurfa
   );
   const setupCard = () => (
     <Show when={props.onboarding}>
-      <CustodianSetupCard store={store()} />
+      <CustodianSetupCard
+        store={store()}
+        activating={props.activating}
+        onActivate={(candidate) => {
+          if (props.onActivate) {
+            props.onActivate(candidate);
+          } else {
+            void store().autoSetup.activate(candidate);
+          }
+        }}
+      />
     </Show>
+  );
+  const transcriptNotice = (status: CustodianSessionStore["transcript"]["status"]) => (
+    <PanelRefreshStatus
+      status={status}
+      // oxlint-disable-next-line solid/no-react-specific-props -- Shared status component names its CSS class prop className.
+      className="custodian__transcript-status"
+    />
   );
   return (
     <Show
@@ -372,18 +409,7 @@ function CustodianSurfaceView(props: CustodianSurfaceProps, host: CustodianSurfa
         >
           {setupCard()}
           {alertCard()}
-          <Show when={props.channelOnboardingError || props.showChannelOnboardingNudge}>
-            <CustodianChannelOnboardingNudge
-              error={Boolean(props.channelOnboardingError)}
-              retrying={props.channelOnboardingRetrying}
-              onAction={() =>
-                props.channelOnboardingError
-                  ? props.onRetryChannelOnboarding()
-                  : store().openChannelsFromOnboarding()
-              }
-              onDismiss={() => store().dismissChannelOnboardingNudge()}
-            />
-          </Show>
+          {props.channelOnboardingContent}
           <Show when={!props.onboarding && !store().eventNudgePending ? store().eventNudge : null}>
             {(nudge) => (
               <CustodianEventNudgeView
@@ -457,11 +483,14 @@ function CustodianSurfaceView(props: CustodianSurfaceProps, host: CustodianSurfa
               <span>{t("custodian.connectionChanged")}</span>
             </div>
           </Show>
-          <PanelRefreshStatus
-            status={store().transcript.status}
-            // oxlint-disable-next-line solid/no-react-specific-props -- Shared status component names its CSS class prop className.
-            className="custodian__transcript-status"
-          />
+          <Loading
+            on={store().transcript.completion}
+            fallback={transcriptNotice(store().transcript.status)}
+          >
+            <Errored fallback={(_error) => transcriptNotice(store().transcript.status)}>
+              {transcriptNotice(transcriptStatus())}
+            </Errored>
+          </Loading>
           <Show
             when={
               store().error &&
@@ -564,10 +593,9 @@ export const CustodianSurface = defineSolidBridge<CustodianSurfaceProps>(
       store: { default: custodianSessionStore, attribute: false },
       onboarding: { default: false, attribute: false },
       newAgentIntent: { default: false, attribute: false },
-      showChannelOnboardingNudge: { default: false, attribute: false },
-      channelOnboardingError: { default: null, attribute: false },
-      channelOnboardingRetrying: { default: false, attribute: false },
-      onRetryChannelOnboarding: { default: () => undefined, attribute: false },
+      channelOnboardingContent: { default: undefined, attribute: false },
+      activating: { default: false, attribute: false },
+      onActivate: { default: undefined, attribute: false },
       compact: { default: false, attribute: false },
       historyContent: { default: undefined, attribute: false },
     },

@@ -5,8 +5,8 @@ import { WizardStepControls } from "../../components/wizard-step-controls.tsx";
 import { formatUiExternalText } from "../../lib/format-error.ts";
 import { useApplication } from "../../lib/reactive/context.ts";
 import { t } from "../../lib/reactive/i18n.ts";
-import { projectOwner, projectSource } from "../../lib/reactive/projection.ts";
-import type { CustodianAutoSetup } from "./custodian-auto-setup.ts";
+import { projectOwner } from "../../lib/reactive/projection.ts";
+import type { CustodianAutoSetup, SetupAutoCandidate } from "./custodian-auto-setup.ts";
 import type { CustodianSessionStore } from "./custodian-session-store.ts";
 import "../../styles/custodian-setup-card.css";
 
@@ -73,21 +73,23 @@ function SignInWizard(props: { setup: () => CustodianAutoSetup }) {
   );
 }
 
-export function CustodianSetupCard(props: { store: CustodianSessionStore }) {
+export function CustodianSetupCard(props: {
+  store: CustodianSessionStore;
+  activating: boolean;
+  onActivate: (candidate: SetupAutoCandidate) => void;
+}) {
   const context = useApplication();
   const source = createMemo(() => props.store);
   const projection = createMemo(() => projectOwner(source(), (store) => store.autoSetup));
   const setup = () => projection().read();
   const result = () => setup().result;
-  const native = projectSource(context.nativeDeviceSettings, {
-    read: () => nativeSetupCapability(context),
-    // The projection owns optional native-settings observation for setup capabilities.
-    subscribe: (settings, notify) => settings?.subscribe(notify) ?? (() => {}),
-    equality: "revision",
-  }).read;
+  const native = context.nativeDeviceSettings
+    ? projectOwner(context.nativeDeviceSettings, () => nativeSetupCapability(context)).read
+    : () => nativeSetupCapability(context);
   const busy = () => {
     const current = setup();
     return (
+      props.activating ||
       current.pending ||
       current.wizard.state.phase === "starting" ||
       current.wizard.state.phase === "step"
@@ -202,7 +204,7 @@ export function CustodianSetupCard(props: { store: CustodianSessionStore }) {
                       type="button"
                       title={candidate.detail}
                       disabled={busy()}
-                      onClick={() => void setup().activate(candidate)}
+                      onClick={() => props.onActivate(candidate)}
                     >
                       {candidate.label}
                     </button>
