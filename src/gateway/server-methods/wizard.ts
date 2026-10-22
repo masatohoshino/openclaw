@@ -18,7 +18,7 @@ import {
   WizardSession,
   type WizardStep,
 } from "../../wizard/session.js";
-import type { SetupWizardOptions } from "../../wizard/setup.js";
+import type { SetupWizardOptions } from "../../wizard/setup.types.js";
 import { retainGatewayDeviceRevocation } from "../device-revocation.js";
 import { canAccessWizardSession } from "../server-wizard-sessions.js";
 import { formatForLog } from "../ws-log.js";
