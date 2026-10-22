@@ -15,6 +15,25 @@ export type GatewayTestResponseFrame = {
   error?: { code?: string; message?: string } & Record<string, unknown>;
 };
 
+export const dispatchProfile = (
+  profileId: string,
+  overrides: Partial<NonNullable<GatewayWsClient["authenticatedUserProfile"]>> = {},
+) => ({
+  profileId,
+  displayName: null,
+  avatarRevision: "1",
+  hasAvatar: false,
+  updatedAt: 1,
+  ...overrides,
+});
+
+export const requestFrame = (id: string, method: string, params: unknown = {}) => ({
+  type: "req",
+  id,
+  method,
+  params,
+});
+
 export function createOperatorWsClient(
   overrides: {
     connId?: string;
@@ -108,8 +127,19 @@ export function createDispatchTestHarness(
     awaitResponseFrame,
     close,
     dispatcher: {
-      dispatch: (frame: unknown, client: GatewayWsClient) =>
-        dispatcher.dispatch(frame, client, Buffer.byteLength(JSON.stringify(frame))),
+      dispatch: (
+        frame: unknown,
+        client: GatewayWsClient,
+        admission?: "continuation",
+        sendResponse?: GatewayWsMessageHandlerParams["send"],
+      ) =>
+        dispatcher.dispatch(
+          frame,
+          client,
+          Buffer.byteLength(JSON.stringify(frame)),
+          admission,
+          sendResponse,
+        ),
     },
     logGateway,
     send,

@@ -24,10 +24,10 @@ import {
 } from "../components/panel-toggle-contract.ts";
 import { focusWithoutTooltip } from "../components/tooltip.ts";
 import type { BoardFace } from "../lib/board/settings.ts";
-import { canCallGatewayMethod } from "../lib/gateway-methods.ts";
 import {
   KEYBOARD_SHORTCUT_COMBOS,
   matchesShortcutCombo,
+  resolveNewSessionShortcut,
 } from "../lib/keyboard-shortcut-contract.ts";
 import { listen } from "../lib/reactive/listener.ts";
 import { isTerminalAvailable } from "../lib/terminal-availability.ts";
@@ -74,15 +74,16 @@ import {
   navDrawerFocusableElements,
   visibleNavDrawerToggle,
   type ShellNavigationElements,
+  type ShellNavigationSurfaces,
 } from "./navigation-surface.ts";
-import { isHomePanelAvailable } from "./panel-availability.ts";
+import { isCustodianPanelAvailable, isHomePanelAvailable } from "./panel-availability.ts";
 import { NAV_WIDTH_MAX, NAV_WIDTH_MIN } from "./settings.ts";
 import { retryStaleChunkReloadWhenReachable } from "./stale-chunk-reload.ts";
 
 let nativeCommandsOwner: (() => void)[] | undefined;
 
 export interface ShellChromeHost
-  extends ShellNewSessionHost, ShellPanelHost, ShellNavigationElements {
+  extends ShellNewSessionHost, ShellPanelHost, ShellNavigationElements, ShellNavigationSurfaces {
   readonly elements: ShellOwnedElements;
   readonly element: HTMLElement;
   readonly isConnected: boolean;
@@ -91,7 +92,6 @@ export interface ShellChromeHost
   readonly commandPaletteElement: OptionalCustomElement;
   readonly execApprovalElement: OptionalCustomElement;
   readonly queryRenderedElement: (tagName: string) => Element | null;
-  readonly navigationSidebar: HTMLElement;
   navDrawerOpen: boolean;
   desktopNavigationExpanded: boolean;
   navDrawerTrigger: HTMLElement | null;
@@ -128,6 +128,8 @@ export class ShellChromeOwner {
 
   connect(): void {
     this.disconnect();
+    // A replacement shell can be constructed before the old context retires its intent.
+    this.pendingLazyAction = readLazyShellAction();
     const host = this.host;
     host.setNativeHistoryState(readNativeHistoryState());
     this.listeners = [
@@ -203,7 +205,7 @@ export class ShellChromeOwner {
         host.closeNavDrawer({ restoreFocus: true });
         return;
       }
-      host.navDrawerTrigger = trigger ?? visibleNavDrawerToggle(host.element) ?? null;
+      host.navDrawerTrigger = trigger ?? visibleNavDrawerToggle(host) ?? null;
       host.navDrawerOpen = true;
       setToastInNavDrawer(host, true);
       void host.updateComplete.then(() => {
@@ -227,16 +229,31 @@ export class ShellChromeOwner {
     if (nextNavCollapsed) {
       this.dismissSidebarTransientMenus();
     }
-    // The sidebar owns its rail button markup and exposes no focused-button handle.
-    const activeRailView = host.navigationSidebar.querySelector<HTMLElement>(
-      '[data-navigation-view][aria-pressed="true"]',
-    );
+    const activeRailView = host.navigationSidebar.activeNavigationViewElement?.();
     host.closeNavDrawer();
     context.navigation.update({ navCollapsed: nextNavCollapsed });
     if (nextNavCollapsed) {
       void host.updateComplete.then(() => this.restoreFocusTo(activeRailView));
     }
   };
+
+  private finishNavigationMotion(): void {
+    // Finish only this invocation's navigation transitions after the DOM commit,
+    // before paint. CSS remains unchanged for the next click or reduced motion.
+    void this.host.updateComplete.then(() => {
+      const { shellElement, navDrawerElement, navBackdropElement } = this.host;
+      for (const element of [shellElement, navDrawerElement, navBackdropElement]) {
+        for (const animation of element?.getAnimations() ?? []) {
+          if (
+            animation instanceof CSSTransition &&
+            (element !== shellElement || animation.transitionProperty === "grid-template-columns")
+          ) {
+            animation.finish();
+          }
+        }
+      }
+    });
+  }
 
   /** Restore to the persistent rail view, or content when navigation is unavailable. */
   restoreFocusTo = (target: HTMLElement | null | undefined): void =>
@@ -340,7 +357,7 @@ export class ShellChromeOwner {
     host.invalidate();
     void host.updateComplete.then(() => {
       if (isMobileNavLayout() && !host.navDrawerOpen && dismissedSidebarMenus) {
-        requestAnimationFrame(() => this.restoreFocusTo(visibleNavDrawerToggle(host.element)));
+        requestAnimationFrame(() => this.restoreFocusTo(visibleNavDrawerToggle(host)));
       }
     });
   };
@@ -366,8 +383,7 @@ export class ShellChromeOwner {
     }
   };
 
-  dismissSidebarTransientMenus = (): boolean =>
-    dismissNavigationTransientSurfaces(this.host.element);
+  dismissSidebarTransientMenus = (): boolean => dismissNavigationTransientSurfaces(this.host);
 
   private readonly handleDocumentKeydownBubble = (event: KeyboardEvent): void => {
     const host = this.host;
@@ -393,22 +409,24 @@ export class ShellChromeOwner {
       shouldCloseDebugOverlay(
         event,
         this.pendingDebugOverlayMode,
-        // Pending debug content owns this frame while its custom element loads.
-        host.element.querySelector(".debug-overlay"),
+        host.elements.pendingDebugOverlayFrame ?? null,
       )
     ) {
       event.preventDefault();
       host.lazyCustomElements.close();
       return;
     }
-    if (this.palette.handlePendingShortcut(event)) {
-      return;
-    }
-    if (document.openClawModalLayers?.size) {
+    if (this.palette.handlePendingShortcut(event) || document.openClawModalLayers?.size) {
       return;
     }
     if (host.navDrawerOpen && isMobileNavLayout()) {
+      const togglesSidebar =
+        !event.defaultPrevented &&
+        matchesShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.toggleSidebar, event);
       handleNavDrawerKeydown(host, event);
+      if (togglesSidebar) {
+        this.finishNavigationMotion();
+      }
       return;
     }
     // A replaced workspace can retain its palette ref after the DOM is detached.
@@ -441,7 +459,7 @@ export class ShellChromeOwner {
     if (event.defaultPrevented) {
       return;
     }
-    if (matchesShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.newSession, event)) {
+    if (matchesShortcutCombo(resolveNewSessionShortcut(), event)) {
       if (!event.repeat && openShellNewSession(this.host, "shortcut")) {
         event.preventDefault();
       }
@@ -464,22 +482,6 @@ export class ShellChromeOwner {
       window.dispatchEvent(new CustomEvent(DEBUG_OVERLAY_REQUEST_EVENT));
       return;
     }
-    if (
-      matchesShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.escape, event) &&
-      isSettingsTakeover(host.routeState.routeId)
-    ) {
-      if (host.navDrawerOpen && !this.shouldIgnoreSettingsEscape(event)) {
-        event.preventDefault();
-        host.closeNavDrawer({ restoreFocus: true });
-        return;
-      }
-      if (event.eventPhase === Event.CAPTURING_PHASE || this.shouldIgnoreSettingsEscape(event)) {
-        return;
-      }
-      event.preventDefault();
-      host.exitSettings();
-      return;
-    }
     if (matchesShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.appearanceSettings, event)) {
       event.preventDefault();
       host.navigate("appearance");
@@ -488,6 +490,7 @@ export class ShellChromeOwner {
     if (matchesShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.toggleSidebar, event)) {
       event.preventDefault();
       this.toggleNavigationSurface();
+      this.finishNavigationMotion();
     }
   };
 
@@ -556,11 +559,7 @@ export class ShellChromeOwner {
       return;
     }
     const home = event.type === HOME_PANEL_TOGGLE_EVENT;
-    if (
-      home
-        ? !isHomePanelAvailable(host.context?.gateway)
-        : !canCallGatewayMethod(host.context?.gateway.snapshot, "openclaw.chat", "operator.admin")
-    ) {
+    if (!(home ? isHomePanelAvailable : isCustodianPanelAvailable)(host.context?.gateway)) {
       event.preventDefault();
       return;
     }

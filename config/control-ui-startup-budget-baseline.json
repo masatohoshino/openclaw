@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 337669,
-  "reason": "Combined protocol, Cron, and New Session deferrals measured 337669 B startup; retain the reduced baseline.",
-  "updatedAt": "2026-10-17"
+  "startupJsGzipBytes": 325081,
+  "reason": "Solid 2 action/optimistic runtime adoption, W-SOLID2-RECIPES; offset tracked by HF-STARTUP-BUDGET",
+  "updatedAt": "2026-10-21"
 }

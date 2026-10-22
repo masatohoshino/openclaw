@@ -16,7 +16,6 @@ import { normalizeMessagesForLlmBoundary } from "./run/attempt-llm-boundary.js";
 import { MidTurnPrecheckSignal } from "./run/midturn-precheck.js";
 import { checkMidTurnPrecheck } from "./run/preemptive-compaction.js";
 import {
-  createMessageCharEstimateCache,
   estimateMessageCharsCached,
   getToolResultText as getAllToolResultText,
 } from "./tool-result-char-estimator.js";
@@ -193,7 +192,7 @@ describe("installToolResultContextGuard", () => {
     );
     expect(projected).not.toHaveProperty("details");
     expect(
-      estimateMessageCharsCached(projected, createMessageCharEstimateCache()),
+      estimateMessageCharsCached(projected, new WeakMap<AgentMessage, number>()),
     ).toBeLessThanOrEqual(contextWindowTokens);
     expect(getAllToolResultText(projected)).toContain(CONTEXT_LIMIT_TRUNCATION_NOTICE);
     expect(getAllToolResultText(projected)).toContain(diagnostic);
@@ -222,7 +221,7 @@ describe("installToolResultContextGuard", () => {
       throw new Error("expected a tool result");
     }
     expect(
-      estimateMessageCharsCached(projected, createMessageCharEstimateCache()),
+      estimateMessageCharsCached(projected, new WeakMap<AgentMessage, number>()),
     ).toBeLessThanOrEqual(8_192);
     expect(source).toEqual(original);
     expect(projected).not.toHaveProperty("details");
@@ -504,10 +503,11 @@ describe("installContextEngineLoopHook", () => {
     "ingests only new messages when afterTurn is absent (batch: %s)",
     async (batch) => {
       const engine = makeEngine();
-      const { run } = hook(
-        { ...engine, afterTurn: undefined, ingestBatch: batch ? engine.ingestBatch : undefined },
-        { isHeartbeat: true },
-      );
+      const { run } = hook({
+        ...engine,
+        afterTurn: undefined,
+        ingestBatch: batch ? engine.ingestBatch : undefined,
+      });
       const first = [makeUser("first"), makeToolResult("one", "result")];
       await run(first);
       const second = [...first, makeUser("second"), makeToolResult("two", "result")];
@@ -517,20 +517,11 @@ describe("installContextEngineLoopHook", () => {
           first.slice(1),
           second.slice(2),
         ]);
-        expect(engine.ingestBatch.mock.calls.map(([params]) => params.isHeartbeat)).toEqual([
-          true,
-          true,
-        ]);
         expect(engine.ingest).not.toHaveBeenCalled();
       } else {
         expect(engine.ingest.mock.calls.map(([params]) => params.message)).toEqual([
           ...first.slice(1),
           ...second.slice(2),
-        ]);
-        expect(engine.ingest.mock.calls.map(([params]) => params.isHeartbeat)).toEqual([
-          true,
-          true,
-          true,
         ]);
       }
       expect(engine.assemble).toHaveBeenCalledTimes(2);

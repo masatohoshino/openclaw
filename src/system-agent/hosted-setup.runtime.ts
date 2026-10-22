@@ -287,10 +287,7 @@ function formatMemoryImportProviders(providers: ConfirmedMemoryImportProviderOut
     .join(", ");
 }
 
-export async function auditMemoryImport(
-  providers: MemoryImportProviderOutcome[],
-  appendAuditEntry = appendSystemAgentAuditEntry,
-): Promise<void> {
+export async function auditMemoryImport(providers: MemoryImportProviderOutcome[]): Promise<void> {
   const confirmedProviders = providers.filter(hasConfirmedMemoryImportCount);
   const importedProviders = confirmedProviders.filter((provider) => provider.migrated > 0);
   const indeterminateProviders = providers.filter(
@@ -314,7 +311,7 @@ export async function auditMemoryImport(
           .join("; ")}`
       : `Imported memory via chat: ${providerSummary}`;
   try {
-    await appendAuditEntry({
+    await appendSystemAgentAuditEntry({
       operation: "memory.import",
       summary,
       details: {
@@ -339,7 +336,6 @@ export async function auditMemoryImport(
 
 export async function renderMemoryImport(
   outcome: HostedMemoryImportOutcome | undefined,
-  appendAuditEntry = appendSystemAgentAuditEntry,
 ): Promise<string> {
   if (!outcome) {
     return "Memory import did not complete. No outcome was reported, and no success was assumed.";
@@ -365,7 +361,7 @@ export async function renderMemoryImport(
   );
   const importedItems = importedProviders.reduce((total, provider) => total + provider.migrated, 0);
   const providerSummary = formatMemoryImportProviders(importedProviders);
-  await auditMemoryImport(outcome.providers, appendAuditEntry);
+  await auditMemoryImport(outcome.providers);
 
   if (importedItems === 0) {
     if (indeterminateProviders.length > 0) {
