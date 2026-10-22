@@ -127,10 +127,6 @@ function isCurrentNodesRequest(
   return state.connected && state.client === client && state.requestGeneration === generation;
 }
 
-function queueRefresh(current: QueuedRefresh, quiet: boolean | undefined): QueuedRefresh {
-  return current === "visible" || quiet !== true ? "visible" : "quiet";
-}
-
 export function loadNodes(state: InventoryState, opts?: { quiet?: boolean }) {
   return loadInventory(state, "nodes", opts);
 }
@@ -152,7 +148,8 @@ async function loadInventory(
   const queuedRefresh = `${kind}QueuedRefresh` as const;
   const error = kind === "nodes" ? "lastError" : "devicesError";
   if (state[loading]) {
-    state[queuedRefresh] = queueRefresh(state[queuedRefresh], opts?.quiet);
+    state[queuedRefresh] =
+      state[queuedRefresh] === "visible" || opts?.quiet !== true ? "visible" : "quiet";
     return;
   }
   state[loading] = true;
@@ -341,7 +338,7 @@ export function rejectNodePairingRequest(state: InventoryState, requestId: strin
  * token only to a device rotating its own token, so a cross-device rotation is a real
  * outcome with no secret to show rather than a failure.
  */
-type RotatedDeviceTokenOutcome =
+export type RotatedDeviceTokenOutcome =
   | { delivery: "in-band"; token: string }
   | { delivery: "withheld-cross-device" };
 

@@ -299,6 +299,41 @@ describe("resolveWorkerToolAuthority", () => {
     expect(await authority({ toolsAllow: [] })).toEqual([]);
   });
 
+  it.each([
+    { senderId: "restricted", gated: true },
+    { senderId: "authorized", gated: false },
+  ])(
+    "projects destination policy for original requester $senderId",
+    async ({ senderId, gated }) => {
+      const tools = await authorityTools({
+        senderId: "worker-route-sender",
+        senderIsOwner: true,
+        toolsAllow: ["read", "write"],
+        config: {
+          agents: {
+            entries: {
+              research: { tools: { deny: ["write", "apply_patch"] } },
+              main: {
+                tools: { toolsBySender: { "id:restricted": { deny: ["write", "apply_patch"] } } },
+              },
+            },
+          },
+        },
+        requesterOrigin: {
+          sessionKey: "agent:research:whatsapp:group:requesters",
+          messageProvider: "whatsapp",
+          senderId,
+        },
+      });
+      // The requester's sender overlay keeps the definitions and refuses the denied calls.
+      expect(tools.map((tool) => tool.name)).toEqual(["read", "write", "apply_patch"]);
+      for (const name of gated ? ["write", "apply_patch"] : []) {
+        const refused = await tools.find((tool) => tool.name === name)!.execute(name, {});
+        expect(refused.details).toMatchObject({ gated: true });
+      }
+    },
+  );
+
   it("applies current owner policy and the appropriate sender overlays", async () => {
     const denyWrites = { deny: ["write", "apply_patch"] };
     const toolsAllow = ["read", "write", "exec"];

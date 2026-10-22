@@ -31,7 +31,8 @@ including their modification times. An older shared-state schema produces a
 not upgrade it. Ordinary Doctor and explicit repair retain their migration behavior.
 
 Doctor retires private database readers and writers before removing inspection
-snapshots. A cleanup failure preserves completed findings and check counts;
+snapshots, including their cached database admissions so status cannot report a
+removed inspection image. A cleanup failure preserves completed findings and check counts;
 updater runs report failed temporary-file removal as a warning. If database
 retirement fails, Doctor reports the error and leaves the private snapshot in place.
 
@@ -57,6 +58,10 @@ semantic indexes. It is opt-in through `--only` or `--all`, so plain `doctor --l
 unchanged. It reports missing llama.cpp setup and the interactive `models auth login` remediation
 without claiming full Gateway readiness, starting services, downloading models, or changing
 config.
+
+This check snapshots agent databases only when memory search is enabled and the
+agent's effective provider is `local`. Agents using the default or another remote
+provider do not need a database snapshot for this check.
 
 Human output is compact:
 
@@ -145,6 +150,11 @@ openclaw doctor --lint --skip core/doctor/skills-readiness
 ```
 
 `--only` and `--skip` accept full check ids and may be repeated. An unregistered `--only` id emits a `core/doctor/lint-selection` error finding; valid selected checks still run. Use `checksRun`/`checksSkipped` in the output to confirm a focused gate selects the checks you expect.
+
+`core/doctor/disk-space` checks the volume containing the operator's state directory,
+including when other selected checks use a private state snapshot. It is opt-in
+through `--only` or `--all`. Below 100 MiB free is an error; exactly 100 MiB through
+less than 500 MiB is a warning.
 
 To check model credentials, run `openclaw doctor --lint --only core/doctor/auth-profiles --json`.
 This opt-in check inspects shared credentials and each configured agent's local

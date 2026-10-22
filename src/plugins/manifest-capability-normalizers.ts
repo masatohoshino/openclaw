@@ -1,4 +1,7 @@
-import { isRecord } from "../../packages/normalization-core/src/record-coerce.js";
+import {
+  isRecord,
+  omitUndefinedFields,
+} from "../../packages/normalization-core/src/record-coerce.js";
 import { normalizeOptionalString } from "../../packages/normalization-core/src/string-coerce.js";
 import {
   normalizeOptionalTrimmedStringList,
@@ -25,6 +28,8 @@ import type {
   PluginManifestMcpServer,
   PluginManifestMediaUnderstandingCapability,
   PluginManifestMediaUnderstandingProviderMetadata,
+  PluginManifestOnboardingScope,
+  PluginManifestProviderAuthChoice,
   PluginManifestProviderBaseUrlGuard,
   PluginManifestSecretInputContracts,
   PluginManifestSecretInputPath,
@@ -32,6 +37,20 @@ import type {
   PluginManifestToolProfile,
   PluginManifestTranscriptSource,
 } from "./manifest-types.js";
+
+export function normalizeProviderAssistantVisibility(
+  value: unknown,
+): PluginManifestProviderAuthChoice["assistantVisibility"] {
+  return value === "visible" || value === "manual-only" || value === "detected-only"
+    ? value
+    : undefined;
+}
+
+export function isPluginManifestOnboardingScope(
+  value: unknown,
+): value is PluginManifestOnboardingScope {
+  return value === "text-inference" || value === "image-generation" || value === "music-generation";
+}
 
 // Accept only bounded declarative facts; unknown or malformed fields never enter tool guidance.
 function normalizeDecisionCapabilities(value: unknown): DecisionProviderCapabilities | undefined {
@@ -310,7 +329,7 @@ function normalizeCapabilityProviderAuthSignals(
     if (!provider) {
       return undefined;
     }
-    return omitUndefinedManifestFields({
+    return omitUndefinedFields({
       provider,
       providerBaseUrl: normalizeProviderBaseUrlGuard(rawSignal.providerBaseUrl),
     });
@@ -343,7 +362,7 @@ function normalizeCapabilityProviderConfigSignals(
     const requiredAny = normalizeOptionalTrimmedStringList(rawSignal.requiredAny);
     const mode = normalizeCapabilityProviderModeConfigSignal(rawSignal.mode);
     return required || requiredAny || mode
-      ? omitUndefinedManifestFields({
+      ? omitUndefinedFields({
           rootPath,
           overlayPath: normalizeOptionalString(rawSignal.overlayPath),
           overlayMapPath: normalizeOptionalString(rawSignal.overlayMapPath),
@@ -485,16 +504,7 @@ export function normalizeManifestConfigContracts(
 }
 
 /** Only fresh field projections belong here; never mutate the authored manifest. */
-export function omitUndefinedManifestFields<T extends object>(fields: T): T {
-  for (const key in fields) {
-    if (fields[key] === undefined) {
-      delete fields[key];
-    }
-  }
-  return fields;
-}
-
 export function optionalManifestFields<T extends object>(fields: T): T | undefined {
-  omitUndefinedManifestFields(fields);
+  omitUndefinedFields(fields);
   return Object.keys(fields).length > 0 ? fields : undefined;
 }
