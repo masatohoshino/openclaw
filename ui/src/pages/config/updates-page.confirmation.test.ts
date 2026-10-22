@@ -55,10 +55,14 @@ it.each(["loading", "open"] as const)(
         updateBusy: false,
         statusRead: null,
         onCheckStatus: () => overlays.refreshUpdateStatus(),
+        captureCommandPresentation: () => ({
+          retired: new Promise<void>(() => {}),
+          isCurrent: () => true,
+        }),
       }),
     );
     const updateButton = () => {
-      const button = mounted.getByRole<HTMLButtonElement>("button", { name: "Update now" });
+      const button = mounted.getByRole<HTMLButtonElement>("button", { name: "Update Gateway…" });
       expect(button).toMatchObject({ disabled: false });
       return button;
     };
