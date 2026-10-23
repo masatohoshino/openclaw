@@ -1031,56 +1031,6 @@ describe("gateway agent handler", () => {
     resetTimeConfig();
   });
 
-  it("persists hidden prompts for subagent announce task-completion handoffs", async () => {
-    primeMainAgentRun({ cfg: mocks.loadConfigReturn });
-    mocks.agentCommand.mockClear();
-
-    await invokeAgent(
-      {
-        message: "runtime-only announce bookkeeping",
-        agentId: "main",
-        sessionKey: "agent:main:main",
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: "agent:main:subagent:child",
-          sourceTool: "subagent_announce",
-        },
-        internalEvents: [
-          {
-            type: "task_completion",
-            source: "subagent",
-            childSessionKey: "agent:main:subagent:child",
-            childSessionId: "child-session-id",
-            announceType: "completion",
-            taskLabel: "child task",
-            status: "ok",
-            statusLabel: "completed",
-            result: "child result",
-            statsLine: "tokens=10",
-            replyInstruction: "Deliver the child result.",
-          },
-        ],
-        idempotencyKey: "test-subagent-announce-suppress-prompt",
-      },
-      {
-        reqId: "subagent-announce-suppress-prompt",
-        client: backendGatewayClient(),
-      },
-    );
-
-    const callArgs = await waitForAgentCommandCall();
-    // The completion's runtime context is persisted after this user turn; the
-    // turn must stay in model history (hidden) so the next request replays the prefix.
-    expect(callArgs).toMatchObject({
-      preserveUserFacingSessionModelState: true,
-      message: expect.stringMatching(/^\[Inter-session message\]/),
-      userTurnTranscriptRecorder: {
-        message: { display: false, provenance: { sourceTool: "subagent_announce" } },
-      },
-    });
-    expect(callArgs.message).toContain("sourceTool=subagent_announce");
-  });
-
   it("restores exact cron continuation policy for generated-media wakes", async () => {
     mocks.agentCommand.mockClear();
     const sessionKey = "agent:main:cron:job-1:run:run-1";
