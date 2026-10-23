@@ -1031,7 +1031,7 @@ describe("gateway agent handler", () => {
     resetTimeConfig();
   });
 
-  it("suppresses persisted prompts for subagent announce task-completion handoffs", async () => {
+  it("persists hidden prompts for subagent announce task-completion handoffs", async () => {
     primeMainAgentRun({ cfg: mocks.loadConfigReturn });
     mocks.agentCommand.mockClear();
 
@@ -1068,14 +1068,16 @@ describe("gateway agent handler", () => {
       },
     );
 
-    const callArgs = await waitForAgentCommandCall<{
-      suppressPromptPersistence?: boolean;
-      preserveUserFacingSessionModelState?: boolean;
-      message?: string;
-    }>();
-    expect(callArgs.suppressPromptPersistence).toBe(true);
-    expect(callArgs.preserveUserFacingSessionModelState).toBe(true);
-    expect(callArgs.message).toMatch(/^\[Inter-session message\]/);
+    const callArgs = await waitForAgentCommandCall();
+    // The completion's runtime context is persisted after this user turn; the
+    // turn must stay in model history (hidden) so the next request replays the prefix.
+    expect(callArgs).toMatchObject({
+      preserveUserFacingSessionModelState: true,
+      message: expect.stringMatching(/^\[Inter-session message\]/),
+      userTurnTranscriptRecorder: {
+        message: { display: false, provenance: { sourceTool: "subagent_announce" } },
+      },
+    });
     expect(callArgs.message).toContain("sourceTool=subagent_announce");
   });
 
