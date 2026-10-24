@@ -331,7 +331,7 @@ describe("anthropic cli migration", () => {
     ],
     [
       "not-installed",
-      "Claude CLI is not installed on this host.\nInstall Claude Code, run claude auth login, then re-run this setup.",
+      "Claude CLI (`claude`) was not found on PATH.\nInstall Claude Code or add it to PATH, run claude auth login, then re-run this setup.",
     ],
     [
       "unreadable",

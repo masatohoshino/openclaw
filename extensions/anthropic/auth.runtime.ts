@@ -225,8 +225,8 @@ export async function runAnthropicCliMigration(
           ]
         : authStatus.status === "not-installed"
           ? [
-              "Claude CLI is not installed on this host.",
-              `Install Claude Code, run ${formatCliCommand("claude auth login")}, then re-run this setup.`,
+              "Claude CLI (`claude`) was not found on PATH.",
+              `Install Claude Code or add it to PATH, run ${formatCliCommand("claude auth login")}, then re-run this setup.`,
             ]
           : [
               authStatus.status === "timeout"
