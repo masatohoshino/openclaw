@@ -29,6 +29,8 @@
     <string name="speaking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Berbicara"</string>
     <string name="listening" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Mendengarkan"</string>
     <string name="stopping" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Mengakhiri panggilan…"</string>
+    <string name="realtime_input_fell_behind" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio fell behind. Repeat the last part."</string>
+    <string name="realtime_input_recovered" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio recovered. Repeat the last part."</string>
     <string name="connecting" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Menghubungkan"</string>
     <string name="thinking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Berpikir"</string>
     <string name="typing" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Mengetik"</string>

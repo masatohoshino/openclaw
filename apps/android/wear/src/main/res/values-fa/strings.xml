@@ -29,6 +29,8 @@
     <string name="speaking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"در حال صحبت"</string>
     <string name="listening" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"در حال گوش دادن"</string>
     <string name="stopping" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"در حال پایان دادن به تماس…"</string>
+    <string name="realtime_input_fell_behind" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio fell behind. Repeat the last part."</string>
+    <string name="realtime_input_recovered" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio recovered. Repeat the last part."</string>
     <string name="connecting" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"در حال اتصال"</string>
     <string name="thinking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"در حال فکر کردن"</string>
     <string name="typing" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"در حال تایپ"</string>

@@ -29,6 +29,8 @@
     <string name="speaking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Đang nói"</string>
     <string name="listening" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Đang lắng nghe"</string>
     <string name="stopping" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Đang kết thúc cuộc gọi…"</string>
+    <string name="realtime_input_fell_behind" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio fell behind. Repeat the last part."</string>
+    <string name="realtime_input_recovered" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio recovered. Repeat the last part."</string>
     <string name="connecting" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Đang kết nối"</string>
     <string name="thinking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Đang suy nghĩ"</string>
     <string name="typing" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Đang nhập"</string>

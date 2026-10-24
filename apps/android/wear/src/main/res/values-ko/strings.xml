@@ -29,6 +29,8 @@
     <string name="speaking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"말하는 중"</string>
     <string name="listening" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"듣는 중"</string>
     <string name="stopping" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"통화 종료 중…"</string>
+    <string name="realtime_input_fell_behind" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio fell behind. Repeat the last part."</string>
+    <string name="realtime_input_recovered" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio recovered. Repeat the last part."</string>
     <string name="connecting" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"연결 중"</string>
     <string name="thinking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"생각 중"</string>
     <string name="typing" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"입력 중"</string>

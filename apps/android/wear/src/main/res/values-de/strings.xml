@@ -29,6 +29,8 @@
     <string name="speaking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Sprachausgabe läuft"</string>
     <string name="listening" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Hört zu"</string>
     <string name="stopping" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Anruf wird beendet…"</string>
+    <string name="realtime_input_fell_behind" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio fell behind. Repeat the last part."</string>
+    <string name="realtime_input_recovered" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio recovered. Repeat the last part."</string>
     <string name="connecting" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Verbindung wird hergestellt"</string>
     <string name="thinking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Nachdenken"</string>
     <string name="typing" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Tippt"</string>

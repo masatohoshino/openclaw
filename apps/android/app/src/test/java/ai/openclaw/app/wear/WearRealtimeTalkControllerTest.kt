@@ -4,6 +4,7 @@ import ai.openclaw.app.gateway.GatewayRequestRejected
 import ai.openclaw.app.gateway.GatewaySession
 import ai.openclaw.wear.shared.WearProtocol
 import ai.openclaw.wear.shared.WearRealtimeAudioFrameType
+import ai.openclaw.wear.shared.WearRealtimeTalkNotice
 import ai.openclaw.wear.shared.WearRealtimeTalkSnapshot
 import ai.openclaw.wear.shared.WearRealtimeTalkStatus
 import android.util.Base64
@@ -334,10 +335,10 @@ class WearRealtimeTalkControllerTest {
       assertEquals(30, heldAppends.size)
       assertEquals(setOf(30_000L), appendTimeouts)
       assertEquals(WearRealtimeTalkStatus.LISTENING, controller.snapshot.value.status)
-      assertEquals("Realtime audio input fell behind; repeat the last part", controller.snapshot.value.statusText)
+      assertEquals(WearRealtimeTalkNotice.INPUT_FELL_BEHIND, controller.snapshot.value.notice)
 
       heldAppends.first().invoke(null)
-      assertEquals("Microphone input recovered; repeat the last part", controller.snapshot.value.statusText)
+      assertEquals(WearRealtimeTalkNotice.INPUT_RECOVERED, controller.snapshot.value.notice)
       controller.appendAudio("watch-a", frame)
       runCurrent()
       assertEquals(31, heldAppends.size)

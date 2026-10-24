@@ -10,6 +10,7 @@ import ai.openclaw.app.voice.requestPhoneRealtimeSessionWithLanguageFallback
 import ai.openclaw.wear.shared.WearProtocol
 import ai.openclaw.wear.shared.WearRealtimeAudioFrameType
 import ai.openclaw.wear.shared.WearRealtimeTalkEntry
+import ai.openclaw.wear.shared.WearRealtimeTalkNotice
 import ai.openclaw.wear.shared.WearRealtimeTalkRole
 import ai.openclaw.wear.shared.WearRealtimeTalkSnapshot
 import ai.openclaw.wear.shared.WearRealtimeTalkStatus
@@ -730,6 +731,7 @@ internal class WearRealtimeTalkController(
         speaking = state == ActiveTalkState.Speaking,
         status = state.status,
         statusText = state.text,
+        notice = null,
         attemptId = activeOwner?.attemptId,
       ),
     )
@@ -759,7 +761,12 @@ internal class WearRealtimeTalkController(
           RealtimeInputAudioBudget.Notice.FellBehind -> "Realtime audio input fell behind; repeat the last part"
           RealtimeInputAudioBudget.Notice.Recovered -> "Microphone input recovered; repeat the last part"
         }
-      setSnapshot(_snapshot.value.copy(statusText = text))
+      val wearNotice =
+        when (notice) {
+          RealtimeInputAudioBudget.Notice.FellBehind -> WearRealtimeTalkNotice.INPUT_FELL_BEHIND
+          RealtimeInputAudioBudget.Notice.Recovered -> WearRealtimeTalkNotice.INPUT_RECOVERED
+        }
+      setSnapshot(_snapshot.value.copy(statusText = text, notice = wearNotice))
     }
   }
 

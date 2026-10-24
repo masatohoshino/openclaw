@@ -29,6 +29,8 @@
     <string name="speaking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"กำลังพูด"</string>
     <string name="listening" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"กำลังฟัง"</string>
     <string name="stopping" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"กำลังวางสาย…"</string>
+    <string name="realtime_input_fell_behind" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio fell behind. Repeat the last part."</string>
+    <string name="realtime_input_recovered" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio recovered. Repeat the last part."</string>
     <string name="connecting" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"กำลังเชื่อมต่อ"</string>
     <string name="thinking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"การคิด"</string>
     <string name="typing" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"กำลังพิมพ์"</string>

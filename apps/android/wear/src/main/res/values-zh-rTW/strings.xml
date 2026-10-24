@@ -29,6 +29,8 @@
     <string name="speaking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"正在朗讀"</string>
     <string name="listening" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"正在聆聽"</string>
     <string name="stopping" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"正在結束通話…"</string>
+    <string name="realtime_input_fell_behind" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio fell behind. Repeat the last part."</string>
+    <string name="realtime_input_recovered" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio recovered. Repeat the last part."</string>
     <string name="connecting" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"正在連線"</string>
     <string name="thinking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"思考中"</string>
     <string name="typing" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"輸入中"</string>

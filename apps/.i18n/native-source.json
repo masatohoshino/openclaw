@@ -2913,6 +2913,8 @@
     {"path":"apps/android/wear/src/main/res/values/strings.xml","kind":"resource-string","surface":"android","id":"native.android.8e712ee4335e5e47","source":"Agent working"},
     {"path":"apps/android/wear/src/main/res/values/strings.xml","kind":"resource-string","surface":"android","id":"native.android.9e146d672733afe5","source":"Appearance"},
     {"path":"apps/android/wear/src/main/res/values/strings.xml","kind":"resource-string","surface":"android","id":"native.android.b244f2579cfa208b","source":"Attention"},
+    {"path":"apps/android/wear/src/main/res/values/strings.xml","kind":"resource-string","surface":"android","id":"native.android.3d52f14aa3f15394","source":"Audio fell behind. Repeat the last part."},
+    {"path":"apps/android/wear/src/main/res/values/strings.xml","kind":"resource-string","surface":"android","id":"native.android.7cc3db9e308d5fe0","source":"Audio recovered. Repeat the last part."},
     {"path":"apps/android/wear/src/main/res/values/strings.xml","kind":"resource-string","surface":"android","id":"native.android.527be2042f5a85e3","source":"Chat"},
     {"path":"apps/android/wear/src/main/res/values/strings.xml","kind":"resource-string","surface":"android","id":"native.android.f5dc25c80f7362f4","source":"Checking phone"},
     {"path":"apps/android/wear/src/main/res/values/strings.xml","kind":"resource-string","surface":"android","id":"native.android.9196f20752991ce4","source":"Close"},

@@ -29,6 +29,8 @@
     <string name="speaking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"جارٍ النطق"</string>
     <string name="listening" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"جارٍ الاستماع"</string>
     <string name="stopping" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"جارٍ إنهاء المكالمة…"</string>
+    <string name="realtime_input_fell_behind" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio fell behind. Repeat the last part."</string>
+    <string name="realtime_input_recovered" tools:ignore="MissingTranslation,Typos,TypographyDashes,TypographyEllipsis">"Audio recovered. Repeat the last part."</string>
     <string name="connecting" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"جارٍ الاتصال"</string>
     <string name="thinking" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"جارٍ التفكير"</string>
     <string name="typing" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"جارٍ الكتابة"</string>
