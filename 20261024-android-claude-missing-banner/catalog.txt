@@ -1,0 +1,29 @@
+# models.list {"view":"configured","includeDetails":true} on an isolated Gateway without a claude executable on PATH
+
+## Before (base 5eab3f5cf227)
+{
+  "refreshFailed": true,
+  "providerOutcomes": [
+    {
+      "provider": "claude-cli",
+      "status": "unavailable"
+    },
+    {
+      "provider": "google",
+      "status": "ready"
+    }
+  ],
+  "modelCount": 18
+}
+
+## After (head a4e015550748)
+{
+  "refreshFailed": "(absent)",
+  "providerOutcomes": [
+    {
+      "provider": "google",
+      "status": "ready"
+    }
+  ],
+  "modelCount": 18
+}
