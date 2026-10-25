@@ -15,7 +15,7 @@ describe("hasPromptImageInput", () => {
 
     expect(
       hasPromptImageInput({
-        media: [{ ...recorded, hydrationSuppressed: true }],
+        media: [{ ...recorded, hydrationSuppressed: true, unresolvedThisTurn: true }],
         userTurnTranscriptRecorder,
       }),
     ).toBe(false);

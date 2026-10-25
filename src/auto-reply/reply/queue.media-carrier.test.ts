@@ -305,7 +305,9 @@ it("pairs each collected source's run-only image skip with the transcript facts"
   ] as const) {
     q.add({
       ...createQueueTestRun({ prompt }),
-      media: [skipped ? { ...shared, hydrationSuppressed: true } : shared],
+      media: [
+        skipped ? { ...shared, hydrationSuppressed: true, unresolvedThisTurn: true } : shared,
+      ],
       userTurnTranscriptRecorder: createUserTurnTranscriptRecorder({
         input: { text: prompt, media: [shared] },
         target: createTestUserTurnTranscriptTarget(),

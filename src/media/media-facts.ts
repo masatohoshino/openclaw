@@ -35,6 +35,8 @@ export type MediaFact = {
   // reprojection boundary; described images otherwise rehydrate or count failed.
   // Structured persistence may retain it; legacy Media* projections never emit it.
   hydrationSuppressed?: boolean;
+  /** Run-only: this turn could not read the attachment. Never persisted, so later turns retry it. */
+  unresolvedThisTurn?: boolean;
 };
 
 export type MediaFactInput = {
@@ -70,28 +72,25 @@ export function readRuntimePromptMediaFacts(message: object): MediaFact[] | unde
 
 /**
  * Applies a run's hydration suppression to the recorded facts of the same turn.
- * Turn-scoped suppression (an attachment this turn could not read) stays out of the
- * transcript so later turns retry it. Run facts keep recorded order but omit keyless
+ * Only turn-scoped suppression pairs: an attachment this turn could not read stays
+ * out of the transcript so later turns retry it. Durable run suppression (described
+ * images, managed copies that give sandbox tools a staged file) never pairs: the
+ * record already carries its own. Run facts keep recorded order but omit keyless
  * facts and transcribed audio, so facts pair by URL/path and then by occurrence.
  * Sandbox staging keeps the media:// URL when it rewrites a path; a URL-less fact
  * staged for a remote media host does not pair, so that turn retries the read
- * (accepted: rare and visible). A staged twin that only gives sandbox tools a copy of
- * an image the run also carries unstaged under the same URL is not a recorded
- * attachment, so its suppression does not pair.
+ * (accepted: rare and visible).
  */
 export function applyRunHydrationSuppression(
   recorded: readonly MediaFact[],
   run: readonly MediaFact[] | undefined,
 ): MediaFact[] {
-  const unstagedUrls = new Set(
-    (run ?? []).flatMap((fact) => (!fact.staged && fact.url ? [fact.url] : [])),
-  );
   const runFlagsByKey = new Map<string, boolean[]>();
   for (const fact of run ?? []) {
     const key = fact.url ?? fact.path;
-    if (key && !(fact.staged && fact.url && unstagedUrls.has(fact.url))) {
+    if (key) {
       const flags = runFlagsByKey.get(key) ?? [];
-      flags.push(fact.hydrationSuppressed === true);
+      flags.push(fact.unresolvedThisTurn === true);
       runFlagsByKey.set(key, flags);
     }
   }

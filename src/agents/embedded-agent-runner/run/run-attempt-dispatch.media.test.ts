@@ -231,7 +231,7 @@ describe("plugin harness prompt media", () => {
     const result = await preparePluginHarnessPromptImages({
       images: [inlineImage],
       imageOrder: ["inline"],
-      media: [recorded[0], { ...recorded[1], hydrationSuppressed: true }],
+      media: [recorded[0], { ...recorded[1], hydrationSuppressed: true, unresolvedThisTurn: true }],
       userTurnTranscriptRecorder: {
         async resolveMessage() {
           return this.message;
