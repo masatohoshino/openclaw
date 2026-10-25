@@ -75,16 +75,21 @@ export function readRuntimePromptMediaFacts(message: object): MediaFact[] | unde
  * facts and transcribed audio, so facts pair by URL/path and then by occurrence.
  * Sandbox staging keeps the media:// URL when it rewrites a path; a URL-less fact
  * staged for a remote media host does not pair, so that turn retries the read
- * (accepted: rare and visible).
+ * (accepted: rare and visible). A staged twin that only gives sandbox tools a copy of
+ * an image the run also carries unstaged under the same URL is not a recorded
+ * attachment, so its suppression does not pair.
  */
 export function applyRunHydrationSuppression(
   recorded: readonly MediaFact[],
   run: readonly MediaFact[] | undefined,
 ): MediaFact[] {
+  const unstagedUrls = new Set(
+    (run ?? []).flatMap((fact) => (!fact.staged && fact.url ? [fact.url] : [])),
+  );
   const runFlagsByKey = new Map<string, boolean[]>();
   for (const fact of run ?? []) {
     const key = fact.url ?? fact.path;
-    if (key) {
+    if (key && !(fact.staged && fact.url && unstagedUrls.has(fact.url))) {
       const flags = runFlagsByKey.get(key) ?? [];
       flags.push(fact.hydrationSuppressed === true);
       runFlagsByKey.set(key, flags);

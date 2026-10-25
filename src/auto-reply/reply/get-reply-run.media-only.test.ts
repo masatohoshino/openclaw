@@ -1426,13 +1426,13 @@ describe("runPreparedReply media-only handling", () => {
         },
       });
       // Skipped for this run only: the record stays hydratable so later turns retry it.
-      const recorded = followupRun.userTurnTranscriptRecorder?.message?.__openclaw;
-      expect(recorded).toHaveProperty("mediaImageLayout.slots", [
+      const recorded = followupRun.userTurnTranscriptRecorder?.message;
+      expect(recorded).toHaveProperty("__openclaw.mediaImageLayout.slots", [
         { kind: "inline", factIndex: 1 },
         { kind: "offloaded", factIndex: 2 },
       ]);
-      expect(recorded).not.toHaveProperty("mediaImageLayout.suppressedFactIndexes");
-      expect(recorded).not.toHaveProperty(["media", 2, "hydrationSuppressed"]);
+      expect(recorded).not.toHaveProperty("__openclaw.mediaImageLayout.suppressedFactIndexes");
+      expect(recorded).not.toHaveProperty(["__openclaw", "media", 2, "hydrationSuppressed"]);
     },
   );
 
