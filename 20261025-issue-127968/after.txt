@@ -1,16 +1,16 @@
-After: branch fix/image-hydration-retry at 74e0e799783, same isolated QA Gateway, model and steps
+After: branch fix/image-hydration-retry at caa26987d88, same isolated QA Gateway, model and steps
 promptTokens = input + cache-read tokens of each model call; "|" separates turns.
 
 [tools.deny: ["*"]]
-first reply:  The top half of the image is red, and the bottom half is blue.
-second reply: The top half of the photo is red, and the bottom half is blue.
-  promptTokens=9256 | 9355  toolCalls=0  (Before attempt 1: 8172 | 8275; about +1080 per call is the image)
-recorded user turn: no hydrationSuppressed, mediaImageLayout={"slots":[{"kind":"offloaded","factIndex":0}]}
+first reply:  The top half of the photo is red, and the bottom half is blue.
+second reply: The top half is red, and the bottom half is blue.
+  promptTokens=9245 | 9345  toolCalls=0  (Before attempt 1: 8172 | 8275; about +1070 per call is the image)
+recorded user turn: no hydrationSuppressed field, mediaImageLayout={"slots":[{"kind":"offloaded","factIndex":0}]}
 
 [default tools]
 first reply:  The top half of the photo is red, and the bottom half is blue.
-second reply: The top half of the photo is red, and the bottom half is blue.
-  promptTokens=13594 | 13696  toolCalls=0  (Before: view_image on turn 1)
-recorded user turn: no hydrationSuppressed, mediaImageLayout={"slots":[{"kind":"offloaded","factIndex":0}]}
+second reply: The top half is red and the bottom half is blue.
+  promptTokens=13611 | 13714  toolCalls=0  (Before: view_image on turn 1)
+recorded user turn: no hydrationSuppressed field, mediaImageLayout={"slots":[{"kind":"offloaded","factIndex":0}]}
 
-Both scenarios passed on the first attempt.
+Both scenarios passed on the first attempt. The run-only unresolvedThisTurn flag does not appear in either transcript.
