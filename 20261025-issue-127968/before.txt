@@ -1,0 +1,27 @@
+Before: base 8dc1fe13de9, isolated QA Gateway (qa-channel, real agent, google/gemini-3-flash)
+Turn 1: DM with a 10.19 MiB PNG (top half red, bottom half blue), channels.qa-channel.mediaMaxMb: 20,
+        "Here is a photo for later. Name the color of its top half and the color of its bottom half. If you cannot see any photo, reply with exactly NO_PHOTO."
+Turn 2: "Look at the photo I sent in my previous message. Name the color of its top half and the color of its bottom half. If you cannot see any photo, reply with exactly NO_PHOTO."
+promptTokens = input + cache-read tokens of each model call; "|" separates turns, "," separates calls within a turn.
+
+[tools.deny: ["*"]]  (Code Mode still exposes exec and wait; the tool catalog is empty)
+The scenario failed, so the suite ran it a second time; both attempts are kept.
+The second attempt continued the same session, so its prompts also carry attempt 1's history.
+attempt 1, first reply:  The top half of the photo is red, and the bottom half is yellow.   (wrong)
+attempt 1, second reply: The top half of the photo is red, and the bottom half is yellow.   (wrong)
+  promptTokens=8172 | 8275, 9219  toolCalls=1 (turn 2: exec failed with "code mode module access is disabled", catalogSize 0)
+attempt 2, first reply:  The top half of the photo is blue, and the bottom half is green.   (wrong)
+attempt 2, second reply: The top half of the photo is blue, and the bottom half is green.   (wrong)
+  promptTokens=9482 | 9582  toolCalls=0
+recorded user turn: media[0].hydrationSuppressed=true mediaImageLayout={"slots":[],"suppressedFactIndexes":[0]}
+
+[default tools]
+The scenario failed (it requires 0 tool calls), so it ran twice; the second attempt continued the same session.
+Both attempts behaved the same.
+first reply:  The top half of the photo is red, and the bottom half is blue.   (after view_image re-opened the file)
+second reply: The top half of the photo is red, and the bottom half is blue.   (from the view_image result in history)
+  attempt 1 promptTokens=12537, 13779 | 13878  toolCalls=1 (turn 1: view_image)
+  attempt 2 promptTokens=14151, 15399 | 15500  toolCalls=1 (turn 1: view_image)
+recorded user turn: media[0].hydrationSuppressed=true mediaImageLayout={"slots":[],"suppressedFactIndexes":[0]}
+
+No could-not-load notice on either turn: a suppressed fact is not counted as a failed attachment.
