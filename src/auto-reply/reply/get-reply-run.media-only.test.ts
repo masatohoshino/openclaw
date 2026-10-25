@@ -1425,14 +1425,14 @@ describe("runPreparedReply media-only handling", () => {
           suppressedFactIndexes: [1],
         },
       });
-      expect(followupRun.userTurnTranscriptRecorder?.message).toMatchObject({
-        __openclaw: {
-          mediaImageLayout: {
-            slots: [{ kind: "inline", factIndex: 1 }],
-            suppressedFactIndexes: [2],
-          },
-        },
-      });
+      // Skipped for this run only: the record stays hydratable so later turns retry it.
+      const recorded = followupRun.userTurnTranscriptRecorder?.message?.__openclaw;
+      expect(recorded).toHaveProperty("mediaImageLayout.slots", [
+        { kind: "inline", factIndex: 1 },
+        { kind: "offloaded", factIndex: 2 },
+      ]);
+      expect(recorded).not.toHaveProperty("mediaImageLayout.suppressedFactIndexes");
+      expect(recorded).not.toHaveProperty(["media", 2, "hydrationSuppressed"]);
     },
   );
 

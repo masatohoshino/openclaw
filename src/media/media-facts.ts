@@ -68,6 +68,35 @@ export function readRuntimePromptMediaFacts(message: object): MediaFact[] | unde
   return Array.isArray(media) ? (media as MediaFact[]) : undefined;
 }
 
+/**
+ * Applies a run's hydration suppression to the recorded facts of the same turn.
+ * Turn-scoped suppression (an attachment this turn could not read) stays out of the
+ * transcript so later turns retry it. Run facts keep recorded order but omit keyless
+ * facts and transcribed audio, so facts pair by URL/path and then by occurrence.
+ * Sandbox staging keeps the media:// URL when it rewrites a path; a URL-less fact
+ * staged for a remote media host does not pair, so that turn retries the read
+ * (accepted: rare and visible).
+ */
+export function applyRunHydrationSuppression(
+  recorded: readonly MediaFact[],
+  run: readonly MediaFact[] | undefined,
+): MediaFact[] {
+  const runFlagsByKey = new Map<string, boolean[]>();
+  for (const fact of run ?? []) {
+    const key = fact.url ?? fact.path;
+    if (key) {
+      const flags = runFlagsByKey.get(key) ?? [];
+      flags.push(fact.hydrationSuppressed === true);
+      runFlagsByKey.set(key, flags);
+    }
+  }
+  return recorded.map((fact) => {
+    const key = fact.url ?? fact.path;
+    const suppressed = key ? runFlagsByKey.get(key)?.shift() : undefined;
+    return suppressed ? { ...fact, hydrationSuppressed: true } : fact;
+  });
+}
+
 /** Reads the canonical persisted media envelope without consulting legacy top-level fields. */
 export function readPersistedMediaFacts(message: object): MediaFact[] | undefined {
   const media = readPersistedMediaFactInputs(message);
