@@ -434,7 +434,8 @@ export async function streamContainerEvents(params: {
           // transport delivery order and receive-handler failures are preserved.
           // Stop reading until the chain drains: ws still emits frames already
           // decoded from the current socket chunk, so retention stays within one
-          // read and the rest waits in the peer's socket buffers.
+          // read. The rest waits in the socket buffers; a peer that cannot
+          // buffer more must block or drop.
           ws.pause();
           const accepted = eventChain.then(async () => {
             await params.onEvent(envelope);

@@ -7,6 +7,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { streamContainerEvents } from "./client-container.js";
 
 const clients = vi.hoisted(() => [] as WebSocket[]);
+const decoded = vi.hoisted(() => ({ count: 0 }));
 vi.mock("openclaw/plugin-sdk/websocket-runtime", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openclaw/plugin-sdk/websocket-runtime")>();
   return {
@@ -15,15 +16,17 @@ vi.mock("openclaw/plugin-sdk/websocket-runtime", async (importOriginal) => {
       constructor(address: string, options?: ClientOptions) {
         super(address, options);
         clients.push(this);
+        this.on("message", () => decoded.count++);
       }
     },
   };
 });
 
-// Several socket reads of valid sub-limit frames, so the burst outlasts one chunk.
+// Valid sub-limit frames, ~16 MB in all: more than loopback socket buffers hold,
+// so the peer keeps unsent frames while the client is paused.
 const BURST = 512;
 const frame = (timestamp: number) =>
-  JSON.stringify({ envelope: { timestamp, dataMessage: { message: "x".repeat(1000) } } });
+  JSON.stringify({ envelope: { timestamp, dataMessage: { message: "x".repeat(32_000) } } });
 
 async function startPeer(onConnection: (ws: WebSocket) => void) {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -50,6 +53,7 @@ describe("container receive backpressure with a real peer", () => {
     await peer?.close();
     peer = undefined;
     clients.length = 0;
+    decoded.count = 0;
   });
 
   it("stops reading while admission is held and delivers the burst in order on shutdown", async () => {
@@ -75,6 +79,12 @@ describe("container receive backpressure with a real peer", () => {
     });
 
     await admitting.promise;
+    // An unpaused client keeps reading; give it time to take the whole burst.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 100);
+    });
+    expect((await peer.connected).bufferedAmount).toBeGreaterThan(0);
+    expect(decoded.count).toBeLessThan(BURST);
     expect(clients[0]?.isPaused).toBe(true);
     abort.abort();
     held.resolve();
