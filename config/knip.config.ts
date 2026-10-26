@@ -394,6 +394,7 @@ const repositoryScriptEntries = [
   "scripts/perf/session-child-owner-measure.ts!",
   "scripts/perf/session-initialization-measure.ts!",
   "scripts/perf/session-list-order-measure.mjs!",
+  "scripts/perf/gateway-session-store-shapes.mjs!",
   "scripts/perf/session-pr-currency-measure.ts!",
   "scripts/perf/session-run-progress-measure.ts!",
   "scripts/perf/session-tool-pin-measure.ts!",
@@ -408,6 +409,8 @@ const repositoryScriptEntries = [
   "scripts/perf/tool-result-owned-freeze-measure.ts!",
   "scripts/perf/tool-search-allowlist-measure.ts!",
   "scripts/perf/tools-catalog-copy-measure.ts!",
+  // Standalone owner benchmark; invocation is documented in its header.
+  "scripts/perf/model-tool-projection-measure.ts!",
   "scripts/perf/trajectory-skills-metadata-measure.ts!",
   "scripts/perf/transcript-checkpoint-retention.ts!",
   "scripts/perf/trusted-tool-matcher-measure.mjs!",
