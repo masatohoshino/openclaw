@@ -71,15 +71,9 @@ export function readRuntimePromptMediaFacts(message: object): MediaFact[] | unde
 }
 
 /**
- * Applies a run's hydration suppression to the recorded facts of the same turn.
- * Only turn-scoped suppression pairs: an attachment this turn could not read stays
- * out of the transcript so later turns retry it. Durable run suppression (described
- * images, managed copies that give sandbox tools a staged file) never pairs: the
- * record already carries its own. Run facts keep recorded order but omit keyless
- * facts and transcribed audio, so facts pair by URL/path and then by occurrence.
- * Sandbox staging keeps the media:// URL when it rewrites a path; a URL-less fact
- * staged for a remote media host does not pair, so that turn retries the read
- * (accepted: rare and visible).
+ * Pair run-only skips by source and occurrence; recorded facts remain retryable.
+ * Staged copies retain media:// URLs. URL-less remote restaging can miss a match
+ * and retry this turn; a failed read stays visible through the existing notice.
  */
 export function applyRunHydrationSuppression(
   recorded: readonly MediaFact[],

@@ -118,6 +118,7 @@ export async function executePreparedReplyRun(
     useFastReplyRuntime,
     fullAccessState,
     extraSystemPromptParts,
+    extraSystemPromptTurnContext,
     sourceConversationContextByMode,
     sourceConversationContextPromptOffset,
     extraSystemPromptStatic,
@@ -245,11 +246,8 @@ export async function executePreparedReplyRun(
       ctx.SenderIsSelf !== true);
   const ctxMediaForPersistence = ctx.media ?? [];
   const unresolvedSourceIndexes = new Set(currentTurnImages.unresolvedSourceIndexes ?? []);
-  // The record keeps unresolved attachments hydratable: the context transform reloads
-  // them with the prompt-image loader on this turn and later ones, and adds the resend
-  // notice when that read fails too. Only this run's prompt media skips them, so
-  // runners that fail a turn on an unreadable image (plugin harness, CLI, cloud worker)
-  // still run without it.
+  // Keep failed pre-reads retryable in the transcript. Only this run skips them:
+  // plugin, CLI, and worker runners can reject unreadable image input.
   const userTurnMediaForPersistence = [...ctxMediaForPersistence, ...(opts?.media ?? [])];
   const promptMediaForRun = suppressUnresolvedPromptMedia({
     promptMedia: promptMedia ?? [],
@@ -393,6 +391,7 @@ export async function executePreparedReplyRun(
   const groupTurn = getGroupThreadTurn();
   const personalBootstrapEligible = isSessionPersonalBootstrapTurn({
     ...ctx,
+    SessionKey: sessionKey,
     InternalTurnSource: ctx.InternalTurnSource ?? sessionCtx.InternalTurnSource,
     InputProvenance: inputProvenance,
   });
@@ -585,6 +584,7 @@ export async function executePreparedReplyRun(
       thinkingCatalog,
       thinkLevel: resolvedThinkLevel,
       thinkingExplicit: params.thinkingExplicit,
+      cyberAccessProgram: preparedSessionState.sessionEntry?.cyberAccessProgram,
       thinkLevelOverride,
       ...(() => {
         if (useFastReplyRuntime) {
@@ -638,6 +638,7 @@ export async function executePreparedReplyRun(
         ? { suppressNextUserMessagePersistence: true }
         : {}),
       extraSystemPrompt: extraSystemPromptParts.join("\n\n") || undefined,
+      extraSystemPromptTurnContext,
       sourceReplyDeliveryMode,
       bootstrapContextMode: opts?.bootstrapContextMode,
       taskSuggestionDeliveryMode: opts?.taskSuggestionDeliveryMode,
