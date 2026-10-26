@@ -21,6 +21,7 @@ import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-re
 import { getAsyncWorkSignal } from "../../shared/async-work-scope.js";
 import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db.js";
 import { withEnv } from "../../test-utils/env.js";
+import { expectNoCalls } from "../../test-utils/mock-call-assertions.js";
 import {
   clearPreparedEmbeddedAgentSettings,
   createPreparedEmbeddedAgentSettingsManager,
@@ -36,7 +37,6 @@ import {
   createPreparedRuntimeLease,
   defaultSettingsManager,
   prepareCompactionScenario as prepare,
-  prepareContextSuccessorScenario,
   recordCliCompactionInStoreImpl,
   resolveCliBackendConfig,
   resolveContextEngineFromRegistry,
@@ -81,10 +81,21 @@ describe("runCliTurnCompactionLifecycle", () => {
   };
   const prepareSuccessor = async (
     suffix: string,
-    result: Parameters<typeof prepareContextSuccessorScenario>[0]["result"],
+    result: (
+      target: Pick<
+        Awaited<ReturnType<typeof prepareScenario>>,
+        "sessionId" | "sessionKey" | "storePath"
+      >,
+    ) => Awaited<ReturnType<ContextEngine["compact"]>> | ReturnType<ContextEngine["compact"]>,
   ) => {
-    const scenario = await prepareContextSuccessorScenario({ tmpDir, suffix, result });
-    return { ...scenario, record: scenario.recordCliCompactionInStore };
+    const scenario: Awaited<ReturnType<typeof prepareScenario>> = await prepareScenario(
+      `cli-successor-${suffix}`,
+      {
+        compact: async () => result(scenario),
+        recordCliCompactionInStore: vi.fn(async (input) => input.sessionStore[input.sessionKey]),
+      },
+    );
+    return scenario;
   };
 
   beforeEach(async () => {
@@ -417,8 +428,7 @@ describe("runCliTurnCompactionLifecycle", () => {
     });
 
     await expect(scenario.run()).rejects.toThrow();
-    expect(scenario.maintenance).not.toHaveBeenCalled();
-    expect(scenario.record).not.toHaveBeenCalled();
+    expectNoCalls(scenario.maintenance, scenario.record);
   });
 
   it.each([
@@ -470,8 +480,7 @@ describe("runCliTurnCompactionLifecycle", () => {
     });
     expect(await scenario.run()).toBe(scenario.sessionEntry);
     expect(scenario.calls).toHaveLength(1);
-    expect(scenario.maintenance).not.toHaveBeenCalled();
-    expect(scenario.record).not.toHaveBeenCalled();
+    expectNoCalls(scenario.maintenance, scenario.record);
   });
 
   it.each([
@@ -691,8 +700,7 @@ describe("runCliTurnCompactionLifecycle", () => {
 
     expect(nativeCompact).toHaveBeenCalledTimes(1);
     expect(calls).toHaveLength(1);
-    expect(maintenance).not.toHaveBeenCalled();
-    expect(record).not.toHaveBeenCalled();
+    expectNoCalls(maintenance, record);
     expect(updatedEntry?.compactionCount).toBeUndefined();
     expect(updatedEntry?.cliSessionBindings?.codex).toBeUndefined();
     expect(updatedEntry?.cliSessionIds?.codex).toBeUndefined();
@@ -783,8 +791,7 @@ describe("runCliTurnCompactionLifecycle", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]?.abortSignal).toBeInstanceOf(AbortSignal);
       expect(calls[0]?.abortSignal?.aborted).toBe(true);
-      expect(maintenance).not.toHaveBeenCalled();
-      expect(record).not.toHaveBeenCalled();
+      expectNoCalls(maintenance, record);
       expect(sessionStore[sessionKey]?.cliSessionBindings?.["claude-cli"]?.sessionId).toBe(
         "claude-session",
       );
@@ -829,9 +836,8 @@ describe("runCliTurnCompactionLifecycle", () => {
     const { calls, record, sessionEntry } = scenario;
     const updatedEntry = await scenario.run();
 
-    expect(nativeCompact).not.toHaveBeenCalled();
+    expectNoCalls(nativeCompact, record);
     expect(calls).toHaveLength(0);
-    expect(record).not.toHaveBeenCalled();
     expect(updatedEntry).toBe(sessionEntry);
     expect(updatedEntry?.cliSessionBindings?.[provider]?.sessionId).toBe("native-session");
   });

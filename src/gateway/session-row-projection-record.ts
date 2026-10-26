@@ -20,7 +20,7 @@ import { resolveSessionPinnedHarnessId } from "../sessions/agent-harness-session
 import type { OpenClawAgentDatabaseIdentity } from "../state/openclaw-agent-db-identity.js";
 import type { SessionRepositoryWorkspaceRecord } from "../state/session-repository-workspaces.types.js";
 import type { readSessionRowFacts } from "./server-methods/session-placement-read-projection.js";
-import { compareSessionEntries } from "./session-list-order.js";
+import { compareSessionEntryPairs } from "./session-list-order.js";
 import { readSessionListSelectionFacts } from "./session-list-target.js";
 import { selectStoredSessionLineage } from "./session-store-key.js";
 import { sessionTitleRequests } from "./session-title-state.js";
@@ -167,8 +167,9 @@ export type Query = {
   storePath?: string;
   key?: string;
   sessionIdOrKey?: string;
-  parentSessionKey?: string;
-  sortBy?: Parameters<typeof compareSessionEntries>[4] | null;
+  /** Prepared qualified rows carry identity; raw keys retain alias resolution. */
+  parentSessionKey?: string | Pick<Row, "key" | "agentId">;
+  sortBy?: Parameters<typeof compareSessionEntryPairs>[2] | null;
 };
 export type Inputs = Parameters<typeof rowProjection.readSessionRowInputs>[0];
 export type SnapshotOptions = Pick<Inputs, "now" | "excludedChildKeys"> & {
@@ -423,9 +424,7 @@ export function publishTranscriptFields(
 export function sort<T extends EntryRow>(rows: T[], sortBy: Query["sortBy"]): T[] {
   return sortBy === null
     ? rows
-    : rows.toSorted((a, b) =>
-        compareSessionEntries(a.key, a.selection, b.key, b.selection, sortBy),
-      );
+    : rows.toSorted((a, b) => compareSessionEntryPairs([a.key, a.entry], [b.key, b.entry], sortBy));
 }
 
 function sameFallbackModelFacts(previous: Row["storedEntry"], current: SessionEntry) {
@@ -599,7 +598,15 @@ export function readSessionRowParents(
   for (const run of context.subagentRunsByChildSessionKey.get(row.key) ?? []) {
     addParent(run.controllerSessionKey || run.requesterSessionKey);
   }
-  return parents;
+  if (parents.size !== row.parents.size) {
+    return parents;
+  }
+  for (const parent of parents) {
+    if (!row.parents.has(parent)) {
+      return parents;
+    }
+  }
+  return row.parents;
 }
 
 /** Reproject held lineage without acquiring board, transcript, or database facts. */
@@ -610,21 +617,35 @@ export function readSessionRowLineage(
   context: SessionListRowContext,
   referenced?: (reference: string) => Row | undefined,
 ) {
-  const entry = projectGatewaySessionEntry(
+  const projected = projectGatewaySessionEntry(
     cfg,
     storedEntry,
     (key) =>
       selectSessionRowParent(cfg, key, row.agentId, row.storeTarget.storePath, referenced).key,
   );
+  // Accepted source identity covers every field except the two projected lineage keys.
+  // Deferred archives have newer stored metadata but have not accepted its projection yet.
+  const entry =
+    row.entry &&
+    (!row.entryAcquisitionPending && row.storedEntry === storedEntry
+      ? row.entry.parentSessionKey === projected.parentSessionKey &&
+        row.entry.spawnedBy === projected.spawnedBy
+      : isDeepStrictEqual(row.entry, projected))
+      ? row.entry
+      : projected;
+  const parents = readSessionRowParents(row, storedEntry, cfg, context, referenced);
+  const selection =
+    entry === row.entry ? row.selection : readSessionListSelectionFacts(row.key, entry);
   return {
     entry,
-    parents: readSessionRowParents(row, storedEntry, cfg, context, referenced),
-    selection: readSessionListSelectionFacts(row.key, entry),
+    parents,
+    selection: isDeepStrictEqual(row.selection, selection) ? row.selection : selection,
   };
 }
 
 export function acquireSessionRowEntry(params: {
   row: Row;
+  rows: ReadonlyMap<string, Row>;
   storedEntry: SessionEntry | undefined;
   cfg: Inputs["cfg"];
   context: SessionListRowContext;
@@ -640,18 +661,17 @@ export function acquireSessionRowEntry(params: {
     return undefined;
   }
   const lineage = readSessionRowLineage(row, storedEntry, cfg, context, params.referenced);
-  const entryChanged = !isDeepStrictEqual(lineage.entry, row.entry);
-  // Selection and profile indexes retain entry identity until its metadata changes.
-  if (!entryChanged && row.entry) {
-    lineage.entry = row.entry;
-  }
+  const entryChanged = lineage.entry !== row.entry;
   const { entry, parents } = lineage;
   // Equal timestamps still need the full metadata comparison.
   const changed =
-    !isDeepStrictEqual(row.parents, parents) ||
-    !Object.is(storedEntry.updatedAt, row.storedEntry?.updatedAt) ||
-    !isDeepStrictEqual(storedEntry, row.storedEntry) ||
-    entryChanged;
+    row.parents !== parents || !isDeepStrictEqual(storedEntry, row.storedEntry) || entryChanged;
+  if (!changed && row.sharingEntry === row.storedEntry && !row.entryAcquisitionPending) {
+    if (params.rows.get(identity(row)) !== row) {
+      put(row);
+    }
+    return row;
+  }
   // Archive custody can retain new stored metadata before its lineage is acquired.
   const includeChildren =
     changesSessionRowDependents(row.storedEntry, storedEntry) ||
