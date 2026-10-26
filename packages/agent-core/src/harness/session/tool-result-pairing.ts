@@ -26,6 +26,15 @@ type ToolCallOccurrence = {
 
 type ToolResultMessage = Extract<AgentMessage, { role: "toolResult" }>;
 
+type ToolResultIdAliases = {
+  toolCallId?: unknown;
+  toolUseId?: unknown;
+  tool_call_id?: unknown;
+  tool_use_id?: unknown;
+  callId?: unknown;
+  call_id?: unknown;
+};
+
 type ToolResultRecord = {
   result: ToolResultMessage;
   sourceResult: ToolResultMessage;
@@ -42,22 +51,13 @@ type ToolUsePairingFrame = {
   failed: boolean;
 };
 
-type ToolUsePairingClassification = {
-  frames: ToolUsePairingFrame[];
-  droppedDuplicateCount: number;
-  droppedOrphanCount: number;
-  droppedResults: Array<{ message: ToolResultMessage; index: number }>;
-};
-
-type ToolCallOccurrenceQueue<T> = {
+/** Tracks repeated provider ids by occurrence instead of collapsing them into a set. */
+export function createToolCallOccurrenceQueue<T>(): {
   add: (id: string, occurrence: T) => void;
   claim: (id: string) => T | undefined;
   clear: () => void;
   readonly size: number;
-};
-
-/** Tracks repeated provider ids by occurrence instead of collapsing them into a set. */
-export function createToolCallOccurrenceQueue<T>(): ToolCallOccurrenceQueue<T> {
+} {
   const pendingById = new Map<string, T[]>();
   let pendingCount = 0;
   return {
@@ -114,14 +114,7 @@ export function extractToolCallsFromAssistant(
 }
 
 export function extractToolResultIds(message: ToolResultMessage): string[] {
-  const record = message as {
-    toolCallId?: unknown;
-    toolUseId?: unknown;
-    tool_call_id?: unknown;
-    tool_use_id?: unknown;
-    callId?: unknown;
-    call_id?: unknown;
-  };
+  const record: ToolResultIdAliases = message;
   return normalizeUniqueTrimmedStringList([
     record.toolCallId,
     record.toolUseId,
@@ -133,13 +126,23 @@ export function extractToolResultIds(message: ToolResultMessage): string[] {
 }
 
 export function extractToolResultId(message: ToolResultMessage): string | null {
-  return extractToolResultIds(message)[0] ?? null;
+  const record: ToolResultIdAliases = message;
+  return (
+    normalizeOptionalString(record.toolCallId) ??
+    normalizeOptionalString(record.toolUseId) ??
+    normalizeOptionalString(record.tool_call_id) ??
+    normalizeOptionalString(record.tool_use_id) ??
+    normalizeOptionalString(record.callId) ??
+    normalizeOptionalString(record.call_id) ??
+    null
+  );
 }
 
 export function makeMissingToolResult(params: {
   toolCallId: string;
   toolName?: string;
   text?: string;
+  timestamp?: number;
 }): ToolResultMessage {
   return {
     role: "toolResult",
@@ -148,7 +151,7 @@ export function makeMissingToolResult(params: {
     content: [{ type: "text", text: params.text ?? DEFAULT_MISSING_TOOL_RESULT_TEXT }],
     details: { [SYNTHETIC_MISSING_TOOL_RESULT_DETAIL_KEY]: true, reason: "missing_tool_result" },
     isError: true,
-    timestamp: Date.now(),
+    timestamp: params.timestamp ?? Date.now(),
   };
 }
 
@@ -210,15 +213,12 @@ export function normalizeLegacyToolResultId(
 export function classifyToolUseResultPairing(
   messages: readonly AgentMessage[],
   options?: { preserveUnframedToolResults?: boolean },
-): ToolUsePairingClassification {
+): ToolUsePairingFrame[] {
   const frameStartIndexes = messages.flatMap((message, index) =>
     message?.role === "assistant" && extractToolCallsFromAssistant(message).length > 0
       ? [index]
       : [],
   );
-  let droppedDuplicateCount = 0;
-  let droppedOrphanCount = 0;
-  const droppedResults: Array<{ message: ToolResultMessage; index: number }> = [];
   const preserveUnframed = options?.preserveUnframedToolResults === true;
   const frameRecords: Array<ToolUsePairingFrame & { unclaimedResults: ToolResultRecord[] }> =
     frameStartIndexes.map((startIndex, frameIndex) => {
@@ -273,23 +273,13 @@ export function classifyToolUseResultPairing(
           }
           continue;
         }
-        droppedDuplicateCount += 1;
         const replaceable = isSyntheticMissingToolResult(normalized)
           ? undefined
           : syntheticById.claim(id);
         if (replaceable) {
-          const discardedSource = replaceable.sourceResult;
-          if (discardedSource) {
-            droppedResults.push({
-              message: discardedSource,
-              index: replaceable.sourceResultIndex ?? index,
-            });
-          }
           replaceable.result = normalizeToolResultName(normalized, replaceable.name);
           replaceable.sourceResult = message;
           replaceable.sourceResultIndex = index;
-        } else {
-          droppedResults.push({ message, index });
         }
       }
       const stopReason = (assistant as { stopReason?: string }).stopReason;
@@ -327,25 +317,11 @@ export function classifyToolUseResultPairing(
           )
         : [];
       if (candidates.length !== 1) {
-        droppedOrphanCount += preserveUnframed ? 0 : 1;
-        if (!preserveUnframed) {
-          droppedResults.push({ message: record.sourceResult, index: record.index });
-        }
         continue;
       }
       const candidate = candidates[0];
       if (!candidate) {
         continue;
-      }
-      droppedDuplicateCount += candidate.result ? 1 : 0;
-      if (candidate.result && isSyntheticMissingToolResult(candidate.result)) {
-        const discardedSource = candidate.sourceResult;
-        if (discardedSource) {
-          droppedResults.push({
-            message: discardedSource,
-            index: candidate.sourceResultIndex ?? record.index,
-          });
-        }
       }
       candidate.result = normalizeToolResultName(record.result, candidate.name);
       candidate.sourceResult = record.sourceResult;
@@ -356,13 +332,13 @@ export function classifyToolUseResultPairing(
     }
   }
 
-  return { frames: frameRecords, droppedDuplicateCount, droppedOrphanCount, droppedResults };
+  return frameRecords;
 }
 
 /** Select actual completed occurrences, never unmatched calls or synthesized missing results. */
 export function collectCompletedToolCallBlocks(messages: readonly AgentMessage[]): Set<object> {
   const completed = new Set<object>();
-  for (const frame of classifyToolUseResultPairing(messages).frames) {
+  for (const frame of classifyToolUseResultPairing(messages)) {
     for (const occurrence of frame.occurrences) {
       if (occurrence.sourceResult && !isSyntheticMissingToolResult(occurrence.sourceResult)) {
         const block = frame.assistant.content[occurrence.contentIndex];
@@ -378,9 +354,9 @@ export function collectCompletedToolCallBlocks(messages: readonly AgentMessage[]
 /** Select reset-tail model context without changing persisted entry bytes or order. */
 export function selectResetKeptEntries(entries: readonly SessionTreeEntry[]): SessionTreeEntry[] {
   const messages = entries.flatMap((entry) => (entry.type === "message" ? [entry.message] : []));
-  const pairing = classifyToolUseResultPairing(messages);
+  const frames = classifyToolUseResultPairing(messages);
   const pairedResults = new Set(
-    pairing.frames.flatMap((frame) =>
+    frames.flatMap((frame) =>
       frame.occurrences.flatMap((occurrence) =>
         occurrence.sourceResult ? [occurrence.sourceResult] : [],
       ),

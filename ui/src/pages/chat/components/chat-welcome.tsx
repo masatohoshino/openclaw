@@ -4,7 +4,7 @@ import type { AgentsListResult, SessionsListResult } from "../../../api/types.ts
 import { createBackgroundLayoutRef } from "../../../components/session-background-layout-context.tsx";
 import { AgentIdentityAvatar } from "../../../components/solid/identity-avatar.tsx";
 import { Kbd } from "../../../components/solid/kbd.tsx";
-import "../../../components/openclaw-mascot.ts";
+import "../../../components/openclaw-mascot.tsx";
 import { registerCommandPaletteEnglish } from "../../../i18n/locales/en-command-palette.ts";
 import { formatRelativeTimestamp } from "../../../lib/format.ts";
 import { i18nRevision, t } from "../../../lib/reactive/i18n.ts";
@@ -15,19 +15,32 @@ import {
 import {
   prepareWelcomeRecentSessions,
   resolveAssistantDisplayAvatar,
+  resolveWelcomeSuggestionKeys,
   type WelcomeRecentSession,
+  type WelcomeSuggestionAuth,
 } from "./chat-welcome.ts";
 
 registerCommandPaletteEnglish();
 
-export type ChatWelcomeProps = {
+export type ChatWelcomeIdentityProps = {
   currentAgentId?: string;
   agents?: AgentsListResult["agents"];
   assistantName: string;
-  /** Existing agent picker, shown in the new-session welcome heading. */
-  assistantNameControl?: JSX.Element;
   assistantAvatar: string | null;
   assistantAvatarUrl?: string | null;
+  sessionHost?: UiSessionDefaultsHost | null;
+  /** Connected principal's grant; selects starter prompts it can act on. */
+  operatorAuth?: WelcomeSuggestionAuth;
+  modelSetupRequired?: boolean;
+  onModelSetup?: () => void;
+  onDraftChange: (next: string) => void;
+  onSend: () => void;
+  onOpenSession?: (sessionKey: string) => void;
+};
+
+export type ChatWelcomeProps = {
+  /** Existing agent picker, shown in the new-session welcome heading. */
+  assistantNameControl?: JSX.Element;
   /** Hero hint override; defaults to the chat slash-command hint. */
   hint?: JSX.Element;
   /** Rendered between the hero and the recents (the new-session draft composer). */
@@ -38,20 +51,7 @@ export type ChatWelcomeProps = {
   fadeSecondaryContent?: boolean;
   sessions?: SessionsListResult | null;
   sessionKey?: string;
-  sessionHost?: UiSessionDefaultsHost | null;
-  modelSetupRequired?: boolean;
-  onModelSetup?: () => void;
-  onDraftChange: (next: string) => void;
-  onSend: () => void;
-  onOpenSession?: (sessionKey: string) => void;
-};
-
-const WELCOME_SUGGESTION_KEYS = [
-  "chat.welcome.suggestions.whatCanYouDo",
-  "chat.welcome.suggestions.summarizeRecentSessions",
-  "chat.welcome.suggestions.configureChannel",
-  "chat.welcome.suggestions.checkSystemHealth",
-];
+} & ChatWelcomeIdentityProps;
 
 /** The start-screen welcome block, shared by the empty chat and the new-session draft. */
 export function ChatWelcome(
@@ -130,7 +130,7 @@ export function ChatWelcome(
                 when={recentSessions().length > 0}
                 fallback={
                   <div class="agent-chat__suggestions">
-                    <For each={WELCOME_SUGGESTION_KEYS}>
+                    <For each={resolveWelcomeSuggestionKeys(props.operatorAuth)}>
                       {(key) => (
                         <button
                           type="button"

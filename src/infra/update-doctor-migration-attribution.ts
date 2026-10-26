@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { realpathSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { withArtifactPreservingStateReads } from "../state/artifact-preserving-state-reads.js";
@@ -6,11 +7,12 @@ import { getOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-mai
 import { formatErrorMessage } from "./errors.js";
 import { assertStateDatabaseAccessAllowed } from "./gateway-state-owner.js";
 import type { PostgresSyncConnection } from "./postgres-sync/connection.js";
-import { parseSqliteFileGeneration, sameSqliteFileGeneration } from "./sqlite-file-generation.js";
+import { parseSqliteFileGeneration } from "./sqlite-file-generation.js";
 import { runWithSqliteCleanup } from "./sqlite-lifecycle-errors.js";
 import { observeSqliteNativeClose } from "./sqlite-native-observer.js";
 import { runSqliteReadOnlyWorkerSync } from "./sqlite-readonly-worker.js";
 import { truncateSqliteWal } from "./sqlite-wal-checkpoint.js";
+import { readMatchingUpdateDatabaseGeneration } from "./update-database-generations.js";
 
 export type UpdateDoctorMigrationCapture = {
   expected(pathname: string): string | null | undefined;
@@ -28,11 +30,13 @@ type DoctorMigrationBackup = (
   db: DatabaseSync,
   options: { path: string; env: NodeJS.ProcessEnv; tables: readonly string[] },
 ) => { capture: MigrationSource; backupPath: string };
+type DoctorMigrationFullBackup = { path: string; generation?: string };
 const captures = new AsyncLocalStorage<{
   capture?: UpdateDoctorMigrationCapture;
   source?: MigrationSource;
   assertMigrationCurrent?: () => void;
   backup?: DoctorMigrationBackup;
+  fullBackups?: Map<string, DoctorMigrationFullBackup>;
 }>();
 
 /** Doctor's existing maintenance interval owns the publication receipt. */
@@ -52,7 +56,21 @@ export function runWithDoctorMigrationBackup<T>(
   backup: DoctorMigrationBackup,
   operation: () => T,
 ): T {
-  return captures.run({ ...captures.getStore(), backup }, operation);
+  return captures.run({ ...captures.getStore(), backup, fullBackups: new Map() }, operation);
+}
+
+/** Only the general Doctor backup owner admits full images for this maintenance run. */
+export function recordDoctorMigrationFullBackup(
+  sourcePath: string,
+  backup: DoctorMigrationFullBackup,
+): void {
+  captures.getStore()?.fullBackups?.set(realpathSync.native(sourcePath), backup);
+}
+
+export function getDoctorMigrationFullBackup(
+  sourcePath: string,
+): DoctorMigrationFullBackup | undefined {
+  return captures.getStore()?.fullBackups?.get(realpathSync.native(sourcePath));
 }
 
 export function getDoctorMigrationBackup(
@@ -117,7 +135,6 @@ function observeMigrationClose(
   pathname: string,
   capture: UpdateDoctorMigrationCapture,
   expected: string | null,
-  files: ReturnType<typeof readSqliteFiles>,
   assertCurrent: () => void,
 ) {
   const maintenance = getOpenClawDatabaseMaintenanceScope();
@@ -136,17 +153,7 @@ function observeMigrationClose(
         throw new Error("SQLite migration close lost its maintenance scope.");
       }
       assertCurrent();
-      const closedFiles = readSqliteFiles(pathname);
-      // EXCLUSIVE locking retains a cleared rollback journal after COMMIT;
-      // returning to NORMAL removes it. A retained journal must still match.
-      const expectedFiles = closedFiles.journal ? files : { ...files, journal: undefined };
-      if (!sameSqliteFileGeneration(expectedFiles, closedFiles)) {
-        throw new Error("SQLite migration source changed before native close.");
-      }
       const after = readSqliteGeneration(pathname);
-      if (!sameSqliteFileGeneration(closedFiles, readSqliteFiles(pathname))) {
-        throw new Error("SQLite migration source changed while verifying native close.");
-      }
       assertCurrent();
       capture.accept(pathname, expected, after);
     } catch (error) {
@@ -218,16 +225,28 @@ export function runUpdateSqliteMigration<T>(
     "Update migration exclusion",
     () => {
       try {
-        // Bracket the captured generation and our first native read with exact
-        // payload/identity evidence. WAL-index recovery may reset only -shm.
-        const files = readSqliteFiles(pathname);
-        if (expected === null && (files.database.size !== 0n || files.journal || files.wal)) {
-          throw new Error("Created SQLite migration family is no longer empty.");
+        // Maintenance owns the source; concurrent outside writers are unsupported.
+        if (expected === null) {
+          const files = readSqliteFiles(pathname);
+          if (files.database.size !== 0n || files.journal || files.wal) {
+            throw new Error("Created SQLite migration family is no longer empty.");
+          }
         }
-        const before = expected === null ? null : readSqliteGeneration(pathname);
+        // Before native exclusion, a cold read-only open may add an empty WAL
+        // index to the captured family. Exclusive handles keep the isolated read:
+        // closing a raw source descriptor here would release their process locks.
+        const before =
+          expected === null
+            ? null
+            : mode === "exclusive"
+              ? readSqliteGeneration(pathname)
+              : readMatchingUpdateDatabaseGeneration(pathname, expected);
         assertCurrent();
+        if (before === undefined || (mode === "exclusive" && before !== expected)) {
+          throw new Error(`SQLite migration source changed after update capture: ${pathname}`);
+        }
         if (before !== expected) {
-          throw new Error("SQLite migration source changed after update capture.");
+          capture.accept(pathname, expected, before);
         }
         if (mode !== "exclusive") {
           // Start WAL in normal mode: a cold exclusive WAL cannot later return
@@ -236,15 +255,7 @@ export function runUpdateSqliteMigration<T>(
         }
         // Exclusive connection mode retains the native lock after each COMMIT.
         db.exec("PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; ROLLBACK;"); // sqlite-allow-raw -- Bound the migration's native exclusion.
-        const currentFiles = readSqliteFiles(pathname);
         assertCurrent();
-        // An empty native BEGIN creates its own rollback journal without changing
-        // the main file. No journal or WAL existed before our exclusion attempt.
-        const lockedFiles =
-          before === null ? { ...currentFiles, journal: undefined } : currentFiles;
-        if (!sameSqliteFileGeneration(files, lockedFiles)) {
-          throw new Error("SQLite migration source changed after update capture.");
-        }
         const source: MigrationSource | undefined =
           before === null ? undefined : { path: pathname, generation: before, assertCurrent };
         return captures.run({ capture, source, assertMigrationCurrent: assertCurrent }, () => {
@@ -258,15 +269,16 @@ export function runUpdateSqliteMigration<T>(
           assertCurrent();
           // Checkpoint under native exclusion so this postimage survives the source handle closing.
           truncateSqliteWal(db, pathname);
-          const postimageFiles = readSqliteFiles(pathname);
           const after = readSqliteGeneration(pathname);
           assertCurrent();
           capture.accept(pathname, before, after);
-          observeMigrationClose(db, pathname, capture, after, postimageFiles, assertCurrent);
+          observeMigrationClose(db, pathname, capture, after, assertCurrent);
           return result;
         });
       } catch (error) {
-        capture.refuse("SQLite migration publication could not be verified.");
+        capture.refuse(
+          `SQLite migration publication could not be verified: ${formatErrorMessage(error)}`,
+        );
         throw error;
       }
     },

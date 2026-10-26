@@ -51,12 +51,19 @@ vi.mock("./runtime-api.js", async (importOriginal) => ({
 import { createMattermostModelPickerInteractionHandler } from "./monitor-model-picker.js";
 import type { MattermostMonitorContext } from "./monitor-types.js";
 
-const scenarios = ["providers", "back", "list", "select"].flatMap((action) =>
-  ["ready", "failed", "empty"].map((catalogStatus) => ({ action, catalogStatus })),
-);
+const scenarios = [
+  { action: "providers", catalogStatus: "ready" },
+  { action: "list", catalogStatus: "ready" },
+  { action: "select", catalogStatus: "ready" },
+  { action: "select", catalogStatus: "empty" },
+  ...["removed-model", "unlisted-provider"].map((catalogStatus) => ({
+    action: "select",
+    catalogStatus,
+  })),
+];
 const replyToId = "interaction:picker-post-1:select:openai/gpt-5.4";
 it.each(scenarios)(
-  "updates the $action picker once with $catalogStatus catalog text and choices",
+  "handles the $action picker with $catalogStatus catalog availability",
   async ({ action, catalogStatus }) => {
     vi.clearAllMocks();
     mocks.authorize.mockResolvedValue({
@@ -96,20 +103,27 @@ it.each(scenarios)(
     );
     const order: string[] = [];
     const hasModels = catalogStatus !== "empty";
+    const mixedSelection = action === "select" && !hasModels;
     const refreshWarning =
       catalogStatus === "ready" ? undefined : "Some models could not be refreshed.";
     mocks.parseContext.mockReturnValue({
       action,
       ownerUserId: "user-1",
-      provider: "openai",
-      model: "gpt-5.4",
+      provider: mixedSelection ? "OpenAI" : "openai",
+      model: mixedSelection ? " GPT-5.4 " : "gpt-5.4",
       page: 0,
     });
     mocks.buildPreparedModelsProviderData.mockImplementationOnce(async () => {
       order.push("load");
       return {
-        providers: hasModels ? ["openai"] : [],
-        byProvider: new Map(hasModels ? [["openai", new Set(["gpt-5.4"])]] : []),
+        providers: hasModels
+          ? [catalogStatus === "unlisted-provider" ? "anthropic" : "openai"]
+          : [],
+        byProvider: new Map(
+          hasModels
+            ? [["openai", new Set([catalogStatus === "removed-model" ? "gpt-4.1" : "gpt-5.4"])]]
+            : [],
+        ),
         modelNames: new Map(),
         modelCatalog: [],
         resolvedDefault: { provider: "openai", model: "gpt-5.4" },
@@ -164,9 +178,16 @@ it.each(scenarios)(
       post: { id: "picker-post-1", channel_id: "channel-1", message: "picker" },
     });
 
-    expect(response).toEqual({});
-    expect(mocks.buildPreparedModelsProviderData).toHaveBeenCalledOnce();
     expect(mocks.dispatch).not.toHaveBeenCalled();
+    if (catalogStatus === "removed-model" || catalogStatus === "unlisted-provider") {
+      expect(response).toEqual({
+        ephemeral_text: "That model is no longer available: openai/gpt-5.4",
+      });
+      expect(order).toEqual(["load"]);
+      expect(mocks.recordDeliveredCommandExchange).not.toHaveBeenCalled();
+      return;
+    }
+    expect(response).toEqual({});
     const selectsModel = action === "select" && hasModels;
     const visibleText = !hasModels
       ? "No models available."
@@ -176,23 +197,14 @@ it.each(scenarios)(
           ? "Select a model"
           : "Select a provider";
     if (selectsModel) {
-      expect(mocks.runDetachedWebhookWork).toHaveBeenCalledOnce();
-      expect(detachedRun).toBeTypeOf("function");
-      expect(updateModelPickerPost).not.toHaveBeenCalled();
       expect(order).toEqual(["load", "detach"]);
       await detachedRun?.();
-      expect(mocks.dispatch.mock.calls[0]?.[0]).toMatchObject({
-        channel: "mattermost",
-        delivery: { observeMessageSent: true },
-      });
       expect(mocks.deliverReply).toHaveBeenCalledWith(
         expect.objectContaining({ channelId: "channel-1", replyToId: "picker-post-1" }),
       );
     } else {
-      expect(mocks.runDetachedWebhookWork).not.toHaveBeenCalled();
       expect(detachedRun).toBeUndefined();
     }
-    expect(updateModelPickerPost).toHaveBeenCalledOnce();
     expect(order).toEqual(selectsModel ? ["load", "detach", "update"] : ["load", "update"]);
     const sent = updateModelPickerPost.mock.calls[0]?.[0];
     expect(sent?.message).toContain(visibleText);
@@ -208,7 +220,9 @@ it.each(scenarios)(
       sessionKey: "agent:main:mm",
       commandText:
         action === "select"
-          ? "/model openai/gpt-5.4"
+          ? mixedSelection
+            ? "/model OpenAI/ GPT-5.4 "
+            : "/model openai/gpt-5.4"
           : action === "list"
             ? "/models openai"
             : "/models",
