@@ -19,6 +19,11 @@ This design applies equally to an orchestrator spawned from an interactive
 session and one spawned from an isolated cron run. Cron owns delivery of the
 scheduled result, while the registry owns the nested orchestrator's continuation.
 
+An accepted yield stops new steering immediately. Tool calls in the same model
+response settle before the execution ends, preserving each call's own result.
+Stop, timeouts, and permission revocation can still cancel those calls while
+they settle. The handoff does not start another model request.
+
 ## Ownership through the handoff
 
 | Phase                | Owner                                         | Required handoff                                                                                                                                                       |
@@ -70,8 +75,11 @@ cannot replace the batch's delivery state; already committed delivery evidence
 remains valid. Restart activation reconciles retained requester-turn bindings
 before resuming child completion.
 
-Restart restores pending completion reservations in requester FIFO order. When a
-restored wave needs no further delivery, the registry releases its unclaimed
+Restart restores ready completion reservations in requester FIFO order. A cohort
+still waiting for a child or descendant stays with the registry without reserving
+the requester's mailbox, so ordinary user input can run in FIFO order while it
+waits. The existing settlement events make its continuation eligible when ready.
+When a restored wave needs no further delivery, the registry releases its unclaimed
 mailbox reservations after its settlement commits. Already delivered waves must
 not hold later yielded cohorts behind an unprepared input. Claimed turns keep
 their existing execution owner.

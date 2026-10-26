@@ -1,6 +1,7 @@
 // Control UI test helper supports control ui e2e setup.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -255,6 +256,8 @@ export type ControlUiMockGatewayScenario = {
   /** Simulate a legacy Gateway that predates the advertised method catalog. */
   omitFeatureMethods?: boolean;
   historyMessages?: unknown[];
+  /** Disable only for scenarios exercising the separate chat.startup fallback. */
+  subscriptionInitialHistory?: boolean;
   sessionReactions?: Record<string, Record<string, MessageReactionSummary[]>>;
   /** Canonical per-session transcripts, shared by history and startup reads. */
   sessionTranscripts?: Record<
@@ -493,15 +496,30 @@ export async function startControlUiE2eServer(
 // document reloaded on a deep link like /chat/research requests
 // /chat/assets/*.js; without this contract Vite's SPA fallback answers with
 // index.html and the module never executes, bricking the page.
-function controlUiE2eGatewayAssetPathPlugin(): Plugin {
+function controlUiE2eGatewayAssetPathPlugin(outDir: string): Plugin {
+  const assetRoot = `${path.resolve(outDir, "assets")}${path.sep}`;
   return {
     name: "control-ui-e2e-gateway-asset-paths",
     configurePreviewServer(server) {
-      server.middlewares.use((req, _res, next) => {
+      server.middlewares.use((req, res, next) => {
         const url = req.url ?? "";
         const assetsIndex = url.indexOf("/assets/");
         if (assetsIndex > 0) {
           req.url = url.slice(assetsIndex);
+        }
+        const assetPath = path.resolve(outDir, `.${(req.url ?? "").split("?")[0]}`);
+        if (assetPath.startsWith(assetRoot)) {
+          // Match bundled Gateway assets without caching missing files or SPA fallbacks.
+          void stat(assetPath).then(
+            (file) => {
+              if (file.isFile()) {
+                res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+              }
+              next();
+            },
+            () => next(),
+          );
+          return;
         }
         next();
       });
@@ -674,7 +692,7 @@ export async function startBuiltControlUiE2eServer(
     plugins: [
       publication.plugin,
       ...(sharedConfig.plugins ?? []),
-      controlUiE2eGatewayAssetPathPlugin(),
+      controlUiE2eGatewayAssetPathPlugin(outDir),
       controlUiE2ePreviewConfigPlugin(bootstrapConfig),
     ],
     preview: {
@@ -794,6 +812,7 @@ function normalizeScenario(
     featureMethods: scenario.featureMethods ?? [...defaultControlUiFeatureMethods],
     omitFeatureMethods: scenario.omitFeatureMethods ?? false,
     historyMessages: scenario.historyMessages ?? [],
+    subscriptionInitialHistory: scenario.subscriptionInitialHistory ?? true,
     sessionReactions: scenario.sessionReactions ?? {},
     sessionTranscripts: scenario.sessionTranscripts ?? {},
     maxPayload: scenario.maxPayload ?? DEFAULT_MOCK_MAX_PAYLOAD_BYTES,
@@ -1255,33 +1274,6 @@ function installControlUiMockGateway(
       // Committed fixture source remains available in the current page.
     }
     return source;
-  }
-
-  /** Transcript fields a scenario configured on chat.history, replayed onto the
-   * chat.startup payload so both bootstrap paths serve the same conversation. */
-  function configuredHistoryTranscript(): Record<string, unknown> {
-    const configured = scenario.methodResponses["chat.history"];
-    if (
-      !isRecord(configured) ||
-      responseFixtures.cases(configured) ||
-      responseFixtures.sequence(configured)
-    ) {
-      return {};
-    }
-    const transcript: Record<string, unknown> = {};
-    for (const field of [
-      "messages",
-      "activity",
-      "sessionId",
-      "sessionInfo",
-      "inFlightRun",
-      "thinkingLevel",
-    ]) {
-      if (hasOwn(configured, field)) {
-        transcript[field] = configured[field];
-      }
-    }
-    return transcript;
   }
 
   function recordSessionsPatchMany(params: unknown, response: unknown): unknown {
@@ -1884,8 +1876,7 @@ function installControlUiMockGateway(
           ...(method === "chat.startup"
             ? {
                 metadata: { models: scenario.models },
-                // Static transcript overrides intentionally replay on startup too.
-                ...configuredHistoryTranscript(),
+                ...responseFixtures.historyTranscript(),
               }
             : {}),
         };
@@ -2097,11 +2088,13 @@ function installControlUiMockGateway(
       case "sessions.subscribe":
         return { subscribed: true };
       case "sessions.messages.subscribe":
-        return {
-          key: subscriptionRouting.canonicalKey(
-            isRecord(params) && typeof params.key === "string" ? params.key : "",
+        return subscriptionRouting.subscribeResponse(params, (historyParams) =>
+          commitFixtureResponse(
+            "chat.startup",
+            historyParams,
+            buildResponse("chat.startup", historyParams),
           ),
-        };
+        );
       case "sessions.messages.unsubscribe":
         return { ok: true };
       case "terminal.open": {
