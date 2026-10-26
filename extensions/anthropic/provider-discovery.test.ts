@@ -77,8 +77,12 @@ it.each([
     expect(
       await provider.catalog!.run({
         ...input,
-        resolveProviderAuth: () => ({ mode: "none" as const, source: "none" as const }),
-        resolveProviderApiKey: () => ({}),
+        resolveProviderAuth: () => ({
+          apiKey: undefined,
+          mode: "none" as const,
+          source: "none" as const,
+        }),
+        resolveProviderApiKey: () => ({ apiKey: undefined }),
       }),
     ).toBeNull();
     expect(discoverClaudeCliModels).not.toHaveBeenCalled();
