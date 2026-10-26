@@ -70,8 +70,19 @@ it.each([
   ["not-installed", false],
 ])("auth probe: %s", async (status, authenticated) => {
   probeClaudeCliAuthStatus.mockResolvedValue({ status });
-  const auth = await prepare();
+  const input = capture();
+  const auth = await prepare(input);
   expect(Boolean(auth?.apiKey)).toBe(authenticated);
+  if (!authenticated) {
+    expect(
+      await provider.catalog!.run({
+        ...input,
+        resolveProviderAuth: () => ({ mode: "none" as const, source: "none" as const }),
+        resolveProviderApiKey: () => ({}),
+      }),
+    ).toBeNull();
+    expect(discoverClaudeCliModels).not.toHaveBeenCalled();
+  }
 });
 
 it("joins one probe per cancellation scope and preserves a surviving capture", async () => {
