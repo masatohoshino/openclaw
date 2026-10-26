@@ -16,7 +16,8 @@ const mocks = vi.hoisted(() => ({
 // mock-isolation: Liveness tests observe inbound dispatch without starting agent turns.
 vi.mock("./inbound.js", () => ({ handleClickClackInbound: mocks.handleClickClackInbound }));
 
-vi.mock("./access.js", () => ({
+vi.mock("./access.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./access.js")>()),
   resolveClickClackInboundAccess: mocks.resolveClickClackInboundAccess,
 }));
 
