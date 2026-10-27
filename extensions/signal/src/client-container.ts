@@ -456,10 +456,6 @@ export async function streamContainerEvents(params: {
       log("[signal-ws] ping received");
     });
 
-    ws.on("pong", () => {
-      log("[signal-ws] pong received");
-    });
-
     if (params.abortSignal) {
       abortHandler = () => {
         log("[signal-ws] aborted, closing connection");
