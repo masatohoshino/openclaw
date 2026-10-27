@@ -21,8 +21,8 @@ it("reconnects when the receive socket peer stops answering pings, and only then
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
   const server = http.createServer((_request, response) => response.end("ok"));
   // The first peer never pongs, like a path that died without a FIN.
-  const silent = new WebSocketServer({ noServer: true, autoPong: false });
-  const live = new WebSocketServer({ noServer: true });
+  const silent = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, autoPong: false });
+  const live = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const sockets: WebSocket[] = [];
   server.on("upgrade", (request, socket, head) => {
     const wss = sockets.length === 0 ? silent : live;
