@@ -416,6 +416,21 @@ describe("config cli roster integration", () => {
     });
   });
 
+  it.each(["unset", "patch"])("removes a keyed agent entry through config %s", async (command) => {
+    const raw = JSON.stringify({ agents: { ownership: "explicit", entries: originalEntries } });
+    await withConfig(raw, async ({ configPath, tempDir }) => {
+      const patchPath = path.join(tempDir, "patch.json");
+      writeFixtureJsonSync(patchPath, { agents: { entries: { worker: null } } });
+      await invoke(
+        command === "unset"
+          ? ["config", "unset", "agents.entries.worker"]
+          : ["config", "patch", "--file", patchPath],
+      );
+      expect(Object.keys(load(configPath).agents.entries)).toEqual(["main"]);
+      expect(errors).toEqual([]);
+    });
+  });
+
   it("resets submitted numeric roster order after replacing a null parent", async () => {
     const entries = { "1": { name: "first" }, "2": { name: "second" } };
     const raw = JSON.stringify({
