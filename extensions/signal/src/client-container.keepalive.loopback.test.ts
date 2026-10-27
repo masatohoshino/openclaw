@@ -28,7 +28,9 @@ it("reconnects when the receive socket peer stops answering pings, and only then
     this: WebSocket,
     ...args: Parameters<WebSocket["ping"]>
   ) {
-    if (this.url && !clients.includes(this)) clients.push(this);
+    if (this.url && !clients.includes(this)) {
+      clients.push(this);
+    }
     return ping.apply(this, args);
   });
   const server = http.createServer((_request, response) => response.end("ok"));
@@ -105,5 +107,6 @@ it("reconnects when the receive socket peer stops answering pings, and only then
       promisify(live.close.bind(live))(),
       promisify(server.close.bind(server))(),
     ]);
+    expect(vi.getTimerCount()).toBe(0);
   }
 });
