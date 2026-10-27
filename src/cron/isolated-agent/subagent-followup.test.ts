@@ -29,9 +29,16 @@ vi.mock("../../agents/run-wait.js", async () => {
   };
 });
 
+import * as announceOutput from "../../agents/subagents/announce/subagent-announce-output.js";
 import * as gatewayCallRuntime from "../../gateway/call.js";
 const callGateway = vi.spyOn(gatewayCallRuntime, "callGateway").mockResolvedValue({ status: "ok" });
-afterAll(() => callGateway.mockRestore());
+const finalAnswer = vi
+  .spyOn(announceOutput, "readSubagentRunFinalAnswer")
+  .mockResolvedValue(undefined);
+afterAll(() => {
+  callGateway.mockRestore();
+  finalAnswer.mockRestore();
+});
 
 const { listDescendantRunsForRequester } = await import("./run-subagent-registry.runtime.js");
 const { hasUnsettledCronDescendants } = await import("./delivery-subagent-registry.runtime.js");
@@ -130,6 +137,28 @@ describe("readDescendantSubagentFallbackReply", () => {
     latestReply.mockResolvedValue("stale transcript").mockClear();
     await expect(fallbackReply()).resolves.toBe(expected);
     expect(latestReply).not.toHaveBeenCalled();
+  });
+
+  const cappedRun = (outcome: "ok" | "error" = "ok"): SubagentRunRecord => ({
+    ...terminalRun({ disposition: "visible", text: "Line 1\nLine…" }),
+    execution: { status: "terminal", endedAt: 2000, outcome: { status: outcome } },
+  });
+  it.each([
+    ["complete answer", cappedRun(), "\nLine 1\nLine 2\nEND\n", "Line 1\nLine 2\nEND", true],
+    ["unavailable answer", cappedRun(), undefined, "Line 1\nLine…", true],
+    ["failed child", cappedRun("error"), undefined, "Line 1\nLine…", false],
+  ] as const)("capped child preview: %s", async (_name, run, answer, expected, reads) => {
+    listRuns.mockResolvedValue([run]);
+    finalAnswer.mockClear();
+    if (reads) {
+      finalAnswer.mockResolvedValueOnce(answer);
+    }
+    await expect(fallbackReply()).resolves.toBe(expected);
+    if (reads) {
+      expect(finalAnswer).toHaveBeenCalledWith(run);
+    } else {
+      expect(finalAnswer).not.toHaveBeenCalled();
+    }
   });
 });
 
