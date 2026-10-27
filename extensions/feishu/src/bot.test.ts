@@ -841,7 +841,7 @@ describe("handleFeishuMessage command authorization", () => {
   );
 
   it.each(["/status", "/btw progress?", "/btw why?\n  at a (a.ts:1)"])(
-    "keeps DM %s separate from agent mention context",
+    "keeps DM %j separate from agent mention context",
     async (command) => {
       computeCommandAccess.mockReturnValue(true);
       await receiveConfigured(

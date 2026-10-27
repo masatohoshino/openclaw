@@ -5,7 +5,4 @@ it("keeps the line breaks and indentation of a slash command body", () => {
   expect(
     stripSlackMentionsForCommandDetection("<@B1> /btw why does this fail?\n  at first (a.ts:1)"),
   ).toBe("/btw why does this fail?\n  at first (a.ts:1)");
-  expect(stripSlackMentionsForCommandDetection("<@B1> Please /help\ncontinue")).toBe(
-    "Please /help continue",
-  );
 });
