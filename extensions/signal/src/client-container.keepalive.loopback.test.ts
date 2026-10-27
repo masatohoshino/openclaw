@@ -17,7 +17,7 @@ async function roundTrip(socket: WebSocket) {
   await pong;
 }
 
-it("reconnects when the receive socket peer stops answering pings", async () => {
+it("reconnects when the receive socket peer stops answering pings, and only then", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
   const server = http.createServer((_request, response) => response.end("ok"));
   // The first peer never pongs, like a path that died without a FIN.
@@ -37,6 +37,7 @@ it("reconnects when the receive socket peer stops answering pings", async () => 
   const port = await listenOnLoopback(server);
   const abort = new AbortController();
   const runtime = createRuntimeSpies();
+  const statusSink = vi.fn();
   const events: number[] = [];
   const stream = runSignalSseLoop({
     baseUrl: `http://127.0.0.1:${port}`,
@@ -44,6 +45,7 @@ it("reconnects when the receive socket peer stops answering pings", async () => 
     transportKind: "container",
     abortSignal: abort.signal,
     runtime,
+    statusSink,
     policy: { initialMs: 1, maxMs: 1, factor: 1, jitter: 0 },
     onEvent: (event) => {
       const message = JSON.parse(event.data ?? "{}") as { envelope: { timestamp: number } };
@@ -58,6 +60,16 @@ it("reconnects when the receive socket peer stops answering pings", async () => 
     await vi.advanceTimersByTimeAsync(25_000);
     await vi.waitFor(() => expect(events).toEqual([2]), { timeout: 3_000 });
     expect(runtime.error).toHaveBeenCalledWith("[signal-ws] heartbeat timed out; reconnecting");
+    expect(statusSink).toHaveBeenCalledWith(
+      expect.objectContaining({ connected: false, lifecycle: "recovering" }),
+    );
+    // A quiet peer that answers pings keeps its socket.
+    for (let tick = 0; tick < 3; tick++) {
+      await vi.advanceTimersByTimeAsync(25_000);
+      await roundTrip(sockets[1]!);
+    }
+    expect(sockets).toHaveLength(2);
+    expect(runtime.error).toHaveBeenCalledTimes(1);
   } finally {
     abort.abort();
     await stream;
