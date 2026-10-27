@@ -47,6 +47,10 @@ Actual compaction or reset starts a new prompt series. Permission changes still
 apply immediately through execution gates and in-history instruction updates;
 they do not require replacing the earlier system prompt.
 
+Restart and scheduled-turn orphan recovery use the same bounded model-history
+selection as session startup. Transcript-only metadata does not replace that
+history with a shorter navigation window or remove its earlier provider inputs.
+
 Client-capability tool listing uses the session's recorded operator declaration.
 Internal wake and restart-recovery turns retain the same tool definitions and
 Code Mode catalog, including `screen`, without borrowing execution authority.
@@ -76,10 +80,24 @@ Isolated settled-turn finalization uses a separate cache key scoped to the run.
 Its tool-free prompt and full transcript differ from the conversation request,
 so it does not replace the conversation's cache or history-diagnostic baseline.
 
+Inter-session messages steered into an active turn carry their source envelope
+on the first model request. Reopening the session replays the same envelope,
+including for subagent completion deliveries, instead of adding it to earlier
+message text on the next run.
+
 Live embedded turns carry watched-group membership and titles beside the current
 turn instead of rebuilding the system suffix. Routes that retain runtime context
 replay earlier snapshots unchanged. The watch registry and existing read-access
 gates still determine what the model may see; a watch never grants send access.
+
+Embedded turns also carry producer-marked conversation and delivery instructions
+beside the current turn. Subagent role, rules, output format, restrictions, and
+conditional spawning rules remain in the system prompt on launch and follow-up.
+The task message carries the actual completion mode, depth, requester, and label.
+Unmarked spawn-profile and attachment additions keep their existing system placement.
+Configured instructions outside the marked conversation section remain in the
+system prompt. Skill, tool, memory, and configuration refreshes retain their
+existing update behavior.
 
 ## Keep replayed tool results stable
 
