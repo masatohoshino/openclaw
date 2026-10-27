@@ -411,6 +411,11 @@ export async function streamContainerEvents(params: {
       // A network path that dies without a FIN never emits close; the missed pong
       // ends this stream so the outer loop reconnects. The helper stops on close.
       startWebSocketKeepalive(ws, () => {
+        // Local receive backpressure can leave the peer's pong unread. The
+        // keepalive keeps checking, and resumes enforcement when reads resume.
+        if (ws.isPaused) {
+          return;
+        }
         logError("[signal-ws] heartbeat timed out; reconnecting");
         ws.terminate();
       });

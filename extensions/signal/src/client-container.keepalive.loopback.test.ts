@@ -3,12 +3,15 @@ import { once } from "node:events";
 import http from "node:http";
 import { promisify } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
-import { type WebSocket, WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { listenOnLoopback } from "../../test-support/hanging-loopback-server.js";
 import { createRuntimeSpies } from "../../test-support/runtime-spies.js";
 import { runSignalSseLoop } from "./sse-reconnect.js";
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 // A server ping/pong round trip fences real I/O after each injected clock tick.
 async function roundTrip(socket: WebSocket) {
@@ -19,6 +22,15 @@ async function roundTrip(socket: WebSocket) {
 
 it("reconnects when the receive socket peer stops answering pings, and only then", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+  const clients: WebSocket[] = [];
+  const ping = WebSocket.prototype.ping;
+  vi.spyOn(WebSocket.prototype, "ping").mockImplementation(function (
+    this: WebSocket,
+    ...args: Parameters<WebSocket["ping"]>
+  ) {
+    if (this.url && !clients.includes(this)) clients.push(this);
+    return ping.apply(this, args);
+  });
   const server = http.createServer((_request, response) => response.end("ok"));
   // The first peer never pongs, like a path that died without a FIN.
   const silent = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, autoPong: false });
@@ -68,6 +80,18 @@ it("reconnects when the receive socket peer stops answering pings, and only then
       await vi.advanceTimersByTimeAsync(25_000);
       await roundTrip(sockets[1]!);
     }
+    expect(sockets).toHaveLength(2);
+    expect(runtime.error).toHaveBeenCalledTimes(1);
+    // A locally paused receiver cannot consume pongs, even from a healthy peer.
+    const receiver = clients[1]!;
+    receiver.pause();
+    await vi.advanceTimersByTimeAsync(75_000);
+    expect(sockets).toHaveLength(2);
+    expect(runtime.error).toHaveBeenCalledTimes(1);
+    receiver.resume();
+    await roundTrip(sockets[1]!);
+    await vi.advanceTimersByTimeAsync(25_000);
+    await roundTrip(sockets[1]!);
     expect(sockets).toHaveLength(2);
     expect(runtime.error).toHaveBeenCalledTimes(1);
   } finally {
