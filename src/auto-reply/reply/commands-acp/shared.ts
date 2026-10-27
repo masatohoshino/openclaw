@@ -220,7 +220,6 @@ export function parseSpawnInput(
 /** Removes `--session` options and keeps the rest of the instruction verbatim. */
 export function parseSteerInput(text: string): Result<ParsedSteerInput, string> {
   const matches = Array.from(text.matchAll(/\S+/g));
-  const spans = matches.map((match) => match.index);
   const normalizedTokens = matches.map((match) => normalizeAcpOptionToken(match[0]));
   let sessionToken: string | undefined;
   let instruction = "";
@@ -240,10 +239,10 @@ export function parseSteerInput(text: string): Result<ParsedSteerInput, string> 
         };
       }
       sessionToken = normalizeOptionalString(sessionOption.value.value);
-      instruction += text.slice(copiedTo, spans[i]);
+      instruction += text.slice(copiedTo, matches[i]?.index);
       i = sessionOption.value.nextIndex;
       // The option and the whitespace after it go, so removing it leaves one separator.
-      copiedTo = spans[i] ?? text.length;
+      copiedTo = matches[i]?.index ?? text.length;
       continue;
     }
     i += 1;
