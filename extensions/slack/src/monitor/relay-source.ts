@@ -1,7 +1,12 @@
 import { Buffer } from "node:buffer";
 import { isIP } from "node:net";
 import { createNodeProxyAgent } from "openclaw/plugin-sdk/fetch-runtime";
-import { sleepWithAbort, warn, type RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
+import {
+  computeBackoff,
+  sleepWithAbort,
+  warn,
+  type RuntimeEnv,
+} from "openclaw/plugin-sdk/runtime-env";
 import {
   asOptionalRecord,
   normalizeOptionalString,
@@ -18,7 +23,7 @@ import { formatSlackError } from "../errors.js";
 import type { SlackSendIdentity } from "../send.js";
 import { parseSlackMessageEvent, type SlackMessageEvent } from "../types.js";
 import type { SlackIdentityHealth } from "./enterprise-install.js";
-import { createSlackTransportOutage } from "./reconnect-policy.js";
+import { SLACK_SOCKET_RECONNECT_POLICY } from "./reconnect-policy.js";
 
 export type SlackRelaySourceConfig = {
   url: string;
@@ -50,12 +55,14 @@ export async function monitorSlackRelaySource(params: {
   setStatus?: (next: Record<string, unknown>) => void;
   setIdentity?: (identity: SlackSendIdentity | undefined) => void;
 }): Promise<void> {
-  const outage = createSlackTransportOutage();
+  let reconnectAttempts = 0;
+  let disconnectedAt: number | undefined;
   while (!params.abortSignal?.aborted) {
     let connection: WebSocket | undefined;
     try {
       connection = await openRelayWebSocket(params.config, params.abortSignal);
-      outage.end();
+      reconnectAttempts = 0;
+      disconnectedAt = undefined;
       params.setStatus?.({
         connected: true,
         lastConnectedAt: Date.now(),
@@ -74,17 +81,18 @@ export async function monitorSlackRelaySource(params: {
       if (params.abortSignal?.aborted) {
         break;
       }
-      const delayMs = outage.retry();
+      reconnectAttempts += 1;
+      const delayMs = computeBackoff(SLACK_SOCKET_RECONNECT_POLICY, reconnectAttempts);
       params.setStatus?.({
         connected: false,
         lifecycle: "recovering",
-        lastDisconnect: { at: outage.startedAt, error: formatSlackError(err) },
+        lastDisconnect: { at: (disconnectedAt ??= Date.now()), error: formatSlackError(err) },
         lastError: formatSlackError(err),
       });
       params.runtime.log?.(
         warn(
           `slack relay mode disconnected; reconnecting in ${Math.round(delayMs / 1000)}s ` +
-            `(attempt ${outage.attempts}) ` +
+            `(attempt ${reconnectAttempts}) ` +
             `reason="${formatSlackError(err)}"`,
         ),
       );
