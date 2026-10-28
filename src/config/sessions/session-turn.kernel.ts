@@ -10,7 +10,7 @@ import {
 import {
   readSessionGoalOperationReceipt,
   writeSessionGoalOperationReceipt,
-} from "./goals-operations.js";
+} from "./goals-operation-receipts.js";
 import { sqliteSessionEntriesEqual } from "./session-accessor.sqlite-entry-equality.js";
 import {
   readQualifiedSessionEntryRow,
@@ -207,7 +207,7 @@ export function createSessionTranscriptTurnKernel(
               continue;
             }
           }
-          if (!sessionTurnPredicateMatches(transactionDb, resolved, append.predicate)) {
+          if (!sessionTurnPredicateMatches(transactionDb, resolved, append, currentEntry)) {
             predicateSkipped = true;
             continue;
           }
