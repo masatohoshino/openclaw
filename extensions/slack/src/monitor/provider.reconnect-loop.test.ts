@@ -68,6 +68,32 @@ describe("slack socket reconnect loop", () => {
       lastError: error,
     });
   });
+  it("keeps one disconnect episode across retries until the socket starts again", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => (now += 60_000));
+    let attempts = 0;
+    slackTestState.appStartMock.mockImplementation(async () => {
+      attempts += 1;
+      if (attempts === 3) {
+        // Connected, then the SDK could not restart the dropped socket.
+        queueMicrotask(() =>
+          slackTestState.socketModeClient?.emit("unable_to_socket_mode_start", new Error("EPIPE")),
+        );
+        return;
+      }
+      if (attempts === 5) {
+        controller.abort();
+        return;
+      }
+      throw new Error("ECONNRESET");
+    });
+    await finishRetries();
+    const disconnectedAt = setStatus.mock.calls.flatMap(([patch]) =>
+      patch.lastDisconnect ? [(patch.lastDisconnect as { at: number }).at] : [],
+    );
+    const [firstOutage, secondOutage] = new Set(disconnectedAt);
+    expect(disconnectedAt).toEqual([firstOutage, firstOutage, secondOutage, secondOutage]);
+  });
   it("includes the configured Socket Mode logger context in start retry diagnostics", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     failStarts(1, () => {

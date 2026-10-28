@@ -8,7 +8,6 @@ import {
 import { captureRuntimeConfigAsyncReader } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import {
   warn,
-  computeBackoff,
   createNonExitingRuntime,
   sleepWithAbort,
   type RuntimeEnv,
@@ -71,9 +70,9 @@ import {
   withSlackPresenceLifecycleSignal,
 } from "./provider-workspace-client.js";
 import {
+  createSlackTransportOutage,
   formatSlackSocketModeSharedConnectionWarning,
   registerSlackSocketModeConnectionDiagnostics,
-  SLACK_SOCKET_RECONNECT_POLICY,
 } from "./reconnect-policy.js";
 import { resolveSlackMonitorPolicy } from "./runtime-policy.js";
 import { registerSlackMonitorSlashCommands } from "./slash.js";
@@ -642,7 +641,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts) {
     }
 
     if (socketClient) {
-      let reconnectAttempts = 0;
+      const outage = createSlackTransportOutage();
       const authState = { consecutiveInvalidAuth: 0 };
       const logError = (message: string) => runtime.error?.(message);
       let hasLoggedSocketConnected = false;
@@ -654,7 +653,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts) {
             socketClient,
             abortSignal: opts.abortSignal,
             onStarted: async () => {
-              reconnectAttempts = 0;
+              outage.end();
               authState.consecutiveInvalidAuth = 0;
               await recoverSlackIdentity();
               publishSlackConnectedStatus(opts.setStatus, ctx.identityHealth);
@@ -674,7 +673,8 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts) {
           if (opts.abortSignal?.aborted) {
             break;
           }
-          publishSlackDisconnectedStatus(opts.setStatus, disconnect.error);
+          delayMs = outage.retry();
+          publishSlackDisconnectedStatus(opts.setStatus, disconnect.error, outage.startedAt);
 
           trackSlackAuthFailure(
             disconnect.error,
@@ -684,13 +684,11 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts) {
             authState,
           );
 
-          reconnectAttempts += 1;
-          delayMs = computeBackoff(SLACK_SOCKET_RECONNECT_POLICY, reconnectAttempts);
           if (runtime.log) {
             const suffix = disconnect.error ? ` (${formatSlackError(disconnect.error)})` : "";
             runtime.log(
               warn(
-                `slack socket disconnected (${disconnect.event}); reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${reconnectAttempts}/∞)${suffix}`,
+                `slack socket disconnected (${disconnect.event}); reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${outage.attempts}/∞)${suffix}`,
               ),
             );
           }
@@ -703,9 +701,8 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts) {
             logError,
             authState,
           );
-          publishSlackDisconnectedStatus(opts.setStatus, err);
-          reconnectAttempts += 1;
-          delayMs = computeBackoff(SLACK_SOCKET_RECONNECT_POLICY, reconnectAttempts);
+          delayMs = outage.retry();
+          publishSlackDisconnectedStatus(opts.setStatus, err, outage.startedAt);
           if (runtime.error) {
             const lastSdkMessage = socketModeLogger.getLastMessage();
             const reason = formatSlackError(
@@ -716,7 +713,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts) {
               ? `; last SDK log: ${lastSdkMessage.trim()}`
               : "";
             runtime.error(
-              `slack socket mode failed to start; retry ${reconnectAttempts}/∞ in ${Math.round(delayMs / 1000)}s reason="${reason}${sdkContext}"`,
+              `slack socket mode failed to start; retry ${outage.attempts}/∞ in ${Math.round(delayMs / 1000)}s reason="${reason}${sdkContext}"`,
             );
           }
         }

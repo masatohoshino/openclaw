@@ -1,3 +1,4 @@
+import { computeBackoff } from "openclaw/plugin-sdk/runtime-env";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { formatSlackError } from "../errors.js";
 
@@ -12,12 +13,40 @@ const SLACK_DEFINITIVE_AUTH_ERROR_RE =
 /** Consecutive isolated invalid_auth failures before the channel turns terminal. */
 const SLACK_ISOLATED_INVALID_AUTH_TERMINAL_LIMIT = 3;
 
-export const SLACK_SOCKET_RECONNECT_POLICY = {
+const SLACK_SOCKET_RECONNECT_POLICY = {
   initialMs: 2_000,
   maxMs: 30_000,
   factor: 1.8,
   jitter: 0.25,
 } as const;
+
+/**
+ * Tracks one Slack transport outage across reconnect attempts. Retries share
+ * one outage window; only a connected transport or a new account run ends it.
+ * Renewing the disconnect timestamp would indefinitely defer host recovery.
+ */
+export function createSlackTransportOutage() {
+  let attempts = 0;
+  let startedAt: number | undefined;
+  return {
+    get attempts() {
+      return attempts;
+    },
+    get startedAt() {
+      return startedAt;
+    },
+    end() {
+      attempts = 0;
+      startedAt = undefined;
+    },
+    /** Records a failed attempt and returns the delay before the next one. */
+    retry() {
+      attempts += 1;
+      startedAt ??= Date.now();
+      return computeBackoff(SLACK_SOCKET_RECONNECT_POLICY, attempts);
+    },
+  };
+}
 
 type SlackSocketDisconnectEvent = "disconnect" | "unable_to_socket_mode_start";
 

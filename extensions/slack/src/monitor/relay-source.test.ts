@@ -580,6 +580,8 @@ describe("Slack relay proxy environment", () => {
             lastError: expect.stringContaining("HTTP/1.1 407 Proxy Authentication Required"),
           });
         }
+        // Both failures belong to one outage, so the retry keeps its start time.
+        expect(disconnects[1]?.lastDisconnect).toEqual(disconnects[0]?.lastDisconnect);
         expect(fixture.relayConnections()).toBe(0);
         expect(fixture.upgrades).toEqual([]);
         expect(monitor.acceptRelayEvent).not.toHaveBeenCalled();
