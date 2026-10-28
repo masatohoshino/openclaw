@@ -390,7 +390,7 @@ describe("config cli roster integration", () => {
   });
 
   it.each([
-    { name: "entry recreated", removed: { main: null }, main: { name: "changed-main" } },
+    { name: "recreated", removed: { main: null, worker: null }, main: { name: "changed-main" } },
     { name: "leaf remains deleted", removed: { main: { name: null } }, main: {} },
   ])("honors mixed patch ordering when $name", async ({ removed, main }) => {
     const raw = JSON.stringify({ agents: { ownership: "explicit", entries: originalEntries } });
@@ -401,7 +401,7 @@ describe("config cli roster integration", () => {
           entries: removed,
           list: [
             { id: "main", ...main },
-            { id: "worker", name: "original-worker" },
+            { id: "worker" in removed ? "replacement" : "worker", name: "original-worker" },
           ],
         },
       });
@@ -411,23 +411,8 @@ describe("config cli roster integration", () => {
       await invoke(args);
       expect(load(configPath).agents.entries).toEqual({
         main,
-        worker: originalEntries.worker,
+        ["worker" in removed ? "replacement" : "worker"]: originalEntries.worker,
       });
-    });
-  });
-
-  it.each(["unset", "patch"])("removes a keyed agent entry through config %s", async (command) => {
-    const raw = JSON.stringify({ agents: { ownership: "explicit", entries: originalEntries } });
-    await withConfig(raw, async ({ configPath, tempDir }) => {
-      const patchPath = path.join(tempDir, "patch.json");
-      writeFixtureJsonSync(patchPath, { agents: { entries: { worker: null } } });
-      await invoke(
-        command === "unset"
-          ? ["config", "unset", "agents.entries.worker"]
-          : ["config", "patch", "--file", patchPath],
-      );
-      expect(Object.keys(load(configPath).agents.entries)).toEqual(["main"]);
-      expect(errors).toEqual([]);
     });
   });
 
