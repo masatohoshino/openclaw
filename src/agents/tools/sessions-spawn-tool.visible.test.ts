@@ -332,4 +332,32 @@ describe("sessions_spawn visible work receipts", () => {
       });
     },
   );
+
+  it("keeps a visible completion top-level for a top-level Slack request", async () => {
+    hoisted.inProcessCreationMock.mockResolvedValue({
+      key: "agent:main:dashboard:slack-child",
+      sessionId: "slack-child",
+      runStarted: true,
+      runId: "slack-child-run",
+    });
+    const registerRun = vi.fn();
+    const tool = createSessionsSpawnTool({
+      agentSessionKey: "agent:main:main",
+      agentChannel: "slack",
+      agentTo: "channel:C-stale",
+      agentThreadId: "stale-thread",
+      currentMessagingTarget: "channel:C-current",
+      currentThreadTs: "1793210000.000100",
+      currentMessageId: "1793210000.000100",
+      replyToMode: "off",
+      config: { agents: { defaults: { model: "mock-provider/primary" }, entries: { main: {} } } },
+      registerRun,
+      countActiveRuns: () => 0,
+    });
+
+    await tool.execute("slack-top-level", { task: "inspect issue", visible: true });
+
+    const registered = registerRun.mock.calls[0]?.[0] as { requesterOrigin?: unknown } | undefined;
+    expect(registered?.requesterOrigin).toEqual({ channel: "slack", to: "channel:C-current" });
+  });
 });
