@@ -26,6 +26,8 @@ import {
 import { getClickClackDiscussionInstallationId } from "./installation.js";
 import { captureDiscussionRegistration } from "./register.test-support.js";
 import {
+  isClickClackDiscussionChannelRevoked,
+  isClickClackDiscussionChannelRevokedAsync,
   markClickClackDiscussionChannelIdentityRevoked,
   markClickClackDiscussionChannelRevoked,
 } from "./revoked-channel-store.js";
@@ -148,6 +150,14 @@ function boundedStoreOptions(namespace = "discussion-bindings") {
   return { namespace, maxEntries: 10_000, overflowPolicy: "reject-new" } as const;
 }
 const bindingOptions = boundedStoreOptions();
+function nativeRevocations(env: NodeJS.ProcessEnv) {
+  return createPluginStateSyncKeyedStoreForTests("clickclack", {
+    namespace: "discussion-revoked-channels",
+    maxEntries: 100_000,
+    overflowPolicy: "reject-new",
+    env,
+  });
+}
 function nativeBindings(env: NodeJS.ProcessEnv) {
   return createPluginStateSyncKeyedStoreForTests<ClickClackDiscussionBinding>("clickclack", {
     ...bindingOptions,
@@ -286,6 +296,23 @@ it("denies bound messages and session tools after the plugin-state owner publish
   expect(native.lookup(sessionKey)).toBeUndefined();
 });
 
+it("adopts a revocation stored under the NUL-joined SQLite key once", async () => {
+  const f = generationFixture();
+  const channel = { serverBaseUrl: "https://clickclack.example", channelId: "chn_legacy" };
+  const legacyKey = `${channel.serverBaseUrl}\0${channel.channelId}`;
+  nativeRevocations(f.env).register(legacyKey, {
+    accountId: "default",
+    ...channel,
+    revokedAt: 1,
+  });
+
+  await expect(
+    isClickClackDiscussionChannelRevokedAsync({ runtime: f.runtime, ...channel }),
+  ).resolves.toBe(true);
+  expect(nativeRevocations(f.env).lookup(legacyKey)).toBeUndefined();
+  expect(isClickClackDiscussionChannelRevoked({ runtime: f.runtime, ...channel })).toBe(true);
+});
+
 it.each(["unchanged", "revoked", "replaced"] as const)(
   "uses published %s authority when a channel rename resumes without synchronous state reads",
   async (change) => {
@@ -305,18 +332,7 @@ it.each(["unchanged", "revoked", "replaced"] as const)(
     const renaming = track(f.service.reconcile(sessionKey));
     await entered.promise;
     if (change === "revoked") {
-      const revocations = createPluginStateSyncKeyedStoreForTests("clickclack", {
-        namespace: "discussion-revoked-channels",
-        maxEntries: 100_000,
-        overflowPolicy: "reject-new",
-        env: f.env,
-      });
-      revocations.register(`${binding.serverBaseUrl}\0${binding.channelId}`, {
-        accountId: binding.accountId,
-        serverBaseUrl: binding.serverBaseUrl,
-        channelId: binding.channelId,
-        revokedAt: Date.now(),
-      });
+      await markClickClackDiscussionChannelIdentityRevoked({ runtime: f.runtime, ...binding });
     } else if (change === "replaced") {
       nativeBindings(f.env).register(sessionKey, { ...binding, channelId: "chn_replacement" });
     }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 import { preparePluginStateRead } from "openclaw/plugin-sdk/plugin-state-runtime";
@@ -35,9 +36,37 @@ const nativeStoresByRuntime = new WeakMap<
   PluginRuntime,
   PluginStateSyncKeyedStore<RevokedDiscussionChannel>
 >();
+const legacyAdoptionsByRuntime = new WeakMap<PluginRuntime, Promise<void>>();
 
+// Keys must be portable to PostgreSQL (no NUL) and bounded in length; a hex
+// digest of the encoded pair is both.
 function revokedChannelKey(params: { serverBaseUrl: string; channelId: string }): string {
-  return [params.serverBaseUrl.replace(/\/+$/u, ""), params.channelId].join("\0");
+  return createHash("sha256")
+    .update(JSON.stringify([params.serverBaseUrl.replace(/\/+$/u, ""), params.channelId]), "utf8")
+    .digest("hex")
+    .slice(0, 32);
+}
+
+// Markers written before the digest key used a NUL-joined key, which only SQLite
+// could store. They are authority evidence, so re-key them once per runtime by
+// listing the namespace; PostgreSQL refuses NUL in key operations and never held
+// one. Synchronous readers see adopted markers after the first async operation.
+function adoptLegacyMarkers(runtime: PluginRuntime): Promise<void> {
+  let adoption = legacyAdoptionsByRuntime.get(runtime);
+  if (!adoption) {
+    adoption = (async () => {
+      const store = getStore(runtime);
+      for (const entry of await store.entries()) {
+        if (entry.key.includes("\0")) {
+          await store.registerIfAbsent(revokedChannelKey(entry.value), entry.value);
+          await store.delete(entry.key);
+        }
+      }
+    })();
+    adoption.catch(() => legacyAdoptionsByRuntime.delete(runtime));
+    legacyAdoptionsByRuntime.set(runtime, adoption);
+  }
+  return adoption;
 }
 
 function getStore(runtime: PluginRuntime): PluginStateKeyedStore<RevokedDiscussionChannel, 2> {
@@ -64,6 +93,7 @@ export async function markClickClackDiscussionChannelRevoked(
     revokedAt: Date.now(),
     binding,
   };
+  await adoptLegacyMarkers(runtime);
   const bindings = getClickClackDiscussionBindingStore(runtime);
   for (;;) {
     const owner = await bindings.observeCurrent(sessionKey);
@@ -125,6 +155,7 @@ export async function markClickClackDiscussionChannelIdentityRevoked(params: {
     channelId: params.channelId,
     revokedAt: Date.now(),
   };
+  await adoptLegacyMarkers(params.runtime);
   await getStore(params.runtime).register(revokedChannelKey(value), value);
 }
 
@@ -133,6 +164,7 @@ export async function clearClickClackDiscussionChannelRevoked(params: {
   serverBaseUrl: string;
   channelId: string;
 }): Promise<void> {
+  await adoptLegacyMarkers(params.runtime);
   await getStore(params.runtime).delete(revokedChannelKey(params));
 }
 
@@ -157,6 +189,7 @@ export async function prepareClickClackDiscussionChannelRevocation(params: {
   serverBaseUrl: string;
   channelId: string;
 }) {
+  await adoptLegacyMarkers(params.runtime);
   const facts = await preparePluginStateRead(getStore(params.runtime), revokedChannelKey(params));
   return {
     isRevoked: (binding?: ClickClackDiscussionBinding) => {
@@ -177,6 +210,7 @@ export async function isClickClackDiscussionChannelRevokedAsync(params: {
   channelId: string;
   binding?: ClickClackDiscussionBinding;
 }): Promise<boolean> {
+  await adoptLegacyMarkers(params.runtime);
   return revocationApplies(
     await getStore(params.runtime).lookup(revokedChannelKey(params)),
     params.binding,
