@@ -1,0 +1,31 @@
+# Base 83064b3ae11, isolated Gateway, state family on PostgreSQL 17, fake ClickClack server, synthetic token
+$ openclaw gateway call sessions.create --params {"key":"agent:main:dashboard:proof-room","label":"Proof room"} --json
+{ "ok": true, "key": "agent:main:dashboard:proof-room", ... }
+$ openclaw gateway call session.discussion.open --params {"sessionKey":"agent:main:dashboard:proof-room"} --json
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_request_error",
+    "code": "UNAVAILABLE",
+    "message": "PostgreSQL plugin state keys cannot contain NUL characters.",
+    "retryable": false
+  }
+}
+
+# fake ClickClack server log
+  2026-10-30T17:55:37.526Z CREATE CHANNEL chn_room1 name=proof-room
+
+# Gateway log
+  2026-10-31T02:55:37.532+09:00 [ws] ⇄ res ✗ session.discussion.open 57ms errorCode=UNAVAILABLE errorMessage=PostgreSQL plugin state keys cannot contain NUL characters. bytes=174
+  2026-10-31T02:55:48.205+09:00 [ws] ⇄ res ✗ session.discussion.open 13ms errorCode=UNAVAILABLE errorMessage=PostgreSQL plugin state keys cannot contain NUL characters. bytes=174
+
+# retry: same error, no new ClickClack calls
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_request_error",
+    "code": "UNAVAILABLE",
+    "message": "PostgreSQL plugin state keys cannot contain NUL characters.",
+    "retryable": false
+  }
+}
