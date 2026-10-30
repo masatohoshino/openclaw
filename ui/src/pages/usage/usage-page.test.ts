@@ -45,14 +45,19 @@ describe("UsagePage cache convergence", () => {
     };
     const request = usageRequest(() => result);
     const { page } = await loadUsagePage(request);
-    expect(page.querySelector(".callout.danger")?.textContent).toBe(message);
+    expect(page.querySelector(".callout.danger")).toBeNull();
+    expect(
+      page.querySelector(".usage-partial-notice:not(.usage-partial-notice--off)")?.textContent,
+    ).toContain(message);
     expect(page.textContent).not.toContain("Select a date range and click Refresh");
 
     result = cacheSnapshot("fresh").result;
     refreshButton(page).click();
     await vi.advanceTimersByTimeAsync(0);
     await page.updateComplete;
-    expect(page.querySelector(".callout.danger")).toBeNull();
+    expect(page.querySelector(".usage-partial-notice")?.classList).toContain(
+      "usage-partial-notice--off",
+    );
   });
 
   beforeEach(() => {
@@ -131,7 +136,7 @@ describe("UsagePage cache convergence", () => {
       expect(Boolean(page.querySelector(".usage-overview-card"))).toBe(committed);
       // Badges keep their slots; uncomputed totals show placeholders, never values.
       expect(
-        [...page.querySelectorAll(".usage-header-metrics .usage-metric-badge strong")].every(
+        [...page.querySelectorAll(".usage-summary-strip .usage-metric-badge strong")].every(
           (node) => node.textContent === "—",
         ),
       ).toBe(!committed);

@@ -99,12 +99,6 @@ function buildForegroundCtx(
   return buildTestCtx({
     MessageSid: messageId,
     SessionKey: "agent:main:whatsapp:direct:+1000",
-    AccountId: "default",
-    From: "whatsapp:+1000",
-    To: "whatsapp:bot",
-    ChatType: "direct",
-    Provider: "whatsapp",
-    Surface: "whatsapp",
     OriginatingChannel: "whatsapp",
     OriginatingTo: "whatsapp:+1000",
     ...overrides,
@@ -411,7 +405,7 @@ describe("foreground reply delivery order", () => {
     },
   );
 
-  it.each(["status command", "queue admission notice"] as const)(
+  it.each(["status command", "queue admission notice", "queued"] as const)(
     "delivers %s immediately while later ordinary output retains the active turn's fence",
     async (noticeKind) => {
       const deliveries: Delivery[] = [];
@@ -427,8 +421,10 @@ describe("foreground reply delivery order", () => {
         "notice-message": async (params) => {
           const payload = { text: notice, isStatusNotice: true };
           params.dispatcher.sendFinalReply(
-            noticeKind === "queue admission notice"
-              ? setReplyPayloadMetadata(payload, { queueAdmissionNotice: true })
+            noticeKind !== "status command"
+              ? setReplyPayloadMetadata(payload, {
+                  queueAdmissionNotice: noticeKind === "queued" ? "queued" : true,
+                })
               : payload,
           );
           return queuedFinalResult();
@@ -449,8 +445,6 @@ describe("foreground reply delivery order", () => {
             "notice-message",
             noticeKind === "status command"
               ? {
-                  CommandAuthorized: true,
-                  CommandSource: "text",
                   CommandTurn: {
                     kind: "text-slash",
                     source: "text",
@@ -458,10 +452,6 @@ describe("foreground reply delivery order", () => {
                     commandName: "status",
                     body: "/status",
                   },
-                  Body: "/status",
-                  RawBody: "/status",
-                  CommandBody: "/status",
-                  BodyForAgent: "/status",
                 }
               : {},
           ),
