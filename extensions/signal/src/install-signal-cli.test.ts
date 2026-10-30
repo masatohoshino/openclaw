@@ -290,3 +290,13 @@ it.each([
   );
   expect(fetchMock).not.toHaveBeenCalled();
 });
+
+it("keeps the Homebrew error after long warnings", async () => {
+  brewMock.mockReturnValue("/opt/homebrew/bin/brew");
+  const stderr = `Warning: ${"w".repeat(300)}\nError: signal-cli: no bottle available!`;
+  runMock.mockResolvedValueOnce({ code: 1, stdout: "", stderr });
+  expect(await install("darwin", "arm64")).toEqual({
+    ok: false,
+    error: `brew install signal-cli failed (exit 1): ...${"w".repeat(160)}\nError: signal-cli: no bottle available!`,
+  });
+});

@@ -100,3 +100,12 @@ it.each([
   expect(await install()).toEqual({ ok: false, error });
   expect(runCommandMock).not.toHaveBeenCalled();
 });
+
+it("keeps the Homebrew error after long warnings", async () => {
+  const stderr = `Warning: ${"w".repeat(300)}\nError: imsg: no bottle available!`;
+  runCommandMock.mockResolvedValueOnce({ code: 1, stdout: "", stderr });
+  expect(await install()).toEqual({
+    ok: false,
+    error: `brew install steipete/tap/imsg failed (exit 1): ...${"w".repeat(166)}\nError: imsg: no bottle available!`,
+  });
+});
