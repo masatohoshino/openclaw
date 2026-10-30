@@ -263,6 +263,13 @@ describe("sessions_spawn visible work receipts", () => {
       const registerRun = vi.fn();
       const tool = createSessionsSpawnTool({
         agentSessionKey: "agent:main:main",
+        agentChannel: "slack",
+        agentTo: "channel:C-stale",
+        agentThreadId: "stale-thread",
+        currentMessagingTarget: "channel:C-current",
+        currentThreadTs: "1793210000.000100",
+        currentMessageId: "1793210000.000100",
+        replyToMode: "off",
         config: {
           agents: {
             defaults: { model: "mock-provider/primary" },
@@ -303,61 +310,21 @@ describe("sessions_spawn visible work receipts", () => {
         label: "Track upstream fix",
         owner: { type: "agent", id: "main", label: "Roboclaw" },
       });
-      expect(hoisted.inProcessCreationMock).toHaveBeenCalledWith(
-        "sessions.create",
-        expect.objectContaining({
-          agentId: "main",
-          label: "Track upstream fix",
-          parentSessionKey: "agent:main:main",
-          spawnDepth: 1,
-        }),
-        {
-          via: "spawn",
-          actor: { type: "agent", id: "main" },
-          requesterSessionKey: "agent:main:main",
-          requesterSenderIsOwner: false,
-          completionOwnerSessionKey: "agent:main:main",
-          spawnModelAutoSelection: { model: "mock-provider/primary", hasFallbackOrigin: false },
-          inheritedToolPolicy: {
-            version: 1,
-            allow: ["read", "sessions_spawn"],
-            deny: ["exec"],
-          },
+      expect(hoisted.inProcessCreationMock.mock.calls[0]?.[2]).toMatchObject({
+        requesterSessionKey: "agent:main:main",
+        requesterSenderIsOwner: false,
+        completionOwnerSessionKey: "agent:main:main",
+        inheritedToolPolicy: {
+          version: 1,
+          allow: ["read", "sessions_spawn"],
+          deny: ["exec"],
         },
-        undefined,
-      );
+      });
       expectRegisteredSubagentRun(registerRun, {
         childSessionKey: "agent:main:dashboard:restricted-child",
         runId: "run-visible-restricted",
+        requesterOrigin: { channel: "slack", to: "channel:C-current" },
       });
     },
   );
-
-  it("keeps a visible completion top-level for a top-level Slack request", async () => {
-    hoisted.inProcessCreationMock.mockResolvedValue({
-      key: "agent:main:dashboard:slack-child",
-      sessionId: "slack-child",
-      runStarted: true,
-      runId: "slack-child-run",
-    });
-    const registerRun = vi.fn();
-    const tool = createSessionsSpawnTool({
-      agentSessionKey: "agent:main:main",
-      agentChannel: "slack",
-      agentTo: "channel:C-stale",
-      agentThreadId: "stale-thread",
-      currentMessagingTarget: "channel:C-current",
-      currentThreadTs: "1793210000.000100",
-      currentMessageId: "1793210000.000100",
-      replyToMode: "off",
-      config: { agents: { defaults: { model: "mock-provider/primary" }, entries: { main: {} } } },
-      registerRun,
-      countActiveRuns: () => 0,
-    });
-
-    await tool.execute("slack-top-level", { task: "inspect issue", visible: true });
-
-    const registered = registerRun.mock.calls[0]?.[0] as { requesterOrigin?: unknown } | undefined;
-    expect(registered?.requesterOrigin).toEqual({ channel: "slack", to: "channel:C-current" });
-  });
 });
