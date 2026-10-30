@@ -5,7 +5,6 @@ import type { StatementSync } from "node:sqlite";
 import * as tar from "tar";
 import { describe, expect, it, vi } from "vitest";
 import { backupRestoreCommand } from "../commands/backup-restore.js";
-import { buildBackupArchivePath } from "../commands/backup-shared.js";
 import { parseBackupManifest, type BackupManifest } from "../commands/backup-verify-manifest.js";
 import { beginDoctorMaintenance } from "../commands/doctor-maintenance.js";
 import { backupDoctorMigrationDatabases } from "../commands/doctor-migration-backup.js";
@@ -21,6 +20,7 @@ import {
 } from "../state/openclaw-state-db.js";
 import { getOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-maintenance-context.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { buildBackupArchivePath } from "./backup-archive-path-policy.js";
 import { createBackupArchive } from "./backup-create.js";
 import {
   bindFreshClientCredentialStore,
@@ -301,7 +301,11 @@ describe("whole-archive credential relocation", () => {
             root: process.cwd(),
             options: { repair: true, nonInteractive: true },
             runtime,
-            beforeStateMutation: createDoctorOriginalCaptureHook({ root: process.cwd(), runtime }),
+            beforeStateMutation: createDoctorOriginalCaptureHook({
+              root: process.cwd(),
+              runtime,
+              reportFindings: () => {},
+            }),
           });
           try {
             await maintenance!.run(() =>
