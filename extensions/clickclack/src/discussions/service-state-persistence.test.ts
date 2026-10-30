@@ -296,7 +296,7 @@ it("denies bound messages and session tools after the plugin-state owner publish
   expect(native.lookup(sessionKey)).toBeUndefined();
 });
 
-it("adopts a revocation stored under the NUL-joined SQLite key once", async () => {
+it("denies synchronous access until legacy SQLite revocations are adopted", async () => {
   const f = generationFixture();
   const channel = { serverBaseUrl: "https://clickclack.example", channelId: "chn_legacy" };
   const legacyKey = `${channel.serverBaseUrl}\0${channel.channelId}`;
@@ -305,12 +305,17 @@ it("adopts a revocation stored under the NUL-joined SQLite key once", async () =
     ...channel,
     revokedAt: 1,
   });
+  const unrevoked = { ...channel, channelId: "chn_unrevoked" };
+  captureDiscussionRegistration(f.runtime);
+  expect(isClickClackDiscussionChannelRevoked({ runtime: f.runtime, ...channel })).toBe(true);
+  expect(isClickClackDiscussionChannelRevoked({ runtime: f.runtime, ...unrevoked })).toBe(true);
 
   await expect(
     isClickClackDiscussionChannelRevokedAsync({ runtime: f.runtime, ...channel }),
   ).resolves.toBe(true);
   expect(nativeRevocations(f.env).lookup(legacyKey)).toBeUndefined();
   expect(isClickClackDiscussionChannelRevoked({ runtime: f.runtime, ...channel })).toBe(true);
+  expect(isClickClackDiscussionChannelRevoked({ runtime: f.runtime, ...unrevoked })).toBe(false);
 });
 
 it.each(["unchanged", "revoked", "replaced"] as const)(

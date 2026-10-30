@@ -37,6 +37,7 @@ const nativeStoresByRuntime = new WeakMap<
   PluginStateSyncKeyedStore<RevokedDiscussionChannel>
 >();
 const legacyAdoptionsByRuntime = new WeakMap<PluginRuntime, Promise<void>>();
+const legacyAdoptedRuntimes = new WeakSet<PluginRuntime>();
 
 // Keys must be portable to PostgreSQL (no NUL) and bounded in length; a hex
 // digest of the encoded pair is both.
@@ -50,8 +51,8 @@ function revokedChannelKey(params: { serverBaseUrl: string; channelId: string })
 // Markers written before the digest key used a NUL-joined key, which only SQLite
 // could store. They are authority evidence, so re-key them once per runtime by
 // listing the namespace; PostgreSQL refuses NUL in key operations and never held
-// one. Synchronous readers see adopted markers after the first async operation.
-function adoptLegacyMarkers(runtime: PluginRuntime): Promise<void> {
+// one. Synchronous authority reads deny access until adoption succeeds.
+export function adoptLegacyMarkers(runtime: PluginRuntime): Promise<void> {
   let adoption = legacyAdoptionsByRuntime.get(runtime);
   if (!adoption) {
     adoption = (async () => {
@@ -62,6 +63,7 @@ function adoptLegacyMarkers(runtime: PluginRuntime): Promise<void> {
           await store.delete(entry.key);
         }
       }
+      legacyAdoptedRuntimes.add(runtime);
     })();
     adoption.catch(() => legacyAdoptionsByRuntime.delete(runtime));
     legacyAdoptionsByRuntime.set(runtime, adoption);
@@ -175,6 +177,9 @@ export function isClickClackDiscussionChannelRevoked(params: {
   channelId: string;
   binding?: ClickClackDiscussionBinding;
 }): boolean {
+  if (!legacyAdoptedRuntimes.has(params.runtime)) {
+    return true;
+  }
   // Final tool/disclosure authority must observe released synchronous SDK writes.
   let store = nativeStoresByRuntime.get(params.runtime);
   if (!store) {

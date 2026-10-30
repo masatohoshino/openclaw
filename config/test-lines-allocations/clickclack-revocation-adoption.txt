@@ -1,0 +1,2 @@
+5
+# Synchronous authorization stays denied until legacy revocation adoption completes.
