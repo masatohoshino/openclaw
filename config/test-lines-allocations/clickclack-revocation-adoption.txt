@@ -1,2 +1,2 @@
-5
-# Synchronous authorization stays denied until legacy revocation adoption completes.
+103
+# PostgreSQL revocation storage and fail-closed legacy SQLite adoption regressions.
