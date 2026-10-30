@@ -1,0 +1,48 @@
+# Upgrade from the latest stable on SQLite state: openclaw v2026.10.9 with @openclaw/clickclack@2026.10.9, then this branch (c980afaf3dc) on the same state directory
+# Isolated Gateway (own state directory and port), local fake ClickClack server, synthetic tokens
+
+## 1. v2026.10.9
+$ openclaw gateway call sessions.create (v2026.10.9)
+  "ok": true,
+  "key": "agent:main:dashboard:proof-room",
+$ openclaw gateway call session.discussion.open (v2026.10.9)
+{
+  "state": "open",
+  "embedUrl": "http://127.0.0.1:19399/embed/channel/team/room1?openclawHostTheme=1",
+  "openUrl": "http://127.0.0.1:19399/app/team/room1"
+}
+
+# token rotated in config (binding now stale)
+$ openclaw gateway call session.discussion.info (v2026.10.9)
+{
+  "state": "available"
+}
+
+# fake ClickClack server log
+  2026-10-30T19:12:03.247Z CREATE CHANNEL chn_room1 name=proof-room
+
+## 2. Stop the stable Gateway; revoked-channel markers in openclaw.sqlite (plugin_state_entries, namespace discussion-revoked-channels)
+{"table":"plugin_state_entries","key":"http://127.0.0.1:19399\\0chn_room1","hasNul":true,"value":"{\"accountId\":\"default\",\"serverBaseUrl\":\"http://127.0.0.1:19399\",\"channelId\":\"chn_room1\",\"revokedAt\":1793387539338}"}
+
+## 3. Upgrade: openclaw doctor --fix on this branch
+Upgraded agent database schema in agents/main/agent/openclaw-agent.sqlite: v25 -> v38.
+
+## 4. Start this branch's Gateway on the same state (bundled ClickClack source), open the session's room again
+$ openclaw gateway call session.discussion.open --params {"sessionKey":"agent:main:dashboard:proof-room"} --json
+{
+  "state": "open",
+  "embedUrl": "http://127.0.0.1:19399/embed/channel/team/room2?openclawHostTheme=1",
+  "openUrl": "http://127.0.0.1:19399/app/team/room2"
+}
+
+# fake ClickClack server log
+  2026-10-30T19:20:19.179Z CREATE CHANNEL chn_room2 name=proof-room-2
+
+## 5. Markers after the first store operation
+{"table":"plugin_state_entries","key":"204cca07efa178e408ff40df5a242550","hasNul":false,"value":"{\"accountId\":\"default\",\"serverBaseUrl\":\"http://127.0.0.1:19399\",\"channelId\":\"chn_room1\",\"revokedAt\":1793387539338}"}
+
+# key the head computes for chn_room1 (sha256 of JSON [url, channelId], first 32 hex)
+204cca07efa178e408ff40df5a242550
+
+# Gateway log lines mentioning NUL characters
+  0
