@@ -3,6 +3,7 @@ import path from "node:path";
 import { walkDirectory } from "@openclaw/fs-safe/walk";
 import { extractErrorCode, formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { root as fsRoot } from "openclaw/plugin-sdk/file-access-runtime";
+import { redactToolPayloadText } from "openclaw/plugin-sdk/logging-core";
 import { readProviderJsonObjectResponse } from "openclaw/plugin-sdk/provider-http";
 import { runPluginCommandWithTimeout } from "openclaw/plugin-sdk/run-command";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
@@ -128,7 +129,7 @@ async function resolveBrewSignalCliPath(brewExe: string): Promise<string | null>
 
 // Homebrew prints warnings before its final Error line, so keep the stderr tail.
 function brewErrorTail(stderr: string): string {
-  const text = stderr.trim();
+  const text = redactToolPayloadText(stderr).trim();
   return text.length > 200 ? `...${sliceUtf16Safe(text, -200)}` : text;
 }
 

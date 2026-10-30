@@ -109,3 +109,14 @@ it("keeps the Homebrew error after long warnings", async () => {
     error: `brew install steipete/tap/imsg failed (exit 1): ...${"w".repeat(166)}\nError: imsg: no bottle available!`,
   });
 });
+
+it("redacts credentials before selecting the Homebrew error tail", async () => {
+  const secret = "synthetic-brew-credential-".repeat(20);
+  const stderr = `Warning: ${"w".repeat(300)}\ntoken=${secret}\nError: imsg: unavailable!`;
+  runCommandMock.mockResolvedValueOnce({ code: 1, stdout: "", stderr });
+  const result = await install();
+  expect(result.ok).toBe(false);
+  expect(result.error).toContain("Error: imsg: unavailable!");
+  expect(result.error).toContain("token=synthe…ial-");
+  expect(result.error).not.toContain(secret.slice(-100));
+});
