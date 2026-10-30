@@ -41,6 +41,8 @@ import { isToolResultError, readToolResultDetails } from "./tool-result-error.js
 import { jsonResult, type AnyAgentTool } from "./tools/common.js";
 
 const model: typeof agentLoopModel = { ...agentLoopModel, api: "openai-responses" };
+const storeEnvWarning =
+  "Warning: secret store environment entries were not applied for host=gateway: NODE_OPTIONS.";
 
 type RecoveryProgram = string | { wait: true; runId?: string };
 
@@ -303,6 +305,20 @@ describe("Code Mode agent-loop error recovery", () => {
     expect(await readFile(join(state.workspaceDir, "executions.txt"), "utf8")).toBe("run\n");
   });
 
+  it("preserves completed exec warnings", async ({ onTestFinished }) => {
+    const { shell } = await nativeExecFixture("exec-completed-warning", onTestFinished, {
+      preparedStoreEnvironment: { env: { NODE_OPTIONS: "--no-warnings" } },
+    });
+    const command = JSON.stringify(nodeCommand('process.stdout.write("ok")'));
+    const completed = await createCatalogCodeModeHarness([shell]).complete(
+      `return await exec({ command: ${command} });`,
+    );
+    expect(completed).toMatchObject({
+      status: "completed",
+      value: { status: "completed", aggregated: "ok", warningText: storeEnvWarning },
+    });
+  });
+
   it("keeps native failure output within its budget", async ({ onTestFinished }) => {
     const { shell } = await nativeExecFixture("exec-failure-budget", onTestFinished);
     const bounded = createCatalogCodeModeHarness([shell], {
@@ -348,16 +364,9 @@ describe("Code Mode agent-loop error recovery", () => {
             if (withWarning) {
               const native = await nativeExec.mock.results[0]!.value;
               expect(native.content).toEqual([
-                {
-                  type: "text",
-                  text: expect.stringContaining(
-                    "Warning: secret store environment entries were not applied for host=gateway: NODE_OPTIONS.",
-                  ),
-                },
+                { type: "text", text: expect.stringContaining(storeEnvWarning) },
               ]);
-              expect(nested.warningText).toBe(
-                "Warning: secret store environment entries were not applied for host=gateway: NODE_OPTIONS.",
-              );
+              expect(nested.warningText).toBe(storeEnvWarning);
             } else {
               expect(nested).not.toHaveProperty("warningText");
             }

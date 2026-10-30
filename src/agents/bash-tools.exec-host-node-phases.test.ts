@@ -73,8 +73,13 @@ describe("invokeNodeSystemRun failure classification", () => {
       command: "screencapture",
       startedAt: 0,
       cwd: undefined,
+      warnings: ["Warning: running synchronously."],
     });
-    expect(result.details).toMatchObject({ reason: "permission-missing", permissionMissing });
+    expect(result.details).toMatchObject({
+      reason: "permission-missing",
+      permissionMissing,
+      warningText: "Warning: running synchronously.",
+    });
     expect(result.content).toEqual([{ type: "text", text: expect.stringContaining(message) }]);
     expect(result.content).not.toEqual([
       { type: "text", text: expect.stringContaining("may have executed") },
