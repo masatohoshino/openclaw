@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import type { ClientOptions } from "openclaw/plugin-sdk/websocket-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { streamContainerEvents } from "./client-container.js";
 
 const clients = vi.hoisted(() => [] as WebSocket[]);
@@ -79,10 +79,18 @@ describe("container receive backpressure with a real peer", () => {
     });
 
     await admitting.promise;
-    // An unpaused client keeps reading; give it time to take the whole burst.
+    // Progress fence: a free reader on the same loopback and event loop takes a
+    // whole burst after the client started; an unpaused client keeps pace with it.
+    const reader = new WebSocket(peer.baseUrl.replace(/^http/, "ws"));
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100);
+      let received = 0;
+      reader.on("message", () => {
+        if (++received === BURST) {
+          resolve();
+        }
+      });
     });
+    reader.terminate();
     expect((await peer.connected).bufferedAmount).toBeGreaterThan(0);
     expect(decoded.count).toBeLessThan(BURST);
     expect(clients[0]?.isPaused).toBe(true);
