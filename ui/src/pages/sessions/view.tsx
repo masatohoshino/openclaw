@@ -15,6 +15,7 @@ import {
 } from "solid-js";
 import { Icon } from "../../components/solid/icon.tsx";
 import { ContextNewSessionAction } from "../../components/solid/new-session-link.tsx";
+import { SettingsSelect } from "../../components/solid/settings-select.tsx";
 import {
   SettingsPage,
   SettingsSection,
@@ -92,7 +93,7 @@ function sessionGroupLabel(group: SessionRowGroup, props: SessionsProps): string
   if (props.groupBy === "person") {
     const actor = group.rows[0]?.owner?.actor;
     return actor?.identity?.type === "profile"
-      ? presenceViewerLabel({ id: actor.identity.id, name: actor.label?.trim() || id })
+      ? presenceViewerLabel({ id: actor.identity.id, name: actor.label?.trim() || undefined })
       : actor?.label?.trim() || id;
   }
   return id;
@@ -441,20 +442,16 @@ function SessionsTable(props: SessionsProps & { readRoster: () => RosterOutcome 
             })}
           </div>
           <div class="data-table-pagination__controls">
-            <select
+            <SettingsSelect
               class="data-table-pagination__size"
               aria-label={t("sessionsView.pageSize")}
               value={pageSizeValue()}
+              options={PAGE_SIZES.map((size) => ({
+                value: String(size),
+                label: t("sessionsView.rowsPerPage", { count: String(size) }),
+              }))}
               onChange={(e) => props.onPageSizeChange(Number(e.currentTarget.value))}
-            >
-              <For each={PAGE_SIZES}>
-                {(s) => (
-                  <option value={s} selected={s === props.pageSize}>
-                    {t("sessionsView.rowsPerPage", { count: String(s) })}
-                  </option>
-                )}
-              </For>
-            </select>
+            />
             {props.result?.hasMore && props.result.nextOffset != null ? (
               <button disabled={props.loading} onClick={() => props.onLoadMore()}>
                 {t("chat.selectors.loadMoreRosterSessions")}

@@ -3,9 +3,9 @@
 import type { SystemAgentChatResult } from "@openclaw/gateway-protocol";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDeferred as deferred } from "../../../../test/helpers/promise.js";
-import { GatewayRequestError } from "../../api/gateway.ts";
 import * as uuid from "../../lib/uuid.ts";
 import { QUICK_ACTIONS_QUESTION } from "../../test-helpers/custodian-quick-actions.ts";
+import { suspendingGatewayError as unavailable } from "../../test-helpers/gateway-errors.test-support.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import { createContext, mountPage } from "./custodian-page.test-harness.ts";
 
@@ -26,14 +26,7 @@ function historyRequest(
   );
   return { request, historyCalls: () => calls };
 }
-function unavailable(message = "Gateway is suspending") {
-  return new GatewayRequestError({
-    code: "UNAVAILABLE",
-    message,
-    retryable: true,
-    details: { reason: "gateway-suspending", phase: "draining" },
-  });
-}
+
 const history = (text: string) => ({ turns: [{ role: "assistant", text, at: 1 }] });
 function reopen(set: ReturnType<typeof createContext>["setGatewaySnapshot"]) {
   set({ suspensionPhase: "draining" });
@@ -232,11 +225,12 @@ it("parks history recovery until welcome and wizard settle", async () => {
 
   const wizardMessage = page.store.messages.find((message) => message.step);
   expect(wizardMessage).toBeDefined();
-  page.store.answerWizardStep(wizardMessage!, "Continue");
+  const answering = page.store.answerWizardStep(wizardMessage!, "Continue");
   await page.updateComplete;
   expect(page.store.sending).toBe(true);
   expect(historyCalls()).toBe(1);
   answer.resolve(chatReply("Wizard complete", { wizardInputPending: false }));
+  await answering;
   await waitForFast(() => expect(page.textContent).toContain("Recovered after wizard"));
   expect(historyCalls()).toBe(2);
   expectNoStatus(page);
