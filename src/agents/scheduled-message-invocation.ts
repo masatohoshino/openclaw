@@ -63,8 +63,8 @@ export function createEmbeddedMessageInvocationPolicy(params: {
   const filter = (
     currentProfile = params.capabilityProfile,
     onFilter?: (event: ToolPolicyFilterEvent) => void,
-    // "session" omits per-turn authority (the completion-handoff replay and the sender's
-    // tools.toolsBySender entry); the turn gate refuses those calls instead.
+    // Listing retains the requester's own ceiling; completion replay and the sender's
+    // tools.toolsBySender entry only gate calls.
     scope: "turn" | "session" = "turn",
   ): AnyAgentTool[] => {
     const currentPolicies =
@@ -85,9 +85,8 @@ export function createEmbeddedMessageInvocationPolicy(params: {
           subagentPolicy: policies.subagentPolicy,
           runtimeToolPolicy: policies.runtimeToolPolicy,
           inheritedToolPolicy:
-            scope === "session" &&
-            currentProfile.policy.requesterPolicySource === "completion-handoff"
-              ? undefined
+            scope === "session"
+              ? params.capabilityProfile.policy.sessionInheritedToolPolicy
               : policies.inheritedToolPolicy,
         },
         includeRuntimeToolPolicy: true,
