@@ -18,7 +18,6 @@ import {
 import { PluginInstance } from "../../plugins/plugin-instance.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
-import { withPluginRuntimeGatewayRequestScope } from "../../plugins/runtime/gateway-request-scope.js";
 import {
   getPluginRuntimeGenerationRegistry,
   withPluginRuntimeGenerationScope,
@@ -548,34 +547,33 @@ describe("wizard setup ownership", () => {
         await prompter.note("Saved");
       };
       const context = { ...tracker, wizardRunner, channelWizardRunner: wizardRunner };
-      // Each request runs under the answering device's real revocation capture.
-      const invokeAsDevice = async (
-        method: "wizard.start" | "wizard.next",
-        params: Record<string, unknown>,
-      ) => {
-        const authority = captureGatewayDeviceRevocation(
-          context,
-          { deviceId: "wizard-device", role: "operator" },
-          () => true,
-        );
-        try {
-          return await withPluginRuntimeGatewayRequestScope(
-            { isWebchatConnect: () => false, hasCurrentClientAuthority: authority.isCurrent },
-            () => invokeWizard(method, params, context),
-          );
-        } finally {
-          authority.release();
-        }
-      };
-      const start = await invokeAsDevice(
-        "wizard.start",
-        flow === "channels" ? { flow } : { mode: "local" },
+      // The start request carries the starting device's real revocation capture.
+      const authority = captureGatewayDeviceRevocation(
+        context,
+        { deviceId: "wizard-device", role: "operator" },
+        () => true,
       );
+      const startRespond = vi.fn();
+      try {
+        await expectDefined(
+          wizardHandlers["wizard.start"],
+          "wizard.start",
+        )({
+          params: flow === "channels" ? { flow } : { mode: "local" },
+          respond: startRespond,
+          context,
+          hasCurrentClientAuthority: authority.isCurrent,
+        } as never);
+      } finally {
+        authority.release();
+      }
+      const start = readSuccessfulResponse(startRespond);
       const step = start.step as { id: string };
-      const next = invokeAsDevice("wizard.next", {
-        sessionId: start.sessionId,
-        answer: { stepId: step.id, value: "123:wizard-token" },
-      });
+      const next = invokeWizard(
+        "wizard.next",
+        { sessionId: start.sessionId, answer: { stepId: step.id, value: "123:wizard-token" } },
+        context,
+      );
       await reachedCommit.promise;
       if (state === "revoked") {
         invalidateGatewayDeviceRevocation(context, "wizard-device", "operator");
@@ -611,7 +609,7 @@ describe("wizard setup ownership", () => {
             : {
                 done: true,
                 status: "error",
-                error: "Gateway caller authority is no longer active.",
+                error: "Gateway requester authority changed",
               },
         );
         expect(committed).toBeUndefined();

@@ -20,6 +20,7 @@ import { DEFAULT_AGENT_WORKSPACE_DIR } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import { type OpenClawConfig, getRuntimeConfig } from "../../config/config.js";
 import { isSessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
+import { resolveSessionModelOverrideSource } from "../../config/sessions/model-override-provenance.js";
 import { logVerbose } from "../../globals.js";
 import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
@@ -35,7 +36,6 @@ import {
 } from "../../sessions/model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { readAgentDatabaseAdmissionRefusal } from "../../state/agent-database-admission.js";
-import { waitForAgentDatabaseWriteAdmission } from "../../state/agent-database-preparation-context.js";
 import {
   sessionDeliveryChannel,
   sessionDeliveryOrigin,
@@ -134,7 +134,7 @@ async function resolveReplyFromConfig(
       isFastTestEnv,
       configOverride,
     });
-  const source = prepareReplySourceInput(ctx, cfg, opts);
+  const source = await prepareReplySourceInput(ctx, cfg, opts);
   opts = source.options;
   try {
     // Retain preparation timings before a stall happens. Whole-turn summaries
@@ -167,11 +167,8 @@ async function resolveReplyFromConfig(
       finalized.CommandTargetSessionKey = explicitSteerTargetSessionKey;
     }
     const initialAgentScope = await resolverTiming.measure("reply.resolve_agent_scope", () =>
-      resolveReplyAgentScope({ cfg, ctx: finalized }),
+      resolveReplyAgentScope({ cfg, ctx: finalized, signal: opts?.abortSignal }),
     );
-    await waitForAgentDatabaseWriteAdmission(initialAgentScope.agentId, {
-      signal: opts?.abortSignal,
-    });
     assertReplyPreprocessingActive(opts?.abortSignal);
     opts?.operatorAuthority?.assertCurrent();
     opts?.internalEventExecution?.assertCurrent?.();
@@ -577,6 +574,10 @@ async function resolveReplyFromConfig(
                 useSubagentFallbacks: scheduledModel.useSubagentFallbacks,
                 inheritDefaultFallbacksForAgentStringModel:
                   scheduledModel.inheritDefaultFallbacksForAgentStringModel,
+                sessionModelOverrideSource:
+                  scheduledModel.modelSource === "session"
+                    ? (resolveSessionModelOverrideSource(sessionEntry) ?? undefined)
+                    : undefined,
               },
             },
           }
