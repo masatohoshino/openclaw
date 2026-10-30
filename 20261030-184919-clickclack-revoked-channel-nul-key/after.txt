@@ -1,0 +1,15 @@
+# Head c980afaf3dc, same isolated Gateway setup (fresh state dir and PostgreSQL schema), same fake ClickClack server
+$ openclaw gateway call sessions.create --params {"key":"agent:main:dashboard:proof-room","label":"Proof room"} --json
+{ "ok": true, "key": "agent:main:dashboard:proof-room", ... }
+$ openclaw gateway call session.discussion.open --params {"sessionKey":"agent:main:dashboard:proof-room"} --json
+{
+  "state": "open",
+  "embedUrl": "http://127.0.0.1:19397/embed/channel/team/room1?openclawHostTheme=1",
+  "openUrl": "http://127.0.0.1:19397/app/team/room1"
+}
+
+# fake ClickClack server log
+  2026-10-30T18:34:38.503Z CREATE CHANNEL chn_room1 name=proof-room
+
+# Gateway log lines mentioning NUL characters
+  0
