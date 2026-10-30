@@ -291,10 +291,12 @@ it("offers one session's tool definitions to every sender and refuses denied cal
   // sessions_spawn's agentId guidance names the sender's restriction, which its spawn
   // admission enforces; every other definition is the session's.
   const definitions = (senderId: string) =>
-    surface(
-      groupTurn(senderId).map((tool) =>
-        tool.name === "sessions_spawn" ? { ...tool, description: "" } : tool,
-      ),
+    groupTurn(senderId).map((tool) =>
+      JSON.stringify({
+        name: tool.name,
+        description: tool.name === "sessions_spawn" ? "" : tool.description,
+        parameters: tool.parameters,
+      }),
     );
   expect(definitions("bob")).toEqual(definitions("alice"));
   const write = (senderId: string) => groupTurn(senderId).find((tool) => tool.name === "write")!;
