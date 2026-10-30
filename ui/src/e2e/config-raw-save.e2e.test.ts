@@ -35,6 +35,8 @@ suite.define(() => {
       for (const [index, level] of ["debug", "warn"].entries()) {
         const getsBeforeSave = (await gateway.getRequests("config.get")).length;
         await raw.fill(`{ logging: { level: "${level}" } }`);
+        expect(await reloadDismissingUnloadPrompt(page)).toBe("beforeunload");
+        expect(await raw.inputValue()).toBe(`{ logging: { level: "${level}" } }`);
         await save.click();
         const request = await gateway.waitForRequest("config.set", { after: index });
         expect(request.params).toMatchObject({
@@ -47,29 +49,9 @@ suite.define(() => {
       }
       await expect.poll(() => save.isEnabled()).toBe(false);
       expect(parserRequests).toBeGreaterThan(0);
-      await page.reload();
+      expect(await reloadDismissingUnloadPrompt(page)).toBeUndefined();
       await page.getByRole("button", { name: "Raw", exact: true }).click();
       await expect.poll(() => raw.inputValue()).toContain('"warn"');
-    });
-  });
-
-  it("asks before a browser reload discards an unsaved Raw draft", async () => {
-    await suite.withPage({ serviceWorkers: "block" }, async ({ page }) => {
-      await installMockGateway(page, {
-        methodResponses: { "config.get": savedConfig },
-      });
-      await page.goto(`${suite.server.baseUrl}settings/advanced`);
-      await page.getByRole("button", { name: "Raw", exact: true }).click();
-      const raw = page.locator(".config-raw-field textarea");
-      const save = page.getByRole("button", { name: "Save", exact: true });
-      // Chromium shows the unload prompt only after a user gesture on the page.
-      await raw.click();
-      await raw.fill('{ logging: { level: "debug" } }');
-      expect(await reloadDismissingUnloadPrompt(page)).toBe("beforeunload");
-      expect(await raw.inputValue()).toBe('{ logging: { level: "debug" } }');
-      await save.click();
-      await expect.poll(() => save.isEnabled()).toBe(false);
-      expect(await reloadDismissingUnloadPrompt(page)).toBeUndefined();
     });
   });
 });

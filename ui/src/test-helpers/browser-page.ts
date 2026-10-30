@@ -16,24 +16,16 @@ export async function withBrowserPage(
   }
 }
 
-/** Reloads like the browser button; returns the dismissed prompt type, or undefined after navigation. */
 export async function reloadDismissingUnloadPrompt(page: Page) {
   const session = await page.context().newCDPSession(page);
-  const outcome = Promise.withResolvers<string | undefined>();
-  const onDialog = (dialog: Dialog) => {
-    void dialog.dismiss().then(() => outcome.resolve(dialog.type()), outcome.reject);
-  };
-  const onNavigation = (frame: Frame) => {
-    if (frame === page.mainFrame()) {
-      outcome.resolve(undefined);
-    }
-  };
+  const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+  const onDialog = (dialog: Dialog) => void dialog.dismiss().then(() => resolve(dialog.type()), reject);
+  const onNavigation = (frame: Frame) => frame === page.mainFrame() && resolve(undefined);
   page.on("dialog", onDialog);
   page.on("framenavigated", onNavigation);
   try {
-    // Cancellation has no navigation to await; observe the native outcome instead.
     await session.send("Page.reload");
-    return await outcome.promise;
+    return await promise;
   } finally {
     page.off("dialog", onDialog);
     page.off("framenavigated", onNavigation);
