@@ -19,7 +19,8 @@ export async function withBrowserPage(
 export async function reloadDismissingUnloadPrompt(page: Page) {
   const session = await page.context().newCDPSession(page);
   const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
-  const onDialog = (dialog: Dialog) => void dialog.dismiss().then(() => resolve(dialog.type()), reject);
+  const onDialog = (dialog: Dialog) =>
+    void dialog.dismiss().then(() => resolve(dialog.type()), reject);
   const onNavigation = (frame: Frame) => frame === page.mainFrame() && resolve(undefined);
   page.on("dialog", onDialog);
   page.on("framenavigated", onNavigation);
