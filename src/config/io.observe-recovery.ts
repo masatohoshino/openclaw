@@ -86,11 +86,6 @@ function createRecoveryCommitEffect(params: {
     params.configPath,
     params.deps.fs,
   );
-  // The resolved state root must still be the one this effect publishes into.
-  const beforeCommit = () => {
-    params.beforeCommit?.();
-    pathProof.assertCurrent();
-  };
   const options = {
     filePath: publicationPath,
     content: params.raw,
@@ -103,16 +98,17 @@ function createRecoveryCommitEffect(params: {
     mode: 0o600,
     tempPrefix: path.basename(params.configPath),
     fileSystem: params.deps.fs,
+    assertBeforeMutation: pathProof.assertCurrent,
   };
   return {
     sync: () => {
-      beforeCommit();
+      params.beforeCommit?.();
       replaceFileAtomicSync(options);
     },
     async: (health) =>
       commitConfigRecoveryFile({
         health,
-        beforeCommit,
+        beforeCommit: params.beforeCommit,
         write: (assertCurrent) =>
           replaceFileAtomic({
             ...options,

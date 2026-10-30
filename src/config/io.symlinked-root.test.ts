@@ -193,17 +193,29 @@ describe("config writes through a symlinked state root", () => {
     },
   );
 
-  it("refuses prefix recovery from another config's snapshot", async () => {
-    const { io, home, physicalPath, raw } = await fixture();
-    const broken = `shell profile noise\n${raw}`;
-    await fs.writeFile(physicalPath, broken);
-    const snapshot = await io.readConfigFileSnapshot();
+  it.each(["unrelated", "physical"] as const)(
+    "refuses prefix recovery from a snapshot of a %s config path",
+    async (source) => {
+      const { io, env, home, physicalPath, raw } = await fixture();
+      const broken = `shell profile noise\n${raw}`;
+      await fs.writeFile(physicalPath, broken);
+      const snapshotPath = source === "physical" ? physicalPath : path.join(home, "other.json");
+      if (source === "unrelated") {
+        await fs.writeFile(snapshotPath, broken);
+      }
+      const snapshot = await createConfigIO({
+        configPath: snapshotPath,
+        env,
+        homedir: () => home,
+        observe: false,
+      }).readConfigFileSnapshot();
 
-    await expect(
-      io.recoverConfigFromJsonRootSuffix({ ...snapshot, path: path.join(home, "other.json") }),
-    ).rejects.toMatchObject({ name: "ConfigMutationConflictError" });
-    expect(await fs.readFile(physicalPath, "utf8")).toBe(broken);
-  });
+      await expect(io.recoverConfigFromJsonRootSuffix(snapshot)).rejects.toMatchObject({
+        name: "ConfigMutationConflictError",
+      });
+      expect(await fs.readFile(physicalPath, "utf8")).toBe(broken);
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "refuses prefix recovery through a config-file symlink and names the fix",
@@ -223,6 +235,43 @@ describe("config writes through a symlinked state root", () => {
       expect(await fs.readFile(sourcePath, "utf8")).toBe(broken);
     },
   );
+
+  it("refuses synchronous backup recovery if the state root changes during staging", async () => {
+    const { env, home, stateDir, physicalPath, raw } = await fixture();
+    const broken = '{"update":{"channel":"beta"}}\n';
+    const alternate = path.join(home, "alternate");
+    const alternatePath = path.join(alternate, "openclaw.json");
+    await fs.mkdir(alternate);
+    await fs.writeFile(alternatePath, broken);
+    await fs.writeFile(physicalPath, broken);
+    await fs.writeFile(`${physicalPath}.bak`, raw);
+    const warn = vi.fn();
+    let retargeted = false;
+    const io = createConfigIO({
+      env,
+      homedir: () => home,
+      logger: { warn, error: vi.fn() },
+      fs: {
+        ...fsNode,
+        openSync(...args: Parameters<typeof fsNode.openSync>) {
+          const fd = fsNode.openSync(...args);
+          if (!retargeted && args[1] === "wx") {
+            retargeted = true;
+            fsNode.unlinkSync(stateDir);
+            fsNode.symlinkSync(alternate, stateDir, "junction");
+          }
+          return fd;
+        },
+      },
+    });
+
+    io.loadConfig();
+
+    expect(retargeted).toBe(true);
+    expect(await fs.readFile(physicalPath, "utf8")).toBe(broken);
+    expect(await fs.readFile(alternatePath, "utf8")).toBe(broken);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("auto-restore from backup failed"));
+  });
 
   it.each(["preflight", "beforeCommit"] as const)(
     "refuses a state-root retarget during %s without changing either config",

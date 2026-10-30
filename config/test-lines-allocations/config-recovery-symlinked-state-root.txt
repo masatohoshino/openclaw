@@ -1,2 +1,2 @@
-# Symlinked state-root config recovery, foreign-snapshot refusal, and config-file symlink refusal.
-64
+# Symlinked state-root recovery, logical snapshot identity, and publication-time path refusal.
+113

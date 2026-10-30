@@ -13,6 +13,7 @@ import {
   createConfigFileWriteGuard,
   resolveConfigWriteDirectory,
 } from "./io.write-safety.js";
+import { ConfigMutationConflictError } from "./mutation-conflict.js";
 import { resolveIsConfigReadOnly } from "./paths.js";
 import type { ConfigFileSnapshot } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
@@ -107,6 +108,11 @@ async function recoverConfigJsonRootSuffixUnderLock(
   if (!validated.ok) {
     return false;
   }
+  if (snapshot.path !== context.configPath) {
+    throw new ConfigMutationConflictError("config path changed since last load", {
+      retryable: false,
+    });
+  }
   const { path: publicationPath, pathProof } = captureConfigRootWriteTarget(
     context.configPath,
     context.deps.fs,
@@ -116,11 +122,7 @@ async function recoverConfigJsonRootSuffixUnderLock(
     context.deps.fs,
     captureConfigWriteLockGuard(context.configPath),
     {
-      // Only this config's snapshot moves to the physical path; another config's stays refused.
-      snapshot: {
-        ...snapshot,
-        path: snapshot.path === context.configPath ? publicationPath : snapshot.path,
-      },
+      snapshot: { ...snapshot, path: publicationPath },
       includeGraph: { hashes: {}, targets: {} },
       targetPathProof: pathProof,
     },
