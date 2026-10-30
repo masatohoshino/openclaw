@@ -313,6 +313,7 @@ In the embedded agent runner, global and per-agent sender policy on core tools i
 
 - a sender entry denies a plugin tool: that tool is not built for the sender.
 - a sender entry denies `process` but not `exec`: the `exec` description and parameters change.
+- a sender entry restricts any tool: the `sessions_spawn` description tells that sender it may start only hidden helpers of the same agent.
 - the agent runs on the Codex harness: a sender restriction turns native tools off for the turn.
 - the agent runs on a [CLI backend](/gateway/cli-backends) that gets Gateway tools through the loopback MCP bridge: the sender entry removes tools from that catalog.
 - the entry is a group-level `channels.<channel>.groups.*.toolsBySender` entry: it removes tools from the list.
