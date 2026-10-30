@@ -8,8 +8,12 @@ import {
   resolveConfigForRead,
   resolveConfigIncludesForRead,
 } from "./io.read-helpers.js";
-import { createConfigFileWriteGuard } from "./io.write-safety.js";
-import { resolveIsConfigReadOnly, resolveStateDir } from "./paths.js";
+import {
+  captureConfigRootWriteTarget,
+  createConfigFileWriteGuard,
+  resolveConfigWriteDirectory,
+} from "./io.write-safety.js";
+import { resolveIsConfigReadOnly } from "./paths.js";
 import type { ConfigFileSnapshot } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
 import { captureConfigWriteLockGuard, withConfigWriteLock } from "./write-lock.js";
@@ -103,11 +107,23 @@ async function recoverConfigJsonRootSuffixUnderLock(
   if (!validated.ok) {
     return false;
   }
-  const writeGuard = createConfigFileWriteGuard(
+  const { path: publicationPath, pathProof } = captureConfigRootWriteTarget(
     context.configPath,
     context.deps.fs,
+  );
+  const writeGuard = createConfigFileWriteGuard(
+    publicationPath,
+    context.deps.fs,
     captureConfigWriteLockGuard(context.configPath),
-    { snapshot, includeGraph: { hashes: {}, targets: {} } },
+    {
+      // Only this config's snapshot moves to the physical path; another config's stays refused.
+      snapshot: {
+        ...snapshot,
+        path: snapshot.path === context.configPath ? publicationPath : snapshot.path,
+      },
+      includeGraph: { hashes: {}, targets: {} },
+      targetPathProof: pathProof,
+    },
   );
   writeGuard.assertBeforeMutation();
   const clobberedPath = await persistBoundedClobberedConfigSnapshot({
@@ -124,12 +140,12 @@ async function recoverConfigJsonRootSuffixUnderLock(
   }
   // Recovery must publish by rename; a copy fallback can truncate the live config.
   await replaceFileAtomic({
-    filePath: context.configPath,
+    filePath: publicationPath,
     content: suffixRecovery.raw,
     dirMode:
       readExistingStateRootMode(
-        path.dirname(context.configPath),
-        resolveStateDir(context.deps.env, context.deps.homedir),
+        path.dirname(publicationPath),
+        resolveConfigWriteDirectory(context.configPath, publicationPath, context.deps).path,
         context.deps.fs,
       ) ?? 0o700,
     mode: 0o600,

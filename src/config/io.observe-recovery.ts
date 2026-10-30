@@ -39,11 +39,16 @@ import type {
   ConfigRecoveryCandidatePreparation,
   PrepareConfigRecoveryCandidate,
 } from "./io.types.js";
-import { chmodConfigBestEffort, chmodConfigBestEffortSync } from "./io.write-safety.js";
+import {
+  captureConfigRootWriteTarget,
+  chmodConfigBestEffort,
+  chmodConfigBestEffortSync,
+  resolveConfigWriteDirectory,
+} from "./io.write-safety.js";
 import { formatConfigIssueSummary } from "./issue-format.js";
 import { warnIfJSON5CommentsWillBeStripped } from "./json5-comments.js";
 import { ConfigMutationConflictError } from "./mutation-conflict.js";
-import { resolveIsConfigReadOnly, resolveStateDir } from "./paths.js";
+import { resolveIsConfigReadOnly } from "./paths.js";
 import {
   collectPollutedSecretPlaceholders,
   isPluginLocalInvalidConfigSnapshot,
@@ -77,13 +82,22 @@ function createRecoveryCommitEffect(params: {
   raw: string;
   beforeCommit?: () => void;
 }): ConfigRecoveryEffect<void> {
+  const { path: publicationPath, pathProof } = captureConfigRootWriteTarget(
+    params.configPath,
+    params.deps.fs,
+  );
+  // The resolved state root must still be the one this effect publishes into.
+  const beforeCommit = () => {
+    params.beforeCommit?.();
+    pathProof.assertCurrent();
+  };
   const options = {
-    filePath: params.configPath,
+    filePath: publicationPath,
     content: params.raw,
     dirMode:
       readExistingStateRootMode(
-        path.dirname(params.configPath),
-        resolveStateDir(params.deps.env, params.deps.homedir),
+        path.dirname(publicationPath),
+        resolveConfigWriteDirectory(params.configPath, publicationPath, params.deps).path,
         params.deps.fs,
       ) ?? 0o700,
     mode: 0o600,
@@ -92,13 +106,13 @@ function createRecoveryCommitEffect(params: {
   };
   return {
     sync: () => {
-      params.beforeCommit?.();
+      beforeCommit();
       replaceFileAtomicSync(options);
     },
     async: (health) =>
       commitConfigRecoveryFile({
         health,
-        beforeCommit: params.beforeCommit,
+        beforeCommit,
         write: (assertCurrent) =>
           replaceFileAtomic({
             ...options,

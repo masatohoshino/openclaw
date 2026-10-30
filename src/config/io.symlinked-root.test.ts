@@ -160,6 +160,70 @@ describe("config writes through a symlinked state root", () => {
     expect(snapshot.config.gateway?.port).toBe(19002);
   });
 
+  it.each(["prefix", "last-known-good"] as const)(
+    "recovers a broken config through the symlinked state root (%s)",
+    async (recovery) => {
+      const { io, stateDir, physicalPath, raw } = await fixture();
+      const originalLink = await fs.readlink(stateDir);
+      if (process.platform !== "win32") {
+        await fs.chmod(stateDir, 0o750);
+      }
+      if (recovery === "prefix") {
+        await fs.writeFile(physicalPath, `shell profile noise\n${raw}`);
+      } else {
+        await expect(
+          io.promoteConfigSnapshotToLastKnownGood(await io.readConfigFileSnapshot()),
+        ).resolves.toBe(true);
+        await fs.writeFile(physicalPath, "{ gateway: { mode: 123 } }\n");
+      }
+      const snapshot = await io.readConfigFileSnapshot();
+      expect(snapshot.valid).toBe(false);
+
+      await expect(
+        recovery === "prefix"
+          ? io.recoverConfigFromJsonRootSuffix(snapshot)
+          : io.recoverConfigFromLastKnownGood({ snapshot, reason: "invalid-config" }),
+      ).resolves.toBe(true);
+
+      expect(await fs.readFile(physicalPath, "utf8")).toBe(raw);
+      expect(await fs.readlink(stateDir)).toBe(originalLink);
+      if (process.platform !== "win32") {
+        expect((await fs.stat(stateDir)).mode & 0o777).toBe(0o750);
+      }
+    },
+  );
+
+  it("refuses prefix recovery from another config's snapshot", async () => {
+    const { io, home, physicalPath, raw } = await fixture();
+    const broken = `shell profile noise\n${raw}`;
+    await fs.writeFile(physicalPath, broken);
+    const snapshot = await io.readConfigFileSnapshot();
+
+    await expect(
+      io.recoverConfigFromJsonRootSuffix({ ...snapshot, path: path.join(home, "other.json") }),
+    ).rejects.toMatchObject({ name: "ConfigMutationConflictError" });
+    expect(await fs.readFile(physicalPath, "utf8")).toBe(broken);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses prefix recovery through a config-file symlink and names the fix",
+    async () => {
+      const { io, home, configPath, raw } = await fixture(false);
+      const sourcePath = path.join(home, "external.json");
+      const broken = `shell profile noise\n${raw}`;
+      await fs.unlink(configPath);
+      await fs.writeFile(sourcePath, broken);
+      await fs.symlink(sourcePath, configPath);
+      const snapshot = await io.readConfigFileSnapshot();
+
+      await expect(io.recoverConfigFromJsonRootSuffix(snapshot)).rejects.toThrow(
+        "is a symlink. Point OPENCLAW_CONFIG_PATH at the real file",
+      );
+      expect(await fs.readlink(configPath)).toBe(sourcePath);
+      expect(await fs.readFile(sourcePath, "utf8")).toBe(broken);
+    },
+  );
+
   it.each(["preflight", "beforeCommit"] as const)(
     "refuses a state-root retarget during %s without changing either config",
     async (phase) => {
