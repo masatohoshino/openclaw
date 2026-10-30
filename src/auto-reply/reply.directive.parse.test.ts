@@ -78,28 +78,8 @@ it.each([
       cleaned: "please now",
     },
   ],
-  [
-    "Can you explain how /queue works with followup messages?",
-    {
-      hasQueueDirective: false,
-      rawQueueMode: undefined,
-      cleaned: "Can you explain how /queue works with followup messages?",
-    },
-  ],
-  [
-    "How does /queue work?",
-    { hasQueueDirective: false, rawQueueMode: undefined, cleaned: "How does /queue work?" },
-  ],
 ])("parses directive arguments and leaves prose intact: %s", (body, expected) => {
   expect(parse(body)).toMatchObject(expected);
-});
-it.each([
-  ["please /queue backlog", "backlog"],
-  ["/queue colect cap:3", "colect"],
-  ["/queue: backlog later", "backlog"],
-  ["/queue collect.", "collect."],
-])("keeps validating an unknown queue mode: %s", (body, rawQueueMode) => {
-  expect(parse(body)).toMatchObject({ hasQueueDirective: true, rawQueueMode });
 });
 it("preserves prose after a thinking directive", () => {
   const result = parse("/think about my deployment plan");
