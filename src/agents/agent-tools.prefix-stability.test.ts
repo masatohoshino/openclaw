@@ -288,7 +288,15 @@ it("offers one session's tool definitions to every sender and refuses denied cal
       runId: `run-${senderId}`,
       senderId,
     });
-  expect(surface(groupTurn("bob"))).toEqual(surface(groupTurn("alice")));
+  // sessions_spawn's agentId guidance names the sender's restriction, which its spawn
+  // admission enforces; every other definition is the session's.
+  const definitions = (senderId: string) =>
+    surface(
+      groupTurn(senderId).map((tool) =>
+        tool.name === "sessions_spawn" ? { ...tool, description: "" } : tool,
+      ),
+    );
+  expect(definitions("bob")).toEqual(definitions("alice"));
   const write = (senderId: string) => groupTurn(senderId).find((tool) => tool.name === "write")!;
   // alice's call reaches the write executor, which rejects a call without a path.
   await expect(write("alice").execute("alice-write", {})).rejects.toThrow();
