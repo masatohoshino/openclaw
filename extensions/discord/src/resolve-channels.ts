@@ -150,18 +150,18 @@ export async function resolveDiscordChannelAllowlist(params: {
     }
     // Keep non-Latin letters; a name with none (emoji only) slugs to "" and would match others.
     const slug = normalizeDiscordDisplaySlug(query);
-    const matches = slug
-      ? channels.filter((channel) => normalizeDiscordDisplaySlug(channel.name) === slug)
-      : [];
-    if (matches.length) {
+    if (!slug) {
+      return [];
+    }
+    const matches = channels.filter(
+      (channel) => normalizeDiscordDisplaySlug(channel.name) === slug,
+    );
+    if (matches.length || normalizeDiscordSlug(query) !== slug) {
       return matches;
     }
-    // Keys that matched by their ASCII letters alone stay bound to the same channel id;
+    // ASCII keys that matched by a name's ASCII letters alone stay bound to the same channel id;
     // an unbound key would apply its policy to any other channel or thread of that name.
-    const legacySlug = normalizeDiscordSlug(query);
-    return legacySlug
-      ? channels.filter((channel) => normalizeDiscordSlug(channel.name) === legacySlug)
-      : [];
+    return channels.filter((channel) => normalizeDiscordSlug(channel.name) === slug);
   }
 
   const resolveEntry = async (input: string): Promise<DiscordChannelResolution> => {

@@ -55,7 +55,15 @@ describe("resolveDiscordChannelAllowlist", () => {
   });
 
   it("matches channel names by their letters in any script", async () => {
-    const res = await resolve(["111/雑談", "111/助手", "111/alerts", "111/general", "111/ops"], {
+    const entries = [
+      "111/雑談",
+      "111/助手",
+      "111/alerts",
+      "111/general",
+      "111/ops",
+      "111/雑談-ops",
+    ];
+    const res = await resolve(entries, {
       channels: [
         channel("c1", "お知らせ"),
         channel("c2", "雑談"),
@@ -66,12 +74,14 @@ describe("resolveDiscordChannelAllowlist", () => {
       ],
     });
     // An ASCII key matched only by a name's ASCII letters keeps resolving; a whole-name match wins.
+    // A key with other letters never falls back to its ASCII part.
     expect(res.map(({ resolved, channelId }) => ({ resolved, channelId }))).toEqual([
       { resolved: true, channelId: "c2" },
       { resolved: false, channelId: undefined },
       { resolved: true, channelId: "c3" },
       { resolved: true, channelId: "c4" },
       { resolved: true, channelId: "c6" },
+      { resolved: false, channelId: undefined },
     ]);
   });
 
