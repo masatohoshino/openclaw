@@ -4,7 +4,6 @@ import type {
   WizardAnswer,
 } from "../../packages/gateway-protocol/src/index.js";
 import { runOutsidePreparedModelRuntimePluginGenerationScope } from "../agents/prepared-model-runtime-generation-scope.js";
-import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import type { RuntimeEnv } from "../runtime.js";
 import {
   cleanupSystemAgentSession,
@@ -245,12 +244,7 @@ export class SystemAgentChatEngine {
   }
 
   private enqueueTurn<T>(run: () => Promise<T>): Promise<T> {
-    // A hosted wizard's durable effects act for the Gateway request whose turn advanced it.
-    const authority = getPluginRuntimeGatewayRequestScope()?.hasCurrentClientAuthority;
-    const turn = this.turnQueue.then(async () => {
-      this.wizard.answeringAuthority = authority;
-      return await run();
-    });
+    const turn = this.turnQueue.then(this.wizard.forTurn(run));
     this.turnQueue = turn.catch(() => undefined);
     return turn;
   }

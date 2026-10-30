@@ -5,6 +5,7 @@ import type {
 } from "../../packages/gateway-protocol/src/index.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import type { RuntimeEnv } from "../runtime.js";
 import {
   sanitizeWizardStepForClient,
@@ -256,7 +257,7 @@ export class ChatWizardHost {
   private awaitingSetupChannel = false;
   private lastSensitiveChannel: string | undefined;
   /** Live authority of the Gateway request whose turn is advancing the wizard, if any. */
-  answeringAuthority: (() => boolean) | undefined;
+  private answeringAuthority: (() => boolean) | undefined;
 
   constructor(
     private readonly options: {
@@ -267,6 +268,15 @@ export class ChatWizardHost {
 
   get active(): boolean {
     return this.bridge !== null;
+  }
+
+  /** Binds a queued turn to the Gateway request that queued it; durable effects act for it. */
+  forTurn<T>(run: () => Promise<T>): () => Promise<T> {
+    const authority = getPluginRuntimeGatewayRequestScope()?.hasCurrentClientAuthority;
+    return async () => {
+      this.answeringAuthority = authority;
+      return await run();
+    };
   }
 
   get sensitiveInputPending(): boolean {

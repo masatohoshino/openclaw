@@ -639,9 +639,7 @@ async function runSetupWizardOnce(
   }
 
   if (opts.skipChannels) {
-    const committed = await commitSetupConfigFile(nextConfig, {
-      allowConfigSizeDrop: false,
-    });
+    const committed = await commitSetupConfigFile(nextConfig, { allowConfigSizeDrop: false });
     nextConfig = committed.nextConfig;
   }
   let onboardingTarget = resolveOnboardingSetupTarget(nextConfig);
