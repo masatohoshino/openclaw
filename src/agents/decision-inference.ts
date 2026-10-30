@@ -18,31 +18,40 @@ import {
   attachProviderAuthAuthority,
   getProviderAuthAuthority,
 } from "../plugins/provider-auth-authority.js";
-import { createProviderModelCatalogIdNormalizer } from "../plugins/provider-model-routes.js";
+import {
+  createProviderModelCatalogIdNormalizer,
+  resolveProviderModelRoutes,
+} from "../plugins/provider-model-routes.js";
 import type { PluginProviderRegistration } from "../plugins/provider-plugin.types.js";
+import {
+  prepareProviderRuntimeAuth,
+  UnsupportedProviderRuntimeAuthCapabilityError,
+} from "../plugins/provider-runtime-auth.js";
 import { normalizeProviderTransportWithPlugin } from "../plugins/provider-runtime.js";
 import {
   normalizeResolvedTransportApi,
   sanitizeModelHeaders,
 } from "./embedded-agent-runner/model.inline-provider.js";
+import { applyLocalNoAuthHeaders } from "./model-auth-markers.js";
 import { resolveApiKeyForProviderCore } from "./model-auth-provider.js";
 import { isProviderAuthError, type ResolvedProviderAuth } from "./model-auth-runtime-shared.js";
-import { applySecretRefHeaderSentinels } from "./model-auth.js";
+import { applyAuthHeaderOverride, applySecretRefHeaderSentinels } from "./model-auth.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import { modelTransportRoutesMatch } from "./model-compat-catalog.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import { withPreparedModelInference } from "./prepared-model-inference.js";
 import {
+  applyPreparedRuntimeAuthToModel,
   attachModelProviderRequestTransport,
   getModelProviderRequestTransport,
   resolveProviderRequestConfig,
   sanitizeConfiguredModelProviderRequest,
 } from "./provider-request-config.js";
+import { protectPreparedProviderRuntimeAuth } from "./provider-runtime-auth-protection.js";
 import {
   unwrapSecretSentinelsForProviderEgress,
   unwrapModelHeaderSentinelsForProviderEgress,
 } from "./provider-secret-egress.js";
-import { prepareSimpleCompletionModel } from "./simple-completion-runtime.js";
 
 function supportsInput(
   model: ModelCatalogEntry,
@@ -120,7 +129,6 @@ export async function executePreparedDecision(params: {
   registration: PluginProviderRegistration;
   batch: DecisionBatchV2;
   modelId: string;
-  profileId?: string;
   config: OpenClawConfig;
   options: DecisionEvaluateOptionsV2;
   signal: AbortSignal;
@@ -137,7 +145,7 @@ export async function executePreparedDecision(params: {
   }
   const selected = splitTrailingAuthProfile(params.modelId);
   const modelId = selected.model;
-  const profileId = params.profileId ?? selected.profile;
+  const profileId = selected.profile;
   return withPreparedModelInference<ProviderDecisionOutcomeV2>(
     { cfg: params.config, agentId: params.options.agentId, signal: params.signal },
     { provider: params.registration.provider.id, modelId },
@@ -173,38 +181,68 @@ export async function executePreparedDecision(params: {
       if (!row) {
         return { status: "unavailable", reason: "unsupported-input" };
       }
-      // Reuse the selected normal provider's existing catalog hook for protocol facts,
-      // including explicitly configured custom model IDs. No provider rediscovery or chat Model.
-      const supplemental = await canonical.provider.augmentModelCatalog?.({
+      const route = resolveProviderModelRoutes({
+        provider: row.provider,
+        modelId: row.id,
+        api: row.api,
+        baseUrl: row.baseUrl,
         config: prepared.config,
-        agentDir: prepared.agentDir,
-        workspaceDir: context.workspaceDir,
-        env: process.env,
-        entries: [structuredClone(row)],
+        capability: "decision",
       });
-      if (!assertPrepared()) {
-        return { status: "unavailable", reason: "unsupported-input" };
+      if (route) {
+        // Capability routing precedes auth. Never guess among physical destinations
+        // or carry stale catalog capabilities into a provider-selected endpoint.
+        if (route.kind !== "routes" || route.routes.length !== 1) {
+          return { status: "unavailable", reason: "unsupported-input" };
+        }
+        const selectedRoute = route.routes[0];
+        const decision = selectedRoute.inference
+          ? selectedRoute.inference.decision
+          : modelTransportRoutesMatch(row, selectedRoute)
+            ? row.inference?.decision
+            : undefined;
+        row = {
+          ...row,
+          api: selectedRoute.api,
+          baseUrl: selectedRoute.baseUrl,
+          inference: { chat: row.inference?.chat ?? false, ...(decision ? { decision } : {}) },
+        };
+      } else {
+        // Reuse the selected normal provider's existing catalog hook for protocol facts,
+        // including explicitly configured custom model IDs. No provider rediscovery or chat Model.
+        const supplemental = await canonical.provider.augmentModelCatalog?.({
+          config: prepared.config,
+          agentDir: prepared.agentDir,
+          workspaceDir: context.workspaceDir,
+          env: process.env,
+          entries: [structuredClone(row)],
+        });
+        if (!assertPrepared()) {
+          return { status: "unavailable", reason: "unsupported-input" };
+        }
+        row =
+          supplemental?.find((entry) => entry.provider === row?.provider && entry.id === modelId) ??
+          row;
       }
-      row =
-        supplemental?.find((entry) => entry.provider === row?.provider && entry.id === modelId) ??
-        row;
       if (!supportsInput(row, params.batch, params.options.reasoning)) {
         return { status: "unavailable", reason: "unsupported-input" };
       }
-      const normalized = normalizeProviderTransportWithPlugin({
-        provider: row.provider,
-        modelId: row.id,
-        config: prepared.config,
-        workspaceDir: context.workspaceDir,
-        context: {
-          provider: row.provider,
-          modelId: row.id,
-          config: prepared.config,
-          workspaceDir: context.workspaceDir,
-          api: row.api,
-          baseUrl: row.baseUrl,
-        },
-      });
+      const normalized = route
+        ? undefined
+        : normalizeProviderTransportWithPlugin({
+            provider: row.provider,
+            modelId: row.id,
+            config: prepared.config,
+            workspaceDir: context.workspaceDir,
+            context: {
+              provider: row.provider,
+              modelId: row.id,
+              config: prepared.config,
+              workspaceDir: context.workspaceDir,
+              api: row.api,
+              baseUrl: row.baseUrl,
+            },
+          });
       let model: DecisionProviderContextV2["model"] = {
         ...row,
         api: normalizeResolvedTransportApi(normalized?.api) ?? row.api,
@@ -240,60 +278,80 @@ export async function executePreparedDecision(params: {
         );
       }
       try {
-        if (canonical.provider.prepareRuntimeAuth) {
-          // Existing exchange hooks have a chat Model contract. Never fabricate its costs or limits.
-          if (row.inference?.chat === false) {
-            return { status: "unavailable", reason: "unsupported-input" };
-          }
-          const completion = await prepareSimpleCompletionModel(
-            {
-              cfg: prepared.config,
-              agentId: params.options.agentId,
-              provider: row.provider,
-              modelId: row.id,
-              profileId,
-              bindAuthOwner: true,
+        auth = await resolveApiKeyForProviderCore({
+          provider: row.provider,
+          modelId: row.id,
+          modelApi: model.api,
+          modelBaseUrl: model.baseUrl,
+          profileId,
+          ...(profileId ? { lockedProfile: true, allowAuthProfileFallback: false } : {}),
+          cfg: prepared.config,
+          agentDir: prepared.agentDir,
+          workspaceDir: context.workspaceDir,
+          signal: params.signal,
+          secretSentinels: true,
+          capability: "decision",
+        });
+        model = attachProviderAuthAuthority(model, getProviderAuthAuthority(auth));
+        if (auth.apiKey) {
+          const exchanged = await prepareProviderRuntimeAuth({
+            provider: row.provider,
+            config: prepared.config,
+            workspaceDir: context.workspaceDir,
+            env: process.env,
+            assertCurrent: () => {
+              if (!assertPrepared()) {
+                throw new Error("Decision credential exchange is no longer admitted.");
+              }
+            },
+            context: {
+              capability: "decision",
+              config: prepared.config,
               agentDir: prepared.agentDir,
               workspaceDir: context.workspaceDir,
-              signal: params.signal,
-              preparedModelRuntime: prepared,
+              env: process.env,
+              provider: row.provider,
+              modelId: row.id,
+              // Exchange needs transport identity, not catalog limits or capabilities.
+              // Keep the private request and credential owners on this projection.
+              model: attachProviderAuthAuthority(
+                attachModelProviderRequestTransport(
+                  {
+                    id: model.id,
+                    provider: model.provider,
+                    name: model.name,
+                    api: model.api,
+                    baseUrl: model.baseUrl,
+                    headers: model.headers,
+                  },
+                  getModelProviderRequestTransport(model),
+                ),
+                getProviderAuthAuthority(model),
+              ),
+              apiKey: auth.apiKey,
+              authMode: auth.mode,
+              profileId: auth.profileId,
             },
-            assertPrepared,
-          );
-          if ("error" in completion) {
-            return { status: "unavailable", reason: "credentials-unavailable" };
-          }
-          auth = completion.auth;
-          model = {
-            ...model,
-            api: completion.model.api,
-            baseUrl: completion.model.baseUrl,
-            headers: completion.model.headers,
-          };
-          const request = getModelProviderRequestTransport(completion.model);
-          if (request) {
-            model = attachModelProviderRequestTransport(model, request);
-          }
-        } else {
-          auth = await resolveApiKeyForProviderCore({
-            provider: row.provider,
-            modelId: row.id,
-            modelApi: model.api,
-            modelBaseUrl: model.baseUrl,
-            profileId,
-            ...(profileId ? { lockedProfile: true, allowAuthProfileFallback: false } : {}),
-            cfg: prepared.config,
-            agentDir: prepared.agentDir,
-            workspaceDir: context.workspaceDir,
-            signal: params.signal,
-            secretSentinels: true,
-            capability: "decision",
           });
+          const protectedAuth = protectPreparedProviderRuntimeAuth({
+            provider: row.provider,
+            preparedAuth: exchanged,
+          });
+          auth = { ...auth, apiKey: protectedAuth?.apiKey?.trim() || auth.apiKey };
+          model = applyPreparedRuntimeAuthToModel(model, protectedAuth);
         }
-      } catch {
+        model = applyAuthHeaderOverride(
+          { ...model, headers: applyLocalNoAuthHeaders(model.api, auth.apiKey, model.headers) },
+          auth,
+          prepared.config,
+        );
+      } catch (error) {
         // Profile lookup uses ordinary errors too. Fail closed without changing accounts;
         // cancellation and generation loss remain distinct rejection paths.
         assertPrepared();
+        if (error instanceof UnsupportedProviderRuntimeAuthCapabilityError) {
+          return { status: "unavailable", reason: "unsupported-input" };
+        }
         return { status: "unavailable", reason: "credentials-unavailable" };
       }
       const assertAuthAuthority = getProviderAuthAuthority(auth);
@@ -360,9 +418,8 @@ export async function executePreparedDecision(params: {
         if (!validateDecisionResultV2(offered, value, model.inference?.decision)) {
           return { status: "unavailable", reason: "invalid-response" };
         }
-        const snapshot = structuredClone(value);
         assertPrepared();
-        return { status, result: snapshot };
+        return { status, result: value };
       }
       if (status !== "unavailable") {
         throw new Error("Invalid decision provider outcome");

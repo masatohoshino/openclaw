@@ -2,6 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  attachInternalToolExecutionPreparer,
+  getInternalToolExecutionPreparer,
+  type InternalToolExecutionPreparer,
+} from "../../../packages/agent-core/src/internal-hooks.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import {
   clearRuntimeConfigSnapshot,
@@ -11,11 +16,6 @@ import { resetAgentRunRegistryForTest } from "../../infra/agent-run-registry.js"
 import { setPluginToolMeta } from "../../plugins/tool-metadata.js";
 import { runBeforeToolCallHook } from "../agent-tools.before-tool-call.js";
 import { markCodeModeControlTool } from "../code-mode-control-tools.js";
-import {
-  attachInternalToolExecutionPreparer,
-  getInternalToolExecutionPreparer,
-  type InternalToolExecutionPreparer,
-} from "../runtime/internal-hooks.js";
 import { createSandboxTestContext } from "../sandbox/test-fixtures.js";
 import { createHostSandboxFsBridge } from "../test-helpers/host-sandbox-fs-bridge.js";
 import { runWithAgentWorkspaceReadiness } from "../workspace-readiness.js";
@@ -69,6 +69,31 @@ beforeEach(() => {
 });
 
 describe("agent harness workspace readiness and boundaries", () => {
+  it.each(["host", "admission"] as const)(
+    "retires continuation retry preparation with its %s owner",
+    async (owner) => {
+      const prepare = vi.fn();
+      const { attempt, admission } = await admittedAttempt("retry-settings", {
+        prepareContinuationRetryCount: prepare,
+      });
+      const host = createAgentHarnessHostCapabilities({ attempt, pluginId: "codex" });
+      const retained = host.capabilities.prepareContinuationRetryCount;
+      expect(retained).toBeTypeOf("function");
+      // The host captures the receiver before the plugin can mutate its input.
+      attempt.prepareContinuationRetryCount = vi.fn();
+      retained?.({ cwd: "/attempt/worktree" });
+      expect(prepare).toHaveBeenCalledExactlyOnceWith({ cwd: "/attempt/worktree" });
+      if (owner === "host") {
+        host.close();
+      } else {
+        admission.close();
+      }
+      expect(() => retained?.({ cwd: "/attempt/worktree" })).toThrow();
+      expect(prepare).toHaveBeenCalledOnce();
+      host.close();
+    },
+  );
+
   it.each(["read", "pdf", "workspace_plugin"])(
     "waits for the workspace before %s runs while independent tools remain usable",
     async (name) => {

@@ -6,6 +6,7 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { PreparedModelRuntimePublicationSupersededError } from "../agents/prepared-model-runtime.errors.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createDeferredCore } from "../shared/deferred.js";
+import { AgentDatabaseSchemaAdmissionChangedError } from "../state/agent-database-admission-error.js";
 import {
   readAgentDatabaseAdmissionRefusal,
   recordAgentDatabaseAdmissions,
@@ -13,6 +14,7 @@ import {
 import { withAgentDatabaseStartupAdmission } from "../state/agent-database-startup.js";
 import { resolveOpenClawAgentSqlitePath } from "../state/openclaw-agent-db.paths.js";
 import { activateGatewayAgentDatabaseStartup } from "./server-agent-database-startup.js";
+import { createContext } from "./server-plugin-in-process-dispatch.test-support.js";
 
 const mocks = vi.hoisted(() => ({
   migrate: vi.fn(),
@@ -54,6 +56,10 @@ vi.mock("./server-startup-session-migration.js", () => ({
     return [];
   },
   runGatewaySessionStartupMaintenance: mocks.maintain,
+}));
+// mock-isolation: Native restart discovery/admission is covered by the real integrity suite.
+vi.mock("./session-restart-resume.js", () => ({
+  prepareAgentRestartRecovery: async () => undefined,
 }));
 // mock-isolation: Model preparation stays observable without loading provider plugins.
 vi.mock("../agents/prepared-model-runtime.js", () => ({
@@ -200,8 +206,11 @@ function createFleet(
             },
           }),
         );
+        const context = createContext([], () => cfg);
+        context.agentDatabaseStartup = admission.observation;
         activateGatewayAgentDatabaseStartup({
           admission,
+          context,
           preparationReady,
           waitForPostReadyWork: () => postReadyWork,
           getConfig: () => cfg,
@@ -248,6 +257,21 @@ it("admits configured ACP-only stores without native runtime publication", async
     expect(mocks.refreshModels).not.toHaveBeenCalled();
   });
 });
+
+it.for(["openclaw", "crestodian"])(
+  "prepares the deferred reserved %s store without a configured roster entry",
+  async (agentId, { signal }) => {
+    const fleet = createFleet(["main", agentId]);
+    fleet.changeAgentDatabase(agentId, "agent removal");
+    await fleet.run(async (admission) => {
+      expectAdmission(fleet, agentId, "agent-database-inspection-pending");
+      fleet.inspect(1);
+      await withinTest(admission.waitForAgentPreparation(agentId, fleet)!, signal);
+      expectAdmission(fleet, agentId);
+      expect(mocks.warn).not.toHaveBeenCalled();
+    });
+  },
+);
 
 it("admits agents before transcript repair and joins repair on shutdown", async ({ signal }) => {
   const fleet = createFleet();
@@ -523,6 +547,7 @@ it.for([
   "secrets preparation",
   "model runtime",
   "queued model runtime",
+  "schema admission",
 ] as const)(
   "retries a superseded publication after %s replacement",
   async (replacement, { signal }) => {
@@ -551,6 +576,9 @@ it.for([
         await release.promise;
         if (replacement === "model runtime") {
           throw new PreparedModelRuntimePublicationSupersededError("publication was superseded");
+        }
+        if (replacement === "schema admission") {
+          throw new AgentDatabaseSchemaAdmissionChangedError();
         }
       });
     }
