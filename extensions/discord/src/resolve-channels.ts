@@ -1,7 +1,7 @@
 import { DISCORD_DIRECTORY_LOOKUP_TIMEOUT_MS, DiscordApiError, fetchDiscord } from "./api.js";
 import { isDiscordThreadChannelType } from "./channel-type.js";
 import { listDiscordGuildChannels, listGuilds, type DiscordGuildChannel } from "./guilds.js";
-import { normalizeDiscordSlug } from "./monitor/allow-list.js";
+import { normalizeDiscordDisplaySlug } from "./monitor/allow-list.js";
 import {
   filterDiscordGuilds,
   parseDiscordAllowlistInput,
@@ -148,8 +148,11 @@ export async function resolveDiscordChannelAllowlist(params: {
         return ids;
       }
     }
-    const slug = normalizeDiscordSlug(query);
-    return channels.filter((channel) => normalizeDiscordSlug(channel.name) === slug);
+    // Keep non-Latin letters; a name with none (emoji only) slugs to "" and would match others.
+    const slug = normalizeDiscordDisplaySlug(query);
+    return slug
+      ? channels.filter((channel) => normalizeDiscordDisplaySlug(channel.name) === slug)
+      : [];
   }
 
   const resolveEntry = async (input: string): Promise<DiscordChannelResolution> => {

@@ -54,6 +54,21 @@ describe("resolveDiscordChannelAllowlist", () => {
     expect(res[0]).toMatchObject({ resolved: true, guildId: "g1", channelId: "c1" });
   });
 
+  it("matches channel names by their letters in any script", async () => {
+    const res = await resolve(["111/雑談", "111/助手", "111/alerts"], {
+      channels: [
+        channel("c1", "お知らせ"),
+        channel("c2", "雑談"),
+        channel("c3", "\u26A0\uFE0F-alerts"),
+      ],
+    });
+    expect(res.map(({ resolved, channelId }) => ({ resolved, channelId }))).toEqual([
+      { resolved: true, channelId: "c2" },
+      { resolved: false, channelId: undefined },
+      { resolved: true, channelId: "c3" },
+    ]);
+  });
+
   it("reports unresolved when channel id belongs to a different guild", async () => {
     const res = await resolve(["111/222"], {
       guilds: [
