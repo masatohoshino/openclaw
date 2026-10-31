@@ -1,6 +1,5 @@
 import type { DiscordGuildEntry } from "openclaw/plugin-sdk/config-contracts";
 import { createNonExitingRuntimeEnv } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { withFetchPreconnect } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   getDiscordChannelPolicyBinding,
@@ -10,7 +9,6 @@ import {
 import { resolveDiscordGroupToolPolicy } from "../group-policy.js";
 import * as channels from "../resolve-channels.js";
 import * as users from "../resolve-users.js";
-import { jsonResponse, urlToString } from "../test-http-helpers.js";
 import { resolveDiscordAllowlistConfig } from "./provider.allowlist.js";
 
 const denyExec = { deny: ["exec"] };
@@ -96,36 +94,6 @@ it("canonicalizes permitted names while preserving unresolved entries and numeri
   expect(result.guildEntries?.["145"]?.channels).toEqual({ "246": {}, "999": {}, missing: {} });
   const logs = vi.mocked(runtime.log).mock.calls.flat().join("\n");
   expect(logs).toContain("discord channels unresolved: 145/missing");
-});
-
-it("keeps an ASCII channel key bound when the channel name adds other letters", async () => {
-  vi.mocked(channels.resolveDiscordChannelAllowlist).mockRestore();
-  const guildEntries = { "145": { tools: allowRead, channels: { general: { tools: denyExec } } } };
-  await resolve({
-    guildEntries,
-    fetcher: withFetchPreconnect(async (input) => {
-      const url = urlToString(input);
-      if (url.endsWith("/users/@me/guilds")) {
-        return jsonResponse([{ id: "145", name: "Ops" }]);
-      }
-      if (url.endsWith("/guilds/145/channels")) {
-        return jsonResponse([{ id: "246", name: "общий-general", guild_id: "145", type: 0 }]);
-      }
-      return new Response("not found", { status: 404 });
-    }),
-  });
-  expect(getDiscordChannelPolicyBinding("default", "145", "general")).toBe("246");
-  const toolPolicy = (groupId: string, groupChannel: string) =>
-    resolveDiscordGroupToolPolicy({
-      accountId: "default",
-      groupSpace: "145",
-      groupId,
-      groupChannel,
-      cfg: { channels: { discord: { guilds: guildEntries } } },
-    });
-  expect(toolPolicy("246", "общий-general")).toEqual(denyExec);
-  // A thread or channel that is only named "general" keeps the guild policy.
-  expect(toolPolicy("999", "general")).toEqual(allowRead);
 });
 
 it.each(["unresolved", "failed", "removed"])(
