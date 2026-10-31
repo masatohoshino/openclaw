@@ -75,11 +75,8 @@ describe("invokeNodeSystemRun failure classification", () => {
       cwd: undefined,
       warnings: ["Warning: running synchronously."],
     });
-    expect(result.details).toMatchObject({
-      reason: "permission-missing",
-      permissionMissing,
-      warningText: "Warning: running synchronously.",
-    });
+    expect(result.details).toMatchObject({ reason: "permission-missing", permissionMissing });
+    expect(result.details).toHaveProperty("warningText", "Warning: running synchronously.");
     expect(result.content).toEqual([{ type: "text", text: expect.stringContaining(message) }]);
     expect(result.content).not.toEqual([
       { type: "text", text: expect.stringContaining("may have executed") },
