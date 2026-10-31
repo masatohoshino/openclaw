@@ -35,17 +35,20 @@ vi.mock("./setup.shared.js", async (importOriginal) => {
     writeWizardConfigFile: mocks.writeConfig,
   };
 });
-vi.mock("./setup.migration-import.js", () => ({
+vi.mock("./setup.migration-import.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./setup.migration-import.js")>()),
   detectSetupMigrationSources: async () => ({ detections: [], providerDescriptors: [] }),
   listSetupMigrationOptions: async () => [],
 }));
-vi.mock("./setup.workspace.js", () => ({
+vi.mock("./setup.workspace.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./setup.workspace.js")>()),
   resolveSetupWorkspaceSelection: async () => ({
     workspaceDir: "/tmp/workspace",
     allowWorkspaceChange: false,
   }),
 }));
-vi.mock("./setup.gateway-config.js", () => ({
+vi.mock("./setup.gateway-config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./setup.gateway-config.js")>()),
   configureGatewayForSetup: async ({ nextConfig }: { nextConfig: OpenClawConfig }) => ({
     nextConfig,
     settings: { port: 19791, bind: "loopback", authMode: "token" },
@@ -62,12 +65,14 @@ vi.mock("../commands/onboard-agent.js", () => ({
     agentId: "main",
   }),
 }));
-vi.mock("../commands/onboard-helpers.js", () => ({
+vi.mock("../commands/onboard-helpers.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../commands/onboard-helpers.js")>()),
   DEFAULT_WORKSPACE: "/tmp/workspace",
   printWizardHeader: async () => {},
   probeGatewayReachable: async () => ({ ok: false }),
   summarizeExistingConfig: () => "",
 }));
+// mock-isolation: keep the process-global channel registry out of this fixture.
 vi.mock("../channels/plugins/index.js", () => ({ listChannelPlugins: () => [] }));
 vi.mock("../flows/channel-setup.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../flows/channel-setup.js")>()),
