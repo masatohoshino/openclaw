@@ -73,14 +73,14 @@ describe("resolveDiscordChannelAllowlist", () => {
         channel("c6", "ops"),
       ],
     });
-    // An ASCII key matched only by a name's ASCII letters keeps resolving; a whole-name match wins.
-    // A key with other letters never falls back to its ASCII part.
+    // ASCII keys match by a name's ASCII letters, as before (the first such channel wins).
+    // A key with other letters never matches by its ASCII part.
     expect(res.map(({ resolved, channelId }) => ({ resolved, channelId }))).toEqual([
       { resolved: true, channelId: "c2" },
       { resolved: false, channelId: undefined },
       { resolved: true, channelId: "c3" },
       { resolved: true, channelId: "c4" },
-      { resolved: true, channelId: "c6" },
+      { resolved: true, channelId: "c5" },
       { resolved: false, channelId: undefined },
     ]);
   });

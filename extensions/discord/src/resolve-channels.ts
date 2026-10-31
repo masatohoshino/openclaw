@@ -153,15 +153,11 @@ export async function resolveDiscordChannelAllowlist(params: {
     if (!slug) {
       return [];
     }
-    const matches = channels.filter(
-      (channel) => normalizeDiscordDisplaySlug(channel.name) === slug,
-    );
-    if (matches.length || normalizeDiscordSlug(query) !== slug) {
-      return matches;
-    }
-    // ASCII keys that matched by a name's ASCII letters alone stay bound to the same channel id;
-    // an unbound key would apply its policy to any other channel or thread of that name.
-    return channels.filter((channel) => normalizeDiscordSlug(channel.name) === slug);
+    // ASCII keys keep the ASCII-only match, so existing keys stay bound to the same channel id
+    // (an unbound key would apply its policy to any other channel or thread of that name).
+    const matchSlug =
+      normalizeDiscordSlug(query) === slug ? normalizeDiscordSlug : normalizeDiscordDisplaySlug;
+    return channels.filter((channel) => matchSlug(channel.name) === slug);
   }
 
   const resolveEntry = async (input: string): Promise<DiscordChannelResolution> => {
