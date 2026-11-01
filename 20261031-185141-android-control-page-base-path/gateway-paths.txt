@@ -1,0 +1,6 @@
+$ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:19411/      # Before: the Android page base (no mount)
+404
+$ curl -s http://127.0.0.1:19411/
+Not Found
+$ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:19411/gateway/   # After: the mount advertised in hello-ok
+200
