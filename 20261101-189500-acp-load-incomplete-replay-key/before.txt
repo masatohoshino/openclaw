@@ -1,0 +1,24 @@
+Base a506b3fb0a5 (upstream main), isolated Gateway on loopback, Gemini model, tools profile minimal.
+ACP client drives the real `openclaw acp` bridge over stdio.
+
+1. session/new, then prompt: "Remember this codeword for later: PLUM-7731. Reply with just OK."
+   sessionId: 59d371b3-3cdc-41cb-95e8-58e7dbd39e39
+   answer:    OK
+
+2. Replay ledger row after step 1, then marked trimmed (complete = 0, the state the
+   5,000-event trim, a partial byte-budget trim and markIncomplete leave):
+   session_key: agent:main:acp-bridge:59d371b3-3cdc-41cb-95e8-58e7dbd39e39
+   complete:    0
+   events:      8
+
+3. New bridge process: session/load 59d371b3-..., then prompt:
+   "What codeword did I ask you to remember? Reply with just the codeword, or NONE"
+   replayed user text:  ""            (nothing replayed)
+   replayed agent text: ""
+   answer:              NONE
+
+Gateway log for the step 3 turn (excerpt):
+   [agents/code-mode] ... sessionKey=agent:main:59d371b3-3cdc-41cb-95e8-58e7dbd39e39 ...
+
+The load fell back to the raw ACP session id, so the turn ran in a new, empty
+Gateway session (agent:main:<id>) instead of agent:main:acp-bridge:<id>.
