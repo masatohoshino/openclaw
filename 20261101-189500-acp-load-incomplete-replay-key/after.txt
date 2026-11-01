@@ -1,0 +1,22 @@
+Head 0e5ee2bd9cc (this PR), same isolated Gateway setup, same steps.
+
+1. session/new, then prompt: "Remember this codeword for later: PLUM-7731. Reply with just OK."
+   sessionId: 010c54ed-c174-42df-a421-db67733fe972
+   answer:    OK
+
+2. Replay ledger row after step 1, then marked trimmed:
+   session_key: agent:main:acp-bridge:010c54ed-c174-42df-a421-db67733fe972
+   complete:    0
+   events:      8
+
+3. New bridge process: session/load 010c54ed-..., then prompt:
+   "What codeword did I ask you to remember? Reply with just the codeword, or NONE"
+   replayed user text:  "[Working directory: ~]\n\nRemember this codeword for later: PLUM-7731. Reply with just OK."
+   replayed agent text: "OK"
+   answer:              PLUM-7731
+
+Gateway log for the step 3 turn (excerpt):
+   [agent/embedded] ... sessionKey=agent:main:acp-bridge:010c54ed-c174-42df-a421-db67733fe972
+
+The load used the stored bridge key, replayed the history from the Gateway
+transcript, and the agent answered from the earlier turn.
