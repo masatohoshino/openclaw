@@ -1,0 +1,42 @@
+# models.list supportsFastMode for Anthropic models, isolated Gateway, synthetic key
+# key source: config = models.providers.anthropic.apiKey; config-explicit = same plus auth: "api-key"; env = ANTHROPIC_API_KEY; profile = api_key auth profile
+
+# Before, base 5342923d897a
+## config
+{"id":"claude-opus-4-6","available":true,"supportsFastMode":"(absent)"}
+{"id":"claude-opus-5-5","available":true,"supportsFastMode":"(absent)"}
+{"id":"claude-opus-5","available":true,"supportsFastMode":"(absent)"}
+## config-explicit
+{"id":"claude-opus-4-6","available":true,"supportsFastMode":"(absent)"}
+{"id":"claude-opus-5-5","available":true,"supportsFastMode":"(absent)"}
+{"id":"claude-opus-5","available":true,"supportsFastMode":"(absent)"}
+## env
+{"id":"claude-opus-4-6","available":true,"supportsFastMode":"(absent)"}
+{"id":"claude-sonnet-4-6","available":true,"supportsFastMode":"(absent)"}
+## profile
+{"id":"claude-opus-4-6","available":true,"supportsFastMode":true}
+{"id":"claude-opus-5-5","available":true,"supportsFastMode":true}
+{"id":"claude-opus-5","available":true,"supportsFastMode":true}
+{"id":"claude-sonnet-4-6","available":true,"supportsFastMode":true}
+
+# After, fix 3625fd3292ce
+## config
+{"id":"claude-opus-4-6","available":true,"supportsFastMode":true}
+{"id":"claude-opus-5-5","available":true,"supportsFastMode":true}
+{"id":"claude-opus-5","available":true,"supportsFastMode":true}
+## config-explicit
+{"id":"claude-opus-4-6","available":true,"supportsFastMode":true}
+{"id":"claude-opus-5-5","available":true,"supportsFastMode":true}
+{"id":"claude-opus-5","available":true,"supportsFastMode":true}
+## env
+{"id":"claude-opus-4-6","available":true,"supportsFastMode":true}
+{"id":"claude-sonnet-4-6","available":true,"supportsFastMode":true}
+## profile
+{"id":"claude-opus-4-6","available":true,"supportsFastMode":true}
+{"id":"claude-opus-5-5","available":true,"supportsFastMode":true}
+{"id":"claude-opus-5","available":true,"supportsFastMode":true}
+{"id":"claude-sonnet-4-6","available":true,"supportsFastMode":true}
+
+# Android: stored session fastMode after tapping the Fast mode switch (config key, claude-opus-4-6)
+Before: session agent:main:node-<id> fastMode=unset
+After:  session agent:main:node-<id> fastMode=true
