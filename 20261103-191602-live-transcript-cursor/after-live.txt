@@ -1,0 +1,35 @@
+[live:0-1:0]
+Voice call aa92c485-970d-4c6b-bc91-ec19bc9816ed, live transcript:
+Assistant: Friday at nine works.
+
+---
+
+[live:1-2:0]
+Voice call aa92c485-970d-4c6b-bc91-ec19bc9816ed, live transcript:
+Callee: Is Friday free?
+
+---
+
+[live:2-3:0]
+Voice call aa92c485-970d-4c6b-bc91-ec19bc9816ed, live transcript:
+Assistant: Yes, I will bring it.
+
+---
+
+[live:3-4:0]
+Voice call aa92c485-970d-4c6b-bc91-ec19bc9816ed, live transcript:
+Callee: Can you bring the part?
+
+---
+
+[report:0]
+Voice call aa92c485-970d-4c6b-bc91-ec19bc9816ed
+Outcome: achieved.
+Duration: 1 seconds
+End reason: completed
+
+Transcript:
+Callee: Is Friday free?
+Assistant: Friday at nine works.
+Callee: Can you bring the part?
+Assistant: Yes, I will bring it.
