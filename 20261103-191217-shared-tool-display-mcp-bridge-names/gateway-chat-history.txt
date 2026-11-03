@@ -1,0 +1,4 @@
+chat.history (real Gateway, synthetic Claude CLI session, provider claude-cli):
+  assistant toolcall name=mcp__openclaw__exec args={"command":"pnpm test","workdir":"/workspace","timeout":120,"yieldMs":10000}
+  assistant toolcall name=mcp__openclaw__apply_patch args={"input":"*** Begin Patch\n*** Update File: README.md\n@@\n-Old line\n+New line\n*** End Patch"}
+  assistant toolcall name=mcp__openclaw__read args={"path":"README.md"}
