@@ -5,17 +5,17 @@ OpenClaw 2026.11.2 (b556fdf)
 Config valid: ~/state/openclaw.json
 exit=0
 ## stable: POST /hooks/nightly response
-{"ok":true,"runId":"c37983a9-1558-48b7-93d4-2a2e10003c08"}
+{"ok":true,"runId":"38dcf2c3-fb83-4eac-8494-3ed9735bdb2d"}
 ## stable: Gateway log lines for the hook run
-2026-11-10T21:01:20.587+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
-2026-11-10T21:01:21.030+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=907 runId=0ba92d04-4a54-4c4d-b961-64ecf47dd1a0 error=Claude Code process exited with code 1
-2026-11-10T21:01:21.110+09:00 [hooks] hook agent run completed runId=c37983a9-1558-48b7-93d4-2a2e10003c08 status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=c37983a9-1558-48b7-93d4-2a2e10003c08 jobId=89ff74cc-4cc1-40da-887c-22452db31841 sourcePath=/hooks/nightl…
+2026-11-10T21:52:51.217+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
+2026-11-10T21:52:51.636+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=860 runId=eded2e7c-74a9-4c6b-9b11-18906319a0b3 error=Claude Code process exited with code 1
+2026-11-10T21:52:51.708+09:00 [hooks] hook agent run completed runId=38dcf2c3-fb83-4eac-8494-3ed9735bdb2d status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=38dcf2c3-fb83-4eac-8494-3ed9735bdb2d jobId=8f4e616d-ed77-47ac-879d-c1ec772bc167 sourcePath=/hooks/nightl…
 ## stable: openclaw sessions --json --all-agents
 count=3
-agent:main:main sessionId=b9a2f989-202b-497e-80bc-01a4ec2181b6
-agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
-agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841:run:622518b1-23a4-4428-bcb3-59ef71870362 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
-# head commit: 4afca9475c6d9d675437775c272ec2b8337a7c47
+agent:main:main sessionId=ed231e43-b8f5-47b0-a76d-5a7cec59b09a
+agent:main:cron:8f4e616d-ed77-47ac-879d-c1ec772bc167 sessionId=8a00ac04-ee4e-4489-9574-edaf105b7594
+agent:main:cron:8f4e616d-ed77-47ac-879d-c1ec772bc167:run:8a00ac04-ee4e-4489-9574-edaf105b7594 sessionId=8a00ac04-ee4e-4489-9574-edaf105b7594
+# head commit: 3234f01193cad08df7dc2c820cf23e8a9fdc716d
 ## head: openclaw doctor --fix --non-interactive (Doctor changes for the hook and channel refs)
 ◇  Doctor changes ─────────────────────────────────────────────────────╮
 │                                                                      │
@@ -62,22 +62,22 @@ Config valid: ~/state/openclaw.json
 exit=0
 ## head: openclaw sessions --json --all-agents (after Doctor)
 count=3
-agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
-agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841:run:622518b1-23a4-4428-bcb3-59ef71870362 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
-agent:main:main sessionId=b9a2f989-202b-497e-80bc-01a4ec2181b6
+agent:main:cron:8f4e616d-ed77-47ac-879d-c1ec772bc167 sessionId=8a00ac04-ee4e-4489-9574-edaf105b7594
+agent:main:cron:8f4e616d-ed77-47ac-879d-c1ec772bc167:run:8a00ac04-ee4e-4489-9574-edaf105b7594 sessionId=8a00ac04-ee4e-4489-9574-edaf105b7594
+agent:main:main sessionId=ed231e43-b8f5-47b0-a76d-5a7cec59b09a
 ## head: POST /hooks/nightly response
-{"ok":true,"runId":"7978e1b3-e101-49c2-b79b-0495d198d3f8"}
+{"ok":true,"runId":"3c6f99a1-6da9-4288-84c4-efe2a5cac26e"}
 ## head: Gateway log lines for the hook run
-2026-11-10T21:02:05.718+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
-2026-11-10T21:02:05.874+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=448 runId=d1feb7e4-9268-46a0-b90f-1cc317d0dadf error=Claude Code process exited with code 1
-2026-11-10T21:02:05.985+09:00 [hooks] hook agent run completed runId=7978e1b3-e101-49c2-b79b-0495d198d3f8 status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=7978e1b3-e101-49c2-b79b-0495d198d3f8 jobId=2f5ae0c6-4ba5-428c-860b-05afcf979f06 sourcePath=/hooks/nightl…
+2026-11-10T21:55:27.045+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
+2026-11-10T21:55:27.190+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=437 runId=62925dc8-4c65-4642-b0e3-d0b931622474 error=Claude Code process exited with code 1
+2026-11-10T21:55:27.293+09:00 [hooks] hook agent run completed runId=3c6f99a1-6da9-4288-84c4-efe2a5cac26e status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=3c6f99a1-6da9-4288-84c4-efe2a5cac26e jobId=6d8aedeb-9662-4eb4-b3c1-b490ebc9e968 sourcePath=/hooks/nightl…
 ## head: openclaw sessions --json --all-agents (after the hook run)
 count=5
-agent:main:main sessionId=b9a2f989-202b-497e-80bc-01a4ec2181b6
-agent:main:cron:2f5ae0c6-4ba5-428c-860b-05afcf979f06 sessionId=d02aba41-58eb-4f31-9fee-b47f355d6f70
-agent:main:cron:2f5ae0c6-4ba5-428c-860b-05afcf979f06:run:d02aba41-58eb-4f31-9fee-b47f355d6f70 sessionId=d02aba41-58eb-4f31-9fee-b47f355d6f70
-agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
-agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841:run:622518b1-23a4-4428-bcb3-59ef71870362 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
+agent:main:main sessionId=ed231e43-b8f5-47b0-a76d-5a7cec59b09a
+agent:main:cron:6d8aedeb-9662-4eb4-b3c1-b490ebc9e968 sessionId=d85d7a23-6129-45fb-989a-d1bb79b3d444
+agent:main:cron:6d8aedeb-9662-4eb4-b3c1-b490ebc9e968:run:d85d7a23-6129-45fb-989a-d1bb79b3d444 sessionId=d85d7a23-6129-45fb-989a-d1bb79b3d444
+agent:main:cron:8f4e616d-ed77-47ac-879d-c1ec772bc167 sessionId=8a00ac04-ee4e-4489-9574-edaf105b7594
+agent:main:cron:8f4e616d-ed77-47ac-879d-c1ec772bc167:run:8a00ac04-ee4e-4489-9574-edaf105b7594 sessionId=8a00ac04-ee4e-4489-9574-edaf105b7594
 # base commit, same steps on a fresh stable-written state: b85de3162b1d92beefd2bbae220ff7a3599f88b6
 ## base: openclaw doctor --fix --non-interactive
 exit=0
