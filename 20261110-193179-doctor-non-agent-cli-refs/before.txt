@@ -1,0 +1,28 @@
+# Before: base commit, seed config, doctor --fix, then one hook
+# commit: b85de3162b1d92beefd2bbae220ff7a3599f88b6
+## openclaw doctor --fix --non-interactive (Doctor changes for the hook and channel refs)
+◇  Doctor changes ─────────────────────────────────────────────────────╮
+│                                                                      │
+│  Upgraded config.hooks.mappings.0.model from                         │
+│  "claude-cli/claude-sonnet-4-6" to "anthropic/claude-sonnet-4-6".    │
+│  Upgraded config.channels.modelByChannel.discord.123456789012345678  │
+│  from "claude-cli/claude-opus-4-7" to "anthropic/claude-opus-4-7".   │
+│  Recorded webhook listener decisions; removed pins will not be       │
+│  recreated.                                                          │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────╯
+## config after doctor
+{
+  "agents.defaults.models": null,
+  "hooks.mappings[0].model": "anthropic/claude-sonnet-4-6",
+  "channels.modelByChannel": {
+    "discord": {
+      "123456789012345678": "anthropic/claude-opus-4-7"
+    }
+  }
+}
+## POST /hooks/nightly response
+{"ok":true,"runId":"1b233e74-e1ea-4c23-a509-4be0cf51d208"}
+## Gateway log lines for the hook run
+2026-11-10T19:11:27.241+09:00 [model-fallback/decision] model fallback decision: decision=candidate_failed requested=anthropic/claude-sonnet-4-6 candidate=anthropic/claude-sonnet-4-6 reason=auth next=none
+2026-11-10T19:11:27.285+09:00 [hooks] hook agent run completed runId=1b233e74-e1ea-4c23-a509-4be0cf51d208 status=error summary=No API key found for provider "anthropic". Auth store: <path> (agentDir: <path>). Configure an API key (openclaw models auth paste-api-key --provider anthropic; add --agent …
