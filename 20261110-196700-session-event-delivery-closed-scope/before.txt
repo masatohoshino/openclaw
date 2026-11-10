@@ -1,0 +1,3 @@
+step: delivers a session-targeted cron reply to its conversation
+  status: pass
+  details: {"deliveryStatus":"not-delivered","deliveryError":"Error: Plugin invocation scope is closed","eventReplyInChannel":false}
