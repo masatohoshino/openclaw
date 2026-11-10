@@ -1,0 +1,42 @@
+# After: branch head, same seed config and steps
+# commit: 4afca9475c6d9d675437775c272ec2b8337a7c47
+## openclaw doctor --fix --non-interactive (Doctor changes for the hook and channel refs)
+◇  Doctor changes ─────────────────────────────────────────────────────╮
+│                                                                      │
+│  Selected agents.defaults.models runtime for legacy refs outside     │
+│  agents.                                                             │
+│  Upgraded config.hooks.mappings.0.model from                         │
+│  "claude-cli/claude-sonnet-4-6" to "anthropic/claude-sonnet-4-6".    │
+│  Upgraded config.channels.modelByChannel.discord.123456789012345678  │
+│  from "claude-cli/claude-opus-4-7" to "anthropic/claude-opus-4-7".   │
+│  Recorded webhook listener decisions; removed pins will not be       │
+│  recreated.                                                          │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────╯
+## config after doctor
+{
+  "agents.defaults.models": {
+    "anthropic/claude-sonnet-4-6": {
+      "agentRuntime": {
+        "id": "claude-cli"
+      }
+    },
+    "anthropic/claude-opus-4-7": {
+      "agentRuntime": {
+        "id": "claude-cli"
+      }
+    }
+  },
+  "hooks.mappings[0].model": "anthropic/claude-sonnet-4-6",
+  "channels.modelByChannel": {
+    "discord": {
+      "123456789012345678": "anthropic/claude-opus-4-7"
+    }
+  }
+}
+## POST /hooks/nightly response
+{"ok":true,"runId":"65a077f8-e981-4cd5-bd76-cde5d7be9dff"}
+## Gateway log lines for the hook run
+2026-11-10T19:18:38.109+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
+2026-11-10T19:18:38.275+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=683 runId=8d5c3743-6410-481a-8408-10a32e8de985 error=Claude Code process exited with code 1
+2026-11-10T19:18:38.385+09:00 [hooks] hook agent run completed runId=65a077f8-e981-4cd5-bd76-cde5d7be9dff status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=65a077f8-e981-4cd5-bd76-cde5d7be9dff jobId=afba37e4-f0ab-4102-aa0e-286d32a965bd sourcePath=/hooks/nightl…
