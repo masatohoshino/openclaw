@@ -1,0 +1,20 @@
+OpenClaw 920338823f7b (base), isolated QA Gateway, real Matrix plugin
+homeserver: tuwunel 1.9.3 (ghcr.io/matrix-construct/tuwunel:v1.9.3), local disposable container, server name matrix-qa.test
+model: mock-openai/gpt-5.6-luna (the QA Lab mock OpenAI provider, not a real model)
+
+1. driver user mentions the bot in a Matrix room; bot replies (normal turn)
+2. cron job added: sessionTarget = session:<that room's session>, message 'Reply with only this exact marker: MATRIX_QA_CRON_...'
+
+cron.runs record:
+  completionStatus: failed
+  summary: MATRIX_QA_CRON_67F95CBC
+  delivered: false
+  deliveryStatus: not-delivered
+  deliveryError: Failed to route reply to matrix: Plugin invocation scope is closed
+  delivery.resolved.channel: matrix
+
+room messages seen by a separate Matrix observer account (homeserver sync):
+  inbound  qa-driver (user): @openclaw Reply with only this exact marker: MATRIX_QA_FIRST_A84642AD
+  outbound qa-sut (OpenClaw bot): MATRIX_QA_FIRST_A84642AD
+
+cron reply in the room: no
