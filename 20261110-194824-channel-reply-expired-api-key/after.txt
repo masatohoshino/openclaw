@@ -1,0 +1,3 @@
+telegram update delivered to the Gateway: yes
+provider answered 401 api_key_expired: yes
+telegram reply (sendmessage): ⚠️ This API key has expired. Create a new API key in your provider's console and replace it in OpenClaw or its secret store. Signing in again will not renew this key.
