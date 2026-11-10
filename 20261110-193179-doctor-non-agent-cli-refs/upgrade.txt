@@ -1,0 +1,105 @@
+# Upgrade from stable to the head on one state directory
+## stable: openclaw --version
+OpenClaw 2026.11.2 (b556fdf)
+## stable: openclaw config validate
+Config valid: ~/state/openclaw.json
+exit=0
+## stable: POST /hooks/nightly response
+{"ok":true,"runId":"c37983a9-1558-48b7-93d4-2a2e10003c08"}
+## stable: Gateway log lines for the hook run
+2026-11-10T21:01:20.587+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
+2026-11-10T21:01:21.030+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=907 runId=0ba92d04-4a54-4c4d-b961-64ecf47dd1a0 error=Claude Code process exited with code 1
+2026-11-10T21:01:21.110+09:00 [hooks] hook agent run completed runId=c37983a9-1558-48b7-93d4-2a2e10003c08 status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=c37983a9-1558-48b7-93d4-2a2e10003c08 jobId=89ff74cc-4cc1-40da-887c-22452db31841 sourcePath=/hooks/nightl…
+## stable: openclaw sessions --json --all-agents
+count=3
+agent:main:main sessionId=b9a2f989-202b-497e-80bc-01a4ec2181b6
+agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
+agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841:run:622518b1-23a4-4428-bcb3-59ef71870362 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
+# head commit: 4afca9475c6d9d675437775c272ec2b8337a7c47
+## head: openclaw doctor --fix --non-interactive (Doctor changes for the hook and channel refs)
+◇  Doctor changes ─────────────────────────────────────────────────────╮
+│                                                                      │
+│  Selected agents.defaults.models runtime for legacy refs outside     │
+│  agents.                                                             │
+│  Upgraded config.hooks.mappings.0.model from                         │
+│  "claude-cli/claude-sonnet-4-6" to "anthropic/claude-sonnet-4-6".    │
+│  Upgraded config.channels.modelByChannel.discord.123456789012345678  │
+│  from "claude-cli/claude-opus-4-7" to "anthropic/claude-opus-4-7".   │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────╯
+exit=0
+## head: Doctor changes to stored state
+- Upgraded agent database schema in <path> v27 -> v41.
+- Found stale Anthropic session routing state in 2 sessions.
+- Cleared stale Anthropic session routing state for 2 sessions.
+## config: stable-written vs after head Doctor (keys from the seed)
+unchanged agents.defaults.model: "openai/gpt-5.5"
+unchanged logging: {"level":"info"}
+unchanged messages: {"responsePrefix":"[bot]","ackReaction":"👀"}
+unchanged gateway.port: 18932
+unchanged gateway.bind: "loopback"
+unchanged gateway.auth.mode: "token"
+unchanged hooks.enabled: true
+unchanged hooks.path: "/hooks"
+unchanged hooks.mappings.0.id: "nightly"
+unchanged hooks.mappings.0.messageTemplate: "Say hi."
+unchanged hooks.mappings.0.deliver: false
+changed   hooks.mappings.0.model: "claude-cli/claude-sonnet-4-6" -> "anthropic/claude-sonnet-4-6"
+changed   channels.modelByChannel: {"discord":{"123456789012345678":"claude-cli/claude-opus-4-7"}} -> {"discord":{"123456789012345678":"anthropic/claude-opus-4-7"}}
+changed   agents.defaults.models: undefined -> {"anthropic/claude-sonnet-4-6":{"agentRuntime":{"id":"claude-cli"}},"anthropic/claude-opus-4-7":{"agentRuntime":{"id":"claude-cli"}}}
+## config: other keys the head Doctor wrote
+added agents.entries
+added plugins.entries
+added wizard.lastRunAt
+added wizard.lastRunVersion
+added wizard.lastRunCommand
+added wizard.lastRunMode
+added meta.lastTouchedVersion
+added meta.migrations
+added skills.entries
+## head: openclaw config validate
+Config valid: ~/state/openclaw.json
+exit=0
+## head: openclaw sessions --json --all-agents (after Doctor)
+count=3
+agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
+agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841:run:622518b1-23a4-4428-bcb3-59ef71870362 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
+agent:main:main sessionId=b9a2f989-202b-497e-80bc-01a4ec2181b6
+## head: POST /hooks/nightly response
+{"ok":true,"runId":"7978e1b3-e101-49c2-b79b-0495d198d3f8"}
+## head: Gateway log lines for the hook run
+2026-11-10T21:02:05.718+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
+2026-11-10T21:02:05.874+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=448 runId=d1feb7e4-9268-46a0-b90f-1cc317d0dadf error=Claude Code process exited with code 1
+2026-11-10T21:02:05.985+09:00 [hooks] hook agent run completed runId=7978e1b3-e101-49c2-b79b-0495d198d3f8 status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=7978e1b3-e101-49c2-b79b-0495d198d3f8 jobId=2f5ae0c6-4ba5-428c-860b-05afcf979f06 sourcePath=/hooks/nightl…
+## head: openclaw sessions --json --all-agents (after the hook run)
+count=5
+agent:main:main sessionId=b9a2f989-202b-497e-80bc-01a4ec2181b6
+agent:main:cron:2f5ae0c6-4ba5-428c-860b-05afcf979f06 sessionId=d02aba41-58eb-4f31-9fee-b47f355d6f70
+agent:main:cron:2f5ae0c6-4ba5-428c-860b-05afcf979f06:run:d02aba41-58eb-4f31-9fee-b47f355d6f70 sessionId=d02aba41-58eb-4f31-9fee-b47f355d6f70
+agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
+agent:main:cron:89ff74cc-4cc1-40da-887c-22452db31841:run:622518b1-23a4-4428-bcb3-59ef71870362 sessionId=622518b1-23a4-4428-bcb3-59ef71870362
+# base commit, same steps on a fresh stable-written state: b85de3162b1d92beefd2bbae220ff7a3599f88b6
+## base: openclaw doctor --fix --non-interactive
+exit=0
+## base: Doctor changes to stored state
+- Upgraded agent database schema in <path> v27 -> v41.
+- Found stale Anthropic session routing state in 2 sessions.
+- Cleared stale Anthropic session routing state for 2 sessions.
+## base: config keys the base Doctor wrote
+added agents.entries
+added plugins.entries
+added wizard.lastRunAt
+added wizard.lastRunVersion
+added wizard.lastRunCommand
+added wizard.lastRunMode
+added meta.lastTouchedVersion
+added meta.migrations
+added skills.entries
+agents.defaults.models: undefined
+hooks.mappings.0.model: "anthropic/claude-sonnet-4-6"
+## base: Gateway log lines for the hook run
+2026-11-10T21:09:58.549+09:00 [diagnostic] lane task error: lane=hook-dispatch durationMs=56 error="No API key found for provider \"anthropic\". Auth store: <path> (agentDir: <path>). Configure an API key (openclaw models auth paste-api-key --provider anthropic; add --agent <id> for a non-default ag…
+2026-11-10T21:09:58.559+09:00 [model-fallback/decision] model fallback decision: decision=candidate_failed requested=anthropic/claude-sonnet-4-6 candidate=anthropic/claude-sonnet-4-6 reason=auth next=none
+2026-11-10T21:09:58.596+09:00 [diagnostic] message dispatch completed: channel=cron sessionId=113b991f-627f-40f9-901c-9220c6ede0b4 sessionKey=agent:main:cron:0c4d07b7-5e33-4b60-a756-8979331abf63:run:113b991f-627f-40f9-901c-9220c6ede0b4 source=cron-isolated outcome=error duration=127ms error="No API …
+2026-11-10T21:09:58.597+09:00 [diagnostic] message processed: channel=cron chatId=unknown messageId=unknown sessionId=113b991f-627f-40f9-901c-9220c6ede0b4 sessionKey=agent:main:cron:0c4d07b7-5e33-4b60-a756-8979331abf63:run:113b991f-627f-40f9-901c-9220c6ede0b4 outcome=error duration=128ms error="No A…
+2026-11-10T21:09:58.608+09:00 [hooks] hook agent run completed runId=569ea2e6-4dcc-4084-9be8-a6ab05d89a4b status=error summary=No API key found for provider "anthropic". Auth store: <path> (agentDir: <path>). Configure an API key (openclaw models auth paste-api-key --provider anthropic; add --agent …
