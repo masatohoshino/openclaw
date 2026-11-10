@@ -1,0 +1,3 @@
+telegram update delivered to the Gateway: yes
+provider answered 401 api_key_expired: yes
+telegram reply (sendmessage): ⚠️ Couldn't sign in to the AI service. Sign in again under Models in the Control UI or run <code>openclaw configure</code>.
