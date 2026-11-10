@@ -1,0 +1,21 @@
+OpenClaw 786811da6ec6 (head, with the fix), isolated QA Gateway, real Matrix plugin
+homeserver: tuwunel 1.9.3 (ghcr.io/matrix-construct/tuwunel:v1.9.3), local disposable container, server name matrix-qa.test
+model: mock-openai/gpt-5.6-luna (the QA Lab mock OpenAI provider, not a real model)
+
+1. driver user mentions the bot in a Matrix room; bot replies (normal turn)
+2. cron job added: sessionTarget = session:<that room's session>, message 'Reply with only this exact marker: MATRIX_QA_CRON_...'
+
+cron.runs record:
+  completionStatus: succeeded
+  summary: MATRIX_QA_CRON_B952F88E
+  delivered: true
+  deliveryStatus: delivered
+  deliveryError: (none)
+  delivery.resolved.channel: matrix
+
+room messages seen by a separate Matrix observer account (homeserver sync):
+  inbound  qa-driver (user): @openclaw Reply with only this exact marker: MATRIX_QA_FIRST_68112913
+  outbound qa-sut (OpenClaw bot): MATRIX_QA_FIRST_68112913
+  outbound qa-sut (OpenClaw bot): MATRIX_QA_CRON_B952F88E
+
+cron reply in the room: yes
