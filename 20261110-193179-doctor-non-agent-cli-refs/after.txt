@@ -1,5 +1,5 @@
 # After: branch head, same seed config and steps
-# commit: 4afca9475c6d9d675437775c272ec2b8337a7c47
+# commit: 3234f01193cad08df7dc2c820cf23e8a9fdc716d
 ## openclaw doctor --fix --non-interactive (Doctor changes for the hook and channel refs)
 ◇  Doctor changes ─────────────────────────────────────────────────────╮
 │                                                                      │
@@ -35,8 +35,8 @@
   }
 }
 ## POST /hooks/nightly response
-{"ok":true,"runId":"65a077f8-e981-4cd5-bd76-cde5d7be9dff"}
+{"ok":true,"runId":"ed3d1d26-e91d-42f7-b122-261a1a72ecc7"}
 ## Gateway log lines for the hook run
-2026-11-10T19:18:38.109+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
-2026-11-10T19:18:38.275+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=683 runId=8d5c3743-6410-481a-8408-10a32e8de985 error=Claude Code process exited with code 1
-2026-11-10T19:18:38.385+09:00 [hooks] hook agent run completed runId=65a077f8-e981-4cd5-bd76-cde5d7be9dff status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=65a077f8-e981-4cd5-bd76-cde5d7be9dff jobId=afba37e4-f0ab-4102-aa0e-286d32a965bd sourcePath=/hooks/nightl…
+2026-11-10T21:47:02.174+09:00 [agent/cli-backend] cli live session start: provider=claude-cli model=claude-sonnet-4-6 activeSessions=1
+2026-11-10T21:47:02.341+09:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-sonnet-4-6 durationMs=725 runId=09a2d581-a688-4eab-9a3a-9a4236d9d29c error=Claude Code process exited with code 1
+2026-11-10T21:47:02.445+09:00 [hooks] hook agent run completed runId=ed3d1d26-e91d-42f7-b122-261a1a72ecc7 status=error summary=Claude Code process exited with code 1 model=claude-sonnet-4-6 runId=ed3d1d26-e91d-42f7-b122-261a1a72ecc7 jobId=0377b7db-df47-47f6-93fe-0fc268a26a67 sourcePath=/hooks/nightl…
