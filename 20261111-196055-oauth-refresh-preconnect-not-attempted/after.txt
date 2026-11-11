@@ -1,0 +1,24 @@
+$ git rev-parse HEAD
+dd1dffac2eb0c33ea8808c545978689317a351dd
+# Isolated state dir and HOME; an expired synthetic ChatGPT OAuth profile "openai:default"
+# (refresh token "synthetic-refresh-token") is seeded. "refresh" below shows the first 12 characters
+# of the stored refresh token; "openclaw-oau..." is the failed-refresh fence that forces a new sign-in.
+# "openclaw" below is `node scripts/run-node.mjs` run from the checkout (the source CLI entry).
+# Probe 1 runs inside a network namespace with no network (DNS lookup fails):
+$ unshare -rn openclaw models status --probe --probe-provider openai --json
+# Probe 2 simulates the network coming back: a new network namespace with loopback up, where a
+# recording proxy on 127.0.0.1:18999 logs each CONNECT and answers 502 (nothing beyond loopback is reachable):
+$ unshare -rn sh -c 'ip link set lo up; node proxy.mjs proxy.log & sleep 1;
+    HTTPS_PROXY=http://127.0.0.1:18999 HTTP_PROXY=http://127.0.0.1:18999 openclaw models status --probe --probe-provider openai --json'
+
+== stored profile before probes
+{"refresh":"synthetic-re","expires":1794358560521,"keys":["type","provider","access","refresh","accountId","expires"]}
+== probe 1: offline (no network namespace)
+"error": "Isolated completion preparation failed: Auth lookup failed for provider \"openai\": OAuth token refresh failed for openai: OpenAI Codex token refresh error: getaddrinfo EAI_AGAIN. Please try again shortly."
+== stored profile after probe 1
+{"refresh":"synthetic-re","expires":1794358560521,"keys":["type","provider","access","refresh","accountId","expires"]}
+== probe 2: network back (loopback proxy records token requests and refuses them)
+"error": "Isolated completion preparation failed: Auth lookup failed for provider \"openai\": OAuth token refresh failed for openai: OpenAI Codex token refresh error: fetch failed. Please try again or re-authenticate."
+== proxy log
+proxy up
+CONNECT auth.openai.com:443
