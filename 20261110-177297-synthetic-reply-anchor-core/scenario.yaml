@@ -1,0 +1,76 @@
+title: Discord session-event reply anchor
+
+scenario:
+  id: discord-session-event-reply-anchor
+  surface: channels
+  coverage:
+    secondary:
+      - channels.automatic-final-reply
+  objective: Show which reply anchor a Discord reply to a woken session event carries when replyToMode is all.
+  successCriteria:
+    - The session-event reply reaches the Discord channel without a non-native reply anchor.
+  docsRefs:
+    - docs/channels/discord.md
+  codeRefs:
+    - extensions/discord/src/channel.ts
+  gatewayConfigPatch:
+    channels:
+      discord:
+        replyToMode: all
+  execution:
+    kind: flow
+    channel: discord
+    config:
+      requiredChannelDriver: crabline
+      conversationId: qa-session-event-anchor
+      firstMarker: QA-ANCHOR-FIRST-OK
+      eventMarker: QA-ANCHOR-EVENT-OK
+    transportPolicy:
+      requireGroupMention: true
+    timeoutMs: 180000
+    suiteIsolation: isolated
+
+flow:
+  steps:
+    - name: wakes the Discord session with a system event
+      actions:
+        - call: waitForGatewayHealthy
+          args: [{ ref: env }, 60000]
+        - call: waitForTransportReady
+          args: [{ ref: env }, 60000]
+        - resetTransport: true
+        - sendInbound:
+            conversation:
+              id: { ref: config.conversationId }
+              kind: group
+            senderId: driver
+            senderName: QA Driver
+            text:
+              expr: "`@openclaw reply exactly: ${config.firstMarker}`"
+          saveAs: inbound
+        - waitForOutbound:
+            conversation:
+              id: { ref: config.conversationId }
+              kind: group
+            textIncludes: { ref: config.firstMarker }
+            timeoutMs:
+              expr: liveTurnTimeoutMs(env, 60000)
+          saveAs: firstReply
+        - set: sessionKey
+          value:
+            expr: "((await env.gateway.call('sessions.list', {}, { timeoutMs: 30000 })).sessions ?? []).map((entry) => entry.key).find((key) => String(key).includes('discord'))"
+        - assert:
+            expr: "Boolean(sessionKey)"
+            message: no Discord session after the first reply
+        - call: env.gateway.call
+          args:
+            - system-event
+            - text:
+                expr: "`reply exactly: ${config.eventMarker}`"
+              sessionKey: { ref: sessionKey }
+              wake: true
+            - timeoutMs: 30000
+        - set: eventReply
+          value:
+            expr: "await (async () => { const deadline = Date.now() + 60000; while (Date.now() < deadline) { const hit = state.getSnapshot().messages.find((message) => message.direction === 'outbound' && String(message.text ?? '').includes(config.eventMarker)); if (hit) return hit; await sleep(500); } return null; })()"
+      detailsExpr: "(() => { const kind = (message) => message.replyToId === undefined ? 'none' : message.replyToId === inbound.id ? 'inbound-message-id' : /^\\d{17,20}$/u.test(message.replyToId) ? 'other-discord-message-id' : `non-discord-id:${message.replyToId}`; const anchors = (marker) => state.getSnapshot().messages.filter((message) => message.direction === 'outbound' && String(message.text ?? '').includes(marker)).map(kind).toSorted(); return JSON.stringify({ firstReplyAnchors: anchors(config.firstMarker), eventReplyAnchors: anchors(config.eventMarker) }); })()"
