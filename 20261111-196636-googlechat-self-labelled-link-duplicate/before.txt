@@ -1,0 +1,7 @@
+# Before: base 63db5996914d3f629e8ff5c7f3eff9c02ec9a754, built from source, isolated home
+# openclaw agent --local --agent main --deliver --reply-channel googlechat --reply-to spaces/AAAA --message "reply exactly: <the reply below, as Markdown>"
+# Model: a scripted local model that replies with fixed text. Google OAuth and the Chat messages API: a local stand-in behind OPENCLAW_PROXY_URL (throwaway CA, synthetic service account).
+# Markdown reply: Docs [https://example.com/release_notes](https://example.com/release_notes), mail [first_last@example.com](mailto:first_last@example.com), bold **[https://example.com/guide](https://example.com/guide)**, plain [https://example.com/guide](https://example.com/guide), named [Release notes](https://example.com/release_notes)
+# exit code: 0
+text received by Google Chat:
+Docs https://example.com/release_notes (https://example.com/release_notes), mail first_last@example.com (mailto:first_last@example.com), bold *https://example.com/guide* (https://example.com/guide), plain <https://example.com/guide|https://example.com/guide>, named <https://example.com/release_notes|Release notes>
