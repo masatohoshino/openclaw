@@ -1,0 +1,16 @@
+# before: QA Lab scenario discord-session-event-reply-anchor (mock model provider, local Discord API stand-in, replyToMode: all)
+exit=1
+checkout: 9c37f54204558bd3e146a9e300ef2ac82a88a75d
+
+## scenario output
+step: Prepare crabline local discord
+  status: pass
+  details: 
+step: wakes the Discord session with a system event
+  status: pass
+  details: {"firstReplyAnchors":["inbound-message-id","none"],"eventReplyAnchors":["non-discord-id:772b6af7-e775-47a1-9e97-b8107ca0e9fa"]}
+
+## Discord API message sends from the gateway (content, message_reference)
+{"content": "QA-ANCHOR-FIRST-OK", "message_reference": {"message_id": "1569878119429439531", "fail_if_not_exists": false}}
+{"content": "QA-ANCHOR-FIRST-OK", "message_reference": null}
+{"content": "QA-ANCHOR-EVENT-OK", "message_reference": {"message_id": "772b6af7-e775-47a1-9e97-b8107ca0e9fa", "fail_if_not_exists": false}}
