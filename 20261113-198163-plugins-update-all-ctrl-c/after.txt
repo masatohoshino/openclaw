@@ -1,0 +1,48 @@
+checkout HEAD: e81fd39f9419562055188cc2e4425078baff2c09
+node: v24.22.1
+== install 1.0.0
+$ openclaw plugins install npm:proof-plugin-a -> exit 0
+$ openclaw plugins install npm:proof-plugin-b -> exit 0
+$ openclaw plugins install npm:proof-plugin-c -> exit 0
+$ openclaw plugins install npm:proof-hooks-d -> exit 0
+on disk after install:
+  hooks/proof-hooks-d: proof-hooks-d@1.0.0
+  npm/projects/proof-plugin-a/node_modules/proof-plugin-a: proof-plugin-a@1.0.0
+  npm/projects/proof-plugin-b/node_modules/proof-plugin-b: proof-plugin-b@1.0.0
+  npm/projects/proof-plugin-c/node_modules/proof-plugin-c: proof-plugin-c@1.0.0
+== update --all with Ctrl+C during the first download
+[driver] wrote Ctrl+C at +3.70s
+[driver] released the held download at +4.01s
+exit code 130 after 4.44s
+---- terminal output ----
+│
+◇  
+
+Installing to $RUN/after-1/state/npm/projects/proof-plugin-a__openclaw-generation__g-c2ac5b0235aba9df…
+Installing proof-plugin-a into $RUN/after-1/state/npm/projects/.openclaw-install-stage-PLibH2…
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-14.log
+^CCommand interrupted by SIGINT. Waiting for cleanup before exiting.
+Plugin manifest id "proof-a" differs from npm package name "proof-plugin-a"; using manifest id as the config key.
+[openclaw] The CLI command failed.
+[openclaw] Reason: This operation was aborted
+[openclaw] For help, run `openclaw doctor`.
+
+---- on disk after update ----
+  hooks/proof-hooks-d: proof-hooks-d@1.0.0
+  npm/projects/proof-plugin-a/node_modules/proof-plugin-a: proof-plugin-a@1.0.0
+  npm/projects/proof-plugin-b/node_modules/proof-plugin-b: proof-plugin-b@1.0.0
+  npm/projects/proof-plugin-c/node_modules/proof-plugin-c: proof-plugin-c@1.0.0
+---- install staging directories left in the state dir ----
+  (none)
+---- installed plugin records (openclaw plugins list --json) ----
+  proof-a: version 1.0.0
+  proof-b: version 1.0.0
+  proof-c: version 1.0.0
+---- registry requests during update ----
+1794586283.229 GET /proof-plugin-a
+1794586283.552 GET /proof-plugin-a
+1794586283.806 GET /proof-plugin-a
+1794586283.817 GET /-/tarballs/proof-plugin-a-1.1.0.tgz
+1794586283.817 HOLD proof-plugin-a-1.1.0.tgz
+1794586284.372 RELEASE proof-plugin-a-1.1.0.tgz
+
