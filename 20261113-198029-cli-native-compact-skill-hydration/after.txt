@@ -1,0 +1,193 @@
+side=after checkout_head=a1f8db623bce28436ab32e5b668a9c5fc4a75101 sandbox_mode=all select=yes
+claude_version=2.1.323 (Claude Code)
+docker=29.9.3
+stub listening on 19634
+gateway up
+=== turn 1 (creates the session and the native Claude session) ===
+{
+  "runId": "proof-after-248611726",
+  "status": "started"
+}
+
+=== save one Skill Library skill and select it on the session ===
+{
+  "state": "published",
+  "target": "personal",
+  "entry": {
+    "skillId": "ca2240e2-7199-4cac-b5d7-5f33f8e85534",
+    "slug": "proof-notes",
+    "name": "s_proof_not_ca2240e271994cacb5d7",
+    "ownerLabel": "<host-account>",
+    "description": "Use when the user asks for the proof notes word.",
+    "ownerProfileId": "gateway-owner",
+    "authorProfileId": "gateway-owner",
+    "shared": false,
+    "enabled": true,
+    "removed": false,
+    "revision": "ba01a773a9a0716726a993d4430a0072d819b62c1b0a17617dce3ad35db8e947",
+    "createdAt": 1794573397693,
+    "updatedAt": 1794573397693,
+    "canEdit": true
+  },
+  "sessionActivation": "new-sessions",
+  "nextAction": "Enabled for your new sessions, subject to agent policy and prerequisites. Existing session pins remain. Use skills.library.activate to attach or refresh it."
+}
+
+skill_id=ca2240e2-7199-4cac-b5d7-5f33f8e85534
+{
+  "sessionKey": "agent:main:main",
+  "selections": [
+    {
+      "skillId": "ca2240e2-7199-4cac-b5d7-5f33f8e85534",
+      "revision": "ba01a773a9a0716726a993d4430a0072d819b62c1b0a17617dce3ad35db8e947",
+      "name": "s_proof_not_ca2240e271994cacb5d7",
+      "ownerProfileId": "gateway-owner"
+    }
+  ],
+  "sessionActivation": "next-turn"
+}
+
+=== turn 2 (delivers the selected skill) ===
+{
+  "runId": "proof-after-797722151",
+  "status": "started",
+  "messageSeq": 3
+}
+
+=== turn 2b (native session with the selection in place) ===
+{
+  "runId": "proof-after-756620528",
+  "status": "started",
+  "messageSeq": 4
+}
+
+=== /compact chat command (chat.send) ===
+{
+  "runId": "proof-after-compact-19921",
+  "status": "started"
+}
+
+[user] /compact
+[assistant] ⚙️ Compacted (120 → 708): CLI backend "claude-cli" compacted its native session. • Context 708/200k (0%)
+=== turn 2c (a native session for sessions.compact to work on) ===
+{
+  "runId": "proof-after-80826065",
+  "status": "started",
+  "messageSeq": 8
+}
+
+=== sandbox workspace: selected Skill Library skill ===
+gw-state/sandboxes/workspace-551b82375866fbb7155f68b083068b1e/skills/library-ca2240e2-7199-4cac-b5d7-5f33f8e85534-ba01a773a9a0716726a993d4430a0072d819b62c1b0a17617dce3ad35db8e947
+=== stored session entry before compaction ===
+{"key":"agent:main:main","model":"claude-haiku-4-5","modelProvider":"anthropic"}
+=== sessions.compact ===
+{
+  "ok": true,
+  "key": "agent:main:main",
+  "compacted": true,
+  "reason": "CLI backend \"claude-cli\" compacted its native session.",
+  "result": {
+    "tokensBefore": 120,
+    "tokensAfter": 708
+  }
+}
+
+=== turn 3 (after compaction) ===
+{
+  "runId": "proof-after-269247030",
+  "status": "started",
+  "messageSeq": 10
+}
+
+{"key":"agent:main:main"}
+=== claude argv per spawn (resume and skill flags) ===
+--- 1794573389884302801.argv
+--- 1794573390052873029.argv
+--- 1794573391868017934.argv
+--- 1794573392229312242.argv
+--- 1794573392558384786.argv
+--- 1794573392651228712.argv
+--- 1794573392831424238.argv
+--- 1794573393038224297.argv
+32:--session-id
+33-29d05511-cbb8-4af6-8e12-f7e8e7c42dac
+--- 1794573393193708717.argv
+--- 1794573393955821894.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-PKlC15/system-prompt.md
+--- 1794573400166635996.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-A4fK9Q/system-prompt.md
+--- 1794573403220295899.argv
+32:--session-id
+33-cd853c2a-2931-4d49-ab5a-e5c1bbf97567
+--- 1794573403538025798.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-U5tagA/system-prompt.md
+--- 1794573406858237285.argv
+6:--resume
+7-cd853c2a-2931-4d49-ab5a-e5c1bbf97567
+--
+27:--system-prompt-file
+28-/tmp/openclaw/openclaw-cli-system-prompt-Nlside/system-prompt.md
+--- 1794573410528187710.argv
+32:--session-id
+33-2f6b887f-e173-4cf3-8be2-f41a17751457
+--- 1794573410801438343.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-92wMVC/system-prompt.md
+--- 1794573413900122282.argv
+6:--resume
+7-2f6b887f-e173-4cf3-8be2-f41a17751457
+--
+25:--system-prompt-file
+26-/tmp/openclaw/openclaw-cli-system-prompt-FSsvhg/system-prompt.md
+--- 1794573415335931275.argv
+32:--session-id
+33-b7a46ff3-d8e1-41b9-8155-0784ba7911cc
+--- 1794573415599167494.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-gl0tyK/system-prompt.md
+=== stand-in API: every model request, and the selected skill's name if the request carries it ===
+2026-11-13T12:36:33.755Z messages=1 skill_name=- last_user=[{"type":"text","text":"<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Prima
+2026-11-13T12:36:34.119Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+2026-11-13T12:36:40.321Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+2026-11-13T12:36:43.440Z messages=1 skill_name=s_proof_not_ca2240e271994cacb5d7 last_user=[{"type":"text","text":"<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Prima
+2026-11-13T12:36:43.701Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+2026-11-13T12:36:47.041Z messages=3 skill_name=s_proof_not_ca2240e271994cacb5d7 last_user="CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY ot
+2026-11-13T12:36:47.049Z messages=3 skill_name=s_proof_not_ca2240e271994cacb5d7 last_user="CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY ot
+2026-11-13T12:36:50.736Z messages=1 skill_name=s_proof_not_ca2240e271994cacb5d7 last_user=[{"type":"text","text":"<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Prima
+2026-11-13T12:36:50.956Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+2026-11-13T12:36:54.103Z messages=3 skill_name=s_proof_not_ca2240e271994cacb5d7 last_user="CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY ot
+2026-11-13T12:36:54.109Z messages=3 skill_name=s_proof_not_ca2240e271994cacb5d7 last_user="CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY ot
+2026-11-13T12:36:55.533Z messages=1 skill_name=s_proof_not_ca2240e271994cacb5d7 last_user=[{"type":"text","text":"<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Prima
+2026-11-13T12:36:55.752Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+=== chat.history ===
+[user] First turn: say hello.
+[assistant] system blocks: 3
+block 1 (74 chars) opens: x-anthropic-billing-header: cc_version=2.1.323.cee; cc_entrypoint=sdk-cli;
+block 2 (62 chars) opens: You are a Claude agent, built on Anthropic's Claude Agent SDK.
+block 3 (43144 chars) opens: You are a personal assistant running inside OpenClaw.
+[user] Second turn: what is the proof notes word?
+[custom] ⚠️ Your AI session expired. Start a new conversation with /new. If it happens again, sign in under Models in the Control UI.
+[user] Turn 2b: repeat the proof notes word.
+[assistant] system blocks: 3
+block 1 (74 chars) opens: x-anthropic-billing-header: cc_version=2.1.323.f8d; cc_entrypoint=sdk-cli;
+block 2 (62 chars) opens: You are a Claude agent, built on Anthropic's Claude Agent SDK.
+block 3 (43457 chars) opens: You are a personal assistant running inside OpenClaw.
+[user] /compact
+[assistant] ⚙️ Compacted (120 → 708): CLI backend "claude-cli" compacted its native session. • Context 708/200k (0%)
+[user] Turn 2c: repeat the proof notes word again.
+[assistant] system blocks: 3
+block 1 (74 chars) opens: x-anthropic-billing-header: cc_version=2.1.323.f8d; cc_entrypoint=sdk-cli;
+block 2 (62 chars) opens: You are a Claude agent, built on Anthropic's Claude Agent SDK.
+block 3 (43457 chars) opens: You are a personal assistant running inside OpenClaw.
+[user] Third turn: what is the proof notes word now?
+[assistant] system blocks: 3
+block 1 (74 chars) opens: x-anthropic-billing-header: cc_version=2.1.323.0c9; cc_entrypoint=sdk-cli;
+block 2 (62 chars) opens: You are a Claude agent, built on Anthropic's Claude Agent SDK.
+block 3 (43457 chars) opens: You are a personal assistant running inside OpenClaw.
+=== Gateway log: compaction, skill delivery and CLI failure lines ===
+2026-11-13T12:36:40.106+00:00 [diagnostic] lane task error: lane=cli:claude-cli:owner:382bbf684936e1a939159173e793e505d0988bd0148e835045b1ecc9fd259527 durationMs=5 error="Managed CLI live session is no longer reusable. | cli_live_session_changed" errorName=FailoverError
+2026-11-13T12:36:40.107+00:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-haiku-4-5 durationMs=421 runId=proof-after-797722151 error=Managed CLI live session is no longer reusable. | cli_live_session_changed
+2026-11-13T12:36:40.135+00:00 Embedded agent failed before reply: Managed CLI live session is no longer reusable. | cli_live_session_changed
