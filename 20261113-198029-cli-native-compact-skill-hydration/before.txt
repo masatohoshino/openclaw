@@ -1,0 +1,166 @@
+side=before checkout_head=c41c00ddd3f2706bd1631a696e9a76ece97005c0 sandbox_mode=all select=yes
+claude_version=2.1.323 (Claude Code)
+docker=29.9.3
+stub listening on 19634
+gateway up
+=== turn 1 (creates the session and the native Claude session) ===
+{
+  "runId": "proof-before-325722555",
+  "status": "started"
+}
+
+=== save one Skill Library skill and select it on the session ===
+{
+  "state": "published",
+  "target": "personal",
+  "entry": {
+    "skillId": "a8ceacbb-7f3d-47b8-bd41-5ecd99be827d",
+    "slug": "proof-notes",
+    "name": "s_proof_not_a8ceacbb7f3d47b8bd41",
+    "ownerLabel": "<host-account>",
+    "description": "Use when the user asks for the proof notes word.",
+    "ownerProfileId": "gateway-owner",
+    "authorProfileId": "gateway-owner",
+    "shared": false,
+    "enabled": true,
+    "removed": false,
+    "revision": "ba01a773a9a0716726a993d4430a0072d819b62c1b0a17617dce3ad35db8e947",
+    "createdAt": 1794573686730,
+    "updatedAt": 1794573686730,
+    "canEdit": true
+  },
+  "sessionActivation": "new-sessions",
+  "nextAction": "Enabled for your new sessions, subject to agent policy and prerequisites. Existing session pins remain. Use skills.library.activate to attach or refresh it."
+}
+
+skill_id=a8ceacbb-7f3d-47b8-bd41-5ecd99be827d
+{
+  "sessionKey": "agent:main:main",
+  "selections": [
+    {
+      "skillId": "a8ceacbb-7f3d-47b8-bd41-5ecd99be827d",
+      "revision": "ba01a773a9a0716726a993d4430a0072d819b62c1b0a17617dce3ad35db8e947",
+      "name": "s_proof_not_a8ceacbb7f3d47b8bd41",
+      "ownerProfileId": "gateway-owner"
+    }
+  ],
+  "sessionActivation": "next-turn"
+}
+
+=== turn 2 (delivers the selected skill) ===
+{
+  "runId": "proof-before-279483844",
+  "status": "started",
+  "messageSeq": 3
+}
+
+=== turn 2b (native session with the selection in place) ===
+{
+  "runId": "proof-before-866914499",
+  "status": "started",
+  "messageSeq": 4
+}
+
+=== /compact chat command (chat.send) ===
+{
+  "runId": "proof-before-compact-27988",
+  "status": "started"
+}
+
+[user] /compact
+[assistant] ⚙️ Compaction failed: CLI backend "claude-cli" failed to compact its native session: Selected skill snapshot must be hydrated before sandbox delivery. • Context 101/200k (0%)
+=== turn 2c (a native session for sessions.compact to work on) ===
+{
+  "runId": "proof-before-3124520619",
+  "status": "started",
+  "messageSeq": 8
+}
+
+=== sandbox workspace: selected Skill Library skill ===
+gw-state/sandboxes/workspace-797d3f227b0bfc1dc49bcc23ade41549/skills/library-a8ceacbb-7f3d-47b8-bd41-5ecd99be827d-ba01a773a9a0716726a993d4430a0072d819b62c1b0a17617dce3ad35db8e947
+=== stored session entry before compaction ===
+{"key":"agent:main:main","model":"claude-haiku-4-5","modelProvider":"anthropic"}
+=== sessions.compact ===
+{
+  "ok": false,
+  "key": "agent:main:main",
+  "compacted": false,
+  "reason": "CLI backend \"claude-cli\" failed to compact its native session: Selected skill snapshot must be hydrated before sandbox delivery."
+}
+
+=== turn 3 (after compaction) ===
+{
+  "runId": "proof-before-21245976",
+  "status": "started",
+  "messageSeq": 10
+}
+
+{"key":"agent:main:main"}
+=== claude argv per spawn (resume and skill flags) ===
+--- 1794573681280538798.argv
+--- 1794573681414813976.argv
+--- 1794573682906657193.argv
+--- 1794573683259926318.argv
+--- 1794573684265074772.argv
+--- 1794573684680707678.argv
+32:--session-id
+33-38eb0c82-64fc-4767-a85a-d441aca8cf43
+--- 1794573685853577377.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-usaeMb/system-prompt.md
+--- 1794573689180013164.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-aXDtUv/system-prompt.md
+--- 1794573692222947955.argv
+32:--session-id
+33-967c9d7e-1888-4ae5-8631-cb4ae7d7caee
+--- 1794573692495762003.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-F1hKX9/system-prompt.md
+--- 1794573699399083759.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-hEeSUl/system-prompt.md
+--- 1794573703927906165.argv
+22:--append-system-prompt-file
+23-/tmp/openclaw/openclaw-cli-system-prompt-fW0tPB/system-prompt.md
+=== stand-in API: every model request, and the selected skill's name if the request carries it ===
+2026-11-13T12:41:25.265Z messages=1 skill_name=- last_user=[{"type":"text","text":"<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Prima
+2026-11-13T12:41:26.011Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+2026-11-13T12:41:29.341Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+2026-11-13T12:41:32.430Z messages=1 skill_name=s_proof_not_a8ceacbb7f3d47b8bd41 last_user=[{"type":"text","text":"<system-reminder>\n# Environment\nYou have been invoked in the following environment: \n - Prima
+2026-11-13T12:41:32.648Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+2026-11-13T12:41:39.336Z messages=3 skill_name=s_proof_not_a8ceacbb7f3d47b8bd41 last_user=[{"type":"text","text":"<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</system-reminder>"},{"typ
+2026-11-13T12:41:39.554Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+2026-11-13T12:41:43.861Z messages=5 skill_name=s_proof_not_a8ceacbb7f3d47b8bd41 last_user=[{"type":"text","text":"<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</system-reminder>"},{"typ
+2026-11-13T12:41:44.081Z messages=2 skill_name=- last_user=[{"type":"text","text":"# Environment\nYou have been invoked in the following environment: \n - Primary working director
+=== chat.history ===
+[user] First turn: say hello.
+[assistant] system blocks: 3
+block 1 (74 chars) opens: x-anthropic-billing-header: cc_version=2.1.323.cee; cc_entrypoint=sdk-cli;
+block 2 (62 chars) opens: You are a Claude agent, built on Anthropic's Claude Agent SDK.
+block 3 (43150 chars) opens: You are a personal assistant running inside OpenClaw.
+[user] Second turn: what is the proof notes word?
+[custom] ⚠️ Your AI session expired. Start a new conversation with /new. If it happens again, sign in under Models in the Control UI.
+[user] Turn 2b: repeat the proof notes word.
+[assistant] system blocks: 3
+block 1 (74 chars) opens: x-anthropic-billing-header: cc_version=2.1.323.f8d; cc_entrypoint=sdk-cli;
+block 2 (62 chars) opens: You are a Claude agent, built on Anthropic's Claude Agent SDK.
+block 3 (43463 chars) opens: You are a personal assistant running inside OpenClaw.
+[user] /compact
+[assistant] ⚙️ Compaction failed: CLI backend "claude-cli" failed to compact its native session: Selected skill snapshot must be hydrated before sandbox delivery. • Context 101/200k (0%)
+[user] Turn 2c: repeat the proof notes word again.
+[assistant] system blocks: 3
+block 1 (74 chars) opens: x-anthropic-billing-header: cc_version=2.1.323.f8d; cc_entrypoint=sdk-cli;
+block 2 (62 chars) opens: You are a Claude agent, built on Anthropic's Claude Agent SDK.
+block 3 (43463 chars) opens: You are a personal assistant running inside OpenClaw.
+[user] Third turn: what is the proof notes word now?
+[assistant] system blocks: 3
+block 1 (74 chars) opens: x-anthropic-billing-header: cc_version=2.1.323.f8d; cc_entrypoint=sdk-cli;
+block 2 (62 chars) opens: You are a Claude agent, built on Anthropic's Claude Agent SDK.
+block 3 (43463 chars) opens: You are a personal assistant running inside OpenClaw.
+=== Gateway log: compaction, skill delivery and CLI failure lines ===
+2026-11-13T12:41:29.109+00:00 [diagnostic] lane task error: lane=cli:claude-cli:owner:e30273a6e2d5aea64bb7416e47c9192c9d9c5c888836111e9a09f2251d2862c8 durationMs=5 error="Managed CLI live session is no longer reusable. | cli_live_session_changed" errorName=FailoverError
+2026-11-13T12:41:29.110+00:00 [agent/cli-backend] cli terminal failure: provider=claude-cli model=claude-haiku-4-5 durationMs=414 runId=proof-before-279483844 error=Managed CLI live session is no longer reusable. | cli_live_session_changed
+2026-11-13T12:41:29.147+00:00 Embedded agent failed before reply: Managed CLI live session is no longer reusable. | cli_live_session_changed
+2026-11-13T12:41:35.843+00:00 [diagnostic] lane task error: lane=main durationMs=23 error="Selected skill snapshot must be hydrated before sandbox delivery." errorName=Error
+2026-11-13T12:41:42.889+00:00 [diagnostic] lane task error: lane=main durationMs=24 error="Selected skill snapshot must be hydrated before sandbox delivery." errorName=Error
