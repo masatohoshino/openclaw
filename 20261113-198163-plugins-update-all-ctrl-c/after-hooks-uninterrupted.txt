@@ -1,0 +1,39 @@
+checkout HEAD: e81fd39f9419562055188cc2e4425078baff2c09
+node: v24.22.1
+== install 1.0.0
+$ openclaw plugins install npm:proof-hooks-d -> exit 0
+$ openclaw plugins install npm:proof-hooks-e -> exit 0
+on disk after install:
+  hooks/proof-hooks-d: proof-hooks-d@1.0.0
+  hooks/proof-hooks-e: proof-hooks-e@1.0.0
+== update --all (no interrupt)
+exit code 0 after 3.15s
+---- terminal output ----
+│
+◇  
+
+Downloading proof-hooks-d…
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-14.log
+Extracting /tmp/openclaw/openclaw-hook-pack-f4dbb463-cdcb-4b38-92c4-a61f09c68327-eOdTye/proof-hooks-d-1.1.0.tgz…
+Installing to $RUN/after-hooks-control/state/hooks/proof-hooks-d…
+Downloading proof-hooks-e…
+Extracting /tmp/openclaw/openclaw-hook-pack-f1bd6833-0abe-444a-ac64-a7b3b82ec19b-DtY2Nf/proof-hooks-e-1.1.0.tgz…
+Installing to $RUN/after-hooks-control/state/hooks/proof-hooks-e…
+Updated hook pack "proof-hooks-d": 1.0.0 -> 1.1.0.
+Updated hook pack "proof-hooks-e": 1.0.0 -> 1.1.0.
+Updates saved; they will load on the next Gateway start.
+
+---- on disk after update ----
+  hooks/proof-hooks-d: proof-hooks-d@1.1.0
+  hooks/proof-hooks-e: proof-hooks-e@1.1.0
+---- install staging directories left in the state dir ----
+  (none)
+---- installed plugin records (openclaw plugins list --json) ----
+---- registry requests during update ----
+1794586378.032 GET /proof-hooks-d
+1794586378.040 GET /proof-hooks-d
+1794586378.042 GET /-/tarballs/proof-hooks-d-1.1.0.tgz
+1794586378.310 GET /proof-hooks-e
+1794586378.318 GET /proof-hooks-e
+1794586378.320 GET /-/tarballs/proof-hooks-e-1.1.0.tgz
+
