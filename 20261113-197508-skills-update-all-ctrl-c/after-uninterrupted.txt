@@ -1,0 +1,87 @@
+$ cd $RUN/ws && HOME=$RUN/home OPENCLAW_HOME=$RUN/home OPENCLAW_STATE_DIR=$RUN/home/.openclaw \
+    OPENCLAW_CONFIG_PATH=$RUN/home/.openclaw/openclaw.json OPENCLAW_CLAWHUB_URL=http://127.0.0.1:47619 \
+    node openclaw.mjs skills update --all
+# This PR's production code (built at 2611121, identical to the head in clawhub.ts, skills-cli.ts and docs); no Ctrl+C.
+# Run directly, not through the PTY script, so there is no banner; output is not a TTY, so boxes are wider.
+# Same seed and stand-in. The last line is the shell's exit status; the state section was read from $RUN afterwards.
+
+╭─ ClawHub Security Audit ─────────────────────────────────────────────────────────────╮
+│ s1@1.1.0                                                                             │
+│                                                                                      │
+│ Outcome: Safe                                                                        │
+│                                                                                      │
+│ Overview:                                                                            │
+│ Stand-in skill with no findings.                                                     │
+│                                                                                      │
+│ Details: http://127.0.0.1:47619/audit/s1/1.1.0                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+Downloading s1@1.1.0 from ClawHub…
+Installing to $RUN/home/.openclaw/workspace/skills/s1…
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-13.log
+Skill verification for s1 failed: ClawHub /api/v1/skills/s1/verify failed (404): {"error":"stand-in has no route for /api/v1/skills/s1/verify"}
+╭─ ClawHub Security Audit ─────────────────────────────────────────────────────────────╮
+│ s2@1.1.0                                                                             │
+│                                                                                      │
+│ Outcome: Safe                                                                        │
+│                                                                                      │
+│ Overview:                                                                            │
+│ Stand-in skill with no findings.                                                     │
+│                                                                                      │
+│ Details: http://127.0.0.1:47619/audit/s2/1.1.0                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+Downloading s2@1.1.0 from ClawHub…
+Installing to $RUN/home/.openclaw/workspace/skills/s2…
+Skill verification for s2 failed: ClawHub /api/v1/skills/s2/verify failed (404): {"error":"stand-in has no route for /api/v1/skills/s2/verify"}
+╭─ ClawHub Security Audit ─────────────────────────────────────────────────────────────╮
+│ s3@1.1.0                                                                             │
+│                                                                                      │
+│ Outcome: Safe                                                                        │
+│                                                                                      │
+│ Overview:                                                                            │
+│ Stand-in skill with no findings.                                                     │
+│                                                                                      │
+│ Details: http://127.0.0.1:47619/audit/s3/1.1.0                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+Downloading s3@1.1.0 from ClawHub…
+Installing to $RUN/home/.openclaw/workspace/skills/s3…
+Skill verification for s3 failed: ClawHub /api/v1/skills/s3/verify failed (404): {"error":"stand-in has no route for /api/v1/skills/s3/verify"}
+╭─ ClawHub Security Audit ─────────────────────────────────────────────────────────────╮
+│ s4@1.1.0                                                                             │
+│                                                                                      │
+│ Outcome: Safe                                                                        │
+│                                                                                      │
+│ Overview:                                                                            │
+│ Stand-in skill with no findings.                                                     │
+│                                                                                      │
+│ Details: http://127.0.0.1:47619/audit/s4/1.1.0                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+Downloading s4@1.1.0 from ClawHub…
+Installing to $RUN/home/.openclaw/workspace/skills/s4…
+Skill verification for s4 failed: ClawHub /api/v1/skills/s4/verify failed (404): {"error":"stand-in has no route for /api/v1/skills/s4/verify"}
+╭─ ClawHub Security Audit ─────────────────────────────────────────────────────────────╮
+│ s5@1.1.0                                                                             │
+│                                                                                      │
+│ Outcome: Safe                                                                        │
+│                                                                                      │
+│ Overview:                                                                            │
+│ Stand-in skill with no findings.                                                     │
+│                                                                                      │
+│ Details: http://127.0.0.1:47619/audit/s5/1.1.0                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+Downloading s5@1.1.0 from ClawHub…
+Installing to $RUN/home/.openclaw/workspace/skills/s5…
+Skill verification for s5 failed: ClawHub /api/v1/skills/s5/verify failed (404): {"error":"stand-in has no route for /api/v1/skills/s5/verify"}
+Skill files changed, but local Gateway refresh failed: Cannot load device identity. Check access to your OpenClaw state directory and run "openclaw doctor --fix", then retry. | Client credential migration is incomplete or stale; run openclaw doctor --fix before using this client. | gateway.maintenance_required. Restart the Gateway to refresh skills.
+Updated s1: 1.0.0 -> 1.1.0
+Updated s2: 1.0.0 -> 1.1.0
+Updated s3: 1.0.0 -> 1.1.0
+Updated s4: 1.0.0 -> 1.1.0
+Updated s5: 1.0.0 -> 1.1.0
+exit 0
+
+---- state after the run ----
+s1: lock 1.1.0, on disk 's1 1.1.0'
+s2: lock 1.1.0, on disk 's2 1.1.0'
+s3: lock 1.1.0, on disk 's3 1.1.0'
+s4: lock 1.1.0, on disk 's4 1.1.0'
+s5: lock 1.1.0, on disk 's5 1.1.0'
