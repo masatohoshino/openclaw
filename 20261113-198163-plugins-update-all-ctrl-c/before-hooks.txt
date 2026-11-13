@@ -1,0 +1,43 @@
+checkout HEAD: a48a3175600e3cad5554128a4cf0012c4e65d9ad
+node: v24.22.1
+== install 1.0.0
+$ openclaw plugins install npm:proof-hooks-d -> exit 0
+$ openclaw plugins install npm:proof-hooks-e -> exit 0
+on disk after install:
+  hooks/proof-hooks-d: proof-hooks-d@1.0.0
+  hooks/proof-hooks-e: proof-hooks-e@1.0.0
+== update --all with Ctrl+C during the first download
+[driver] wrote Ctrl+C at +2.81s
+[driver] released the held download at +3.12s
+exit code 130 after 3.52s
+---- terminal output ----
+│
+◇  
+
+Downloading proof-hooks-d…
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-14.log
+^CCommand interrupted by SIGINT. Waiting for cleanup before exiting.
+Extracting /tmp/openclaw/openclaw-hook-pack-16a58517-41dd-4d33-bd6b-46f202c77235-nEzs1A/proof-hooks-d-1.1.0.tgz…
+Installing to $RUN/before-hooks-1/state/hooks/proof-hooks-d…
+Downloading proof-hooks-e…
+Extracting /tmp/openclaw/openclaw-hook-pack-600a8d52-f580-4076-98ba-97785ed96998-5pvJLE/proof-hooks-e-1.1.0.tgz…
+Installing to $RUN/before-hooks-1/state/hooks/proof-hooks-e…
+Failed to update hook pack "proof-hooks-d": failed to copy hook pack: AbortError: This operation was aborted
+Failed to update hook pack "proof-hooks-e": failed to copy hook pack: AbortError: This operation was aborted
+
+---- on disk after update ----
+  hooks/proof-hooks-d: proof-hooks-d@1.0.0
+  hooks/proof-hooks-e: proof-hooks-e@1.0.0
+---- install staging directories left in the state dir ----
+  (none)
+---- installed plugin records (openclaw plugins list --json) ----
+---- registry requests during update ----
+1794585414.753 GET /proof-hooks-d
+1794585414.761 GET /proof-hooks-d
+1794585414.765 GET /-/tarballs/proof-hooks-d-1.1.0.tgz
+1794585414.765 HOLD proof-hooks-d-1.1.0.tgz
+1794585415.319 RELEASE proof-hooks-d-1.1.0.tgz
+1794585415.572 GET /proof-hooks-e
+1794585415.581 GET /proof-hooks-e
+1794585415.584 GET /-/tarballs/proof-hooks-e-1.1.0.tgz
+
