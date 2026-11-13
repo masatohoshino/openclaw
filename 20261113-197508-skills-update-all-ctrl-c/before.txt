@@ -1,0 +1,82 @@
+$ openclaw skills update --all   # base 53368c0, 5 tracked skills at 1.0.0, ClawHub stand-in offers 1.1.0
+# Ctrl+C is pressed while s1's archive download is held; the hold is released 300 ms later.
+# Built from a clean base checkout (main 53368c0); same seed, stand-in and script as the After run.
+
+---- CLI transcript ----
+│
+◇  
+
+     o   o
+     )   (
+  ~~~~~~~~~~~
+OpenClaw 2026.11.3 (53368c0)
+Reading the error message remains undefeated. You should try it sometime.
+
+╭─ ClawHub Security Audit ─────────────────────────────────────────────╮
+│ s1@1.1.0                                                             │
+│                                                                      │
+│ Outcome: Safe                                                        │
+│                                                                      │
+│ Overview:                                                            │
+│ Stand-in skill with no findings.                                     │
+│                                                                      │
+│ Details: http://127.0.0.1:47619/audit/s1/1.1.0                       │
+╰──────────────────────────────────────────────────────────────────────╯
+Downloading s1@1.1.0 from ClawHub…
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-13.log
+^CCommand interrupted by SIGINT. Waiting for cleanup before exiting.
+Installing to $RUN/home/.openclaw/workspace/skills/s1…
+Skill verification for s1 failed: ClawHub /api/v1/skills/s1/verify failed (404): {"error":"stand-in has no route for /api/v1/skills/s1/verify"}
+╭─ ClawHub Security Audit ─────────────────────────────────────────────╮
+│ s2@1.1.0                                                             │
+│                                                                      │
+│ Outcome: Safe                                                        │
+│                                                                      │
+│ Overview:                                                            │
+│ Stand-in skill with no findings.                                     │
+│                                                                      │
+│ Details: http://127.0.0.1:47619/audit/s2/1.1.0                       │
+╰──────────────────────────────────────────────────────────────────────╯
+Downloading s2@1.1.0 from ClawHub…
+Installing to $RUN/home/.openclaw/workspace/skills/s2…
+Skill verification for s2 failed: ClawHub /api/v1/skills/s2/verify failed (404): {"error":"stand-in has no route for /api/v1/skills/s2/verify"}
+╭─ ClawHub Security Audit ─────────────────────────────────────────────╮
+│ s3@1.1.0                                                             │
+│                                                                      │
+│ Outcome: Safe                                                        │
+│                                                                      │
+│ Overview:                                                            │
+│ Stand-in skill with no findings.                                     │
+│                                                                      │
+│ Details: http://127.0.0.1:47619/audit/s3/1.1.0                       │
+╰──────────────────────────────────────────────────────────────────────╯
+Downloading s3@1.1.0 from ClawHub…
+Installing to $RUN/home/.openclaw/workspace/skills/s3…
+
+---- outcome ----
+killed by signal: 9
+Ctrl+C sent 1.74s after start; exit 2.10s after Ctrl+C
+s1: lock 1.1.0, on disk 's1 1.1.0'
+s2: lock 1.1.0, on disk 's2 1.1.0'
+s3: lock 1.0.0, on disk 's3 1.1.0'
+s4: lock 1.0.0, on disk 's4 1.0.0'
+s5: lock 1.0.0, on disk 's5 1.0.0'
+---- stand-in requests during the run ----
+2026-11-13T06:44:49.736Z GET /api/v1/skills/s1/install
+2026-11-13T06:44:49.753Z POST /api/v1/skills/-/security-verdicts
+2026-11-13T06:44:49.777Z GET /archives/s1/1.1.0.zip
+2026-11-13T06:44:49.778Z HOLDING download s1@1.1.0
+2026-11-13T06:44:50.337Z SERVED download s1@1.1.0
+2026-11-13T06:44:50.337Z CTL /__ctl/release
+2026-11-13T06:44:51.083Z GET /api/v1/skills/s1/verify?version=1.1.0
+2026-11-13T06:44:51.477Z GET /api/v1/skills/s2/install
+2026-11-13T06:44:51.478Z POST /api/v1/skills/-/security-verdicts
+2026-11-13T06:44:51.481Z GET /archives/s2/1.1.0.zip
+2026-11-13T06:44:51.483Z SERVED download s2@1.1.0
+2026-11-13T06:44:51.824Z GET /api/v1/skills/s2/verify?version=1.1.0
+2026-11-13T06:44:51.949Z GET /api/v1/skills/s3/install
+2026-11-13T06:44:51.950Z POST /api/v1/skills/-/security-verdicts
+2026-11-13T06:44:51.952Z GET /archives/s3/1.1.0.zip
+2026-11-13T06:44:51.954Z SERVED download s3@1.1.0
+2026-11-13T06:44:52.124Z CTL /__ctl/release
+2026-11-13T06:44:52.126Z CTL /__ctl/hold?slug=
