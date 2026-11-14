@@ -1,0 +1,32 @@
+{
+  "head": "68c25410a001d9e8c299f12f10bd3adc83c3dd72",
+  "scribesUpdatesDiffVsHead": "(none: HEAD source)",
+  "servedEntry": "dist/control-ui/e7c72828dacd5abbb4f9ba5b3619fb27defd9ca6679d7818eaca68a1618fdd66/index.js",
+  "servedBundleKeysReplacePerGateway": true,
+  "job": {},
+  "connections": 3,
+  "droppedResponse": {
+    "id": "34:4f764a20-b379-400b-8904-c3721d861bb9",
+    "ok": true,
+    "connection": 1
+  },
+  "openDialogsAfterReconnect": 0,
+  "replaceSendsBeforeRetry": 1,
+  "replaceSends": [
+    {
+      "connection": 1,
+      "idempotencyKey": "knowledge:scribe:claim-consolidation:reset:0cefad83-6af1-4323-bf27-fee541716ed6:sha256:MYQpVK6fTe6mQ4wPZS-0MJUp6FluwQCbHu0YBiKk2EY:b98ddac5-d634-4da4-8ef3-ff82abe261b5"
+    },
+    {
+      "connection": 2,
+      "idempotencyKey": "knowledge:scribe:claim-consolidation:reset:0cefad83-6af1-4323-bf27-fee541716ed6:sha256:MYQpVK6fTe6mQ4wPZS-0MJUp6FluwQCbHu0YBiKk2EY:b98ddac5-d634-4da4-8ef3-ff82abe261b5"
+    }
+  ],
+  "distinctReplaceKeys": 1,
+  "modelRequests": 1,
+  "transcriptReplacementRequests": 1,
+  "transcriptRoles": [
+    "user",
+    "assistant"
+  ]
+}
