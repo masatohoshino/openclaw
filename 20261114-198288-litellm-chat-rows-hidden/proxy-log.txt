@@ -1,0 +1,61 @@
+== LiteLLM 1.109.1 proxy log: startup, request and error lines only (other lines omitted). Times are proxy local time.
+LiteLLM: Proxy initialized with Config, Set models:
+    gemini-2.5-flash
+    claude-opus-4-6
+    text-embedding-004
+    local-qwen
+    local-unlabeled
+== From proxy start to the first chat request error (10:18:43). The Before run ended at 10:16:30, before it, and sent no chat request:
+INFO:     127.0.0.1:<client port> - "GET /health/liveliness HTTP/1.1" 200 OK
+INFO:     127.0.0.1:<client port> - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     127.0.0.1:<client port> - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     127.0.0.1:<client port> - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     127.0.0.1:<client port> - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     127.0.0.1:<client port> - "GET /v1/models HTTP/1.1" 200 OK
+10:18:43 - LiteLLM Proxy:ERROR: common_request_processing.py:1984 - litellm.proxy.proxy_server._handle_llm_api_exception(): Exception occured - litellm_call_id=<id> - litellm.APIConnectionError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY 
+== ... (an earlier run omitted) ...
+== The After run (10:40:34-10:43:40):
+INFO:     127.0.0.1:<client port> - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     127.0.0.1:<client port> - "GET /v1/models HTTP/1.1" 200 OK
+10:42:13 - LiteLLM Proxy:ERROR: common_request_processing.py:1984 - litellm.proxy.proxy_server._handle_llm_api_exception(): Exception occured - litellm_call_id=<id> - litellm.APIConnectionError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY 
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+INFO:     127.0.0.1:<client port> - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+10:42:20 - LiteLLM Proxy:ERROR: common_request_processing.py:1984 - litellm.proxy.proxy_server._handle_llm_api_exception(): Exception occured - litellm_call_id=<id> - litellm.APIConnectionError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY 
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+INFO:     127.0.0.1:<client port> - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+10:42:27 - LiteLLM Proxy:ERROR: common_request_processing.py:1984 - litellm.proxy.proxy_server._handle_llm_api_exception(): Exception occured - litellm_call_id=<id> - litellm.APIConnectionError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY 
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+INFO:     127.0.0.1:<client port> - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+10:42:35 - LiteLLM Proxy:ERROR: common_request_processing.py:1984 - litellm.proxy.proxy_server._handle_llm_api_exception(): Exception occured - litellm_call_id=<id> - litellm.APIConnectionError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY 
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+INFO:     127.0.0.1:<client port> - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+10:42:46 - LiteLLM Proxy:ERROR: common_request_processing.py:1984 - litellm.proxy.proxy_server._handle_llm_api_exception(): Exception occured - litellm_call_id=<id> - litellm.APIConnectionError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY 
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+INFO:     127.0.0.1:<client port> - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+10:43:04 - LiteLLM Proxy:ERROR: common_request_processing.py:1984 - litellm.proxy.proxy_server._handle_llm_api_exception(): Exception occured - litellm_call_id=<id> - litellm.APIConnectionError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY 
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+INFO:     127.0.0.1:<client port> - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
+10:43:40 - LiteLLM Proxy:ERROR: common_request_processing.py:1984 - litellm.proxy.proxy_server._handle_llm_api_exception(): Exception occured - litellm_call_id=<id> - litellm.APIConnectionError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY 
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ValueError: Missing Gemini API key. Set the GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+INFO:     127.0.0.1:<client port> - "POST /v1/chat/completions HTTP/1.1" 500 Internal Server Error
