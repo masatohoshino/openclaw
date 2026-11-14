@@ -1,0 +1,234 @@
+== Commit before #198288 (3bf446ef447): git rev-parse HEAD
+3bf446ef447518f801828118620c891e7e199073
+== litellm --version (the real proxy, run with its own config, bound to 127.0.0.1)
+LiteLLM: Current Version = 1.109.1
+== GET /v1/models from the proxy (raw body, one row per line)
+{"id": "gemini-2.5-flash", "object": "model", "created": 1677610602, "owned_by": "openai", "mode": "chat", "max_input_tokens": 1048576, "max_output_tokens": 65536}
+{"id": "claude-opus-4-6", "object": "model", "created": 1677610602, "owned_by": "openai", "mode": "chat", "max_input_tokens": 1000000, "max_output_tokens": 128000}
+{"id": "text-embedding-004", "object": "model", "created": 1677610602, "owned_by": "openai", "mode": "embedding", "max_input_tokens": 2048}
+{"id": "local-qwen", "object": "model", "created": 1677610602, "owned_by": "openai", "mode": "chat"}
+{"id": "local-unlabeled", "object": "model", "created": 1677610602, "owned_by": "openai"}
+== openclaw onboard (non-interactive, LiteLLM)
+$ node scripts/run-node.mjs onboard --non-interactive --accept-risk --skip-health --auth-choice litellm-api-key --litellm-api-key <proxy key> --custom-base-url http://127.0.0.1:<port>/v1
+...
+[tsdown-build] invocation 1/2 finished in 0.5s
+node_modules/.pnpm/playwright-core@1.64.1_patch_hash=eedf680682a6840d82c6ad530a60875857aa8c0372785acf8e8e5df9c2e3ac16/node_modules/playwright-core/lib/coreBundle.js (68254:28) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+       ╭─[ node_modules/.pnpm/playwright-core@1.64.1_patch_hash=eedf680682a6840d82c6ad530a60875857aa8c0372785acf8e8e5df9c2e3ac16/node_modules/playwright-core/lib/coreBundle.js:68254:29 ]
+       │
+ 68254 │               const value = eval(`(${expr})`);
+       │                             ──┬─  
+       │                               ╰─── Use of direct `eval` here.
+       │ 
+       │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+───────╯
+
+node_modules/.pnpm/playwright-core@1.64.1_patch_hash=eedf680682a6840d82c6ad530a60875857aa8c0372785acf8e8e5df9c2e3ac16/node_modules/playwright-core/lib/coreBundle.js (68261:28) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+       ╭─[ node_modules/.pnpm/playwright-core@1.64.1_patch_hash=eedf680682a6840d82c6ad530a60875857aa8c0372785acf8e8e5df9c2e3ac16/node_modules/playwright-core/lib/coreBundle.js:68261:29 ]
+       │
+ 68261 │               const value = eval(`(${expr})`);
+       │                             ──┬─  
+       │                               ╰─── Use of direct `eval` here.
+       │ 
+       │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+───────╯
+
+extensions/browser/src/browser/page-function-runtime.ts (13:31) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+    ╭─[ extensions/browser/src/browser/page-function-runtime.ts:13:32 ]
+    │
+ 13 │     const candidate: unknown = eval(`"use strict";\n(${options.fnSource})`);
+    │                                ──┬─  
+    │                                  ╰─── Use of direct `eval` here.
+    │ 
+    │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+────╯
+
+node_modules/.pnpm/web-tree-sitter@0.27.1/node_modules/web-tree-sitter/web-tree-sitter.js (2400:30) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+      ╭─[ node_modules/.pnpm/web-tree-sitter@0.27.1/node_modules/web-tree-sitter/web-tree-sitter.js:2400:31 ]
+      │
+ 2400 │           ASM_CONSTS[start] = eval(func);
+      │                               ──┬─  
+      │                                 ╰─── Use of direct `eval` here.
+      │ 
+      │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+──────╯
+
+node_modules/.pnpm/web-tree-sitter@0.27.1/node_modules/web-tree-sitter/web-tree-sitter.js (2423:32) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+      ╭─[ node_modules/.pnpm/web-tree-sitter@0.27.1/node_modules/web-tree-sitter/web-tree-sitter.js:2423:33 ]
+      │
+ 2423 │           moduleExports[name] = eval(func);
+      │                                 ──┬─  
+      │                                   ╰─── Use of direct `eval` here.
+      │ 
+      │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+──────╯
+
+node_modules/.pnpm/@acemir+cssom@0.9.32/node_modules/@acemir/cssom/lib/errorUtils.js (31:8) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+    ╭─[ node_modules/.pnpm/@acemir+cssom@0.9.32/node_modules/@acemir/cssom/lib/errorUtils.js:31:9 ]
+    │
+ 31 │            eval(errorType);
+    │            ──┬─  
+    │              ╰─── Use of direct `eval` here.
+    │ 
+    │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+────╯
+
+node_modules/.pnpm/web-tree-sitter@0.27.1/node_modules/web-tree-sitter/web-tree-sitter.js (2400:30) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+      ╭─[ node_modules/.pnpm/web-tree-sitter@0.27.1/node_modules/web-tree-sitter/web-tree-sitter.js:2400:31 ]
+      │
+ 2400 │           ASM_CONSTS[start] = eval(func);
+      │                               ──┬─  
+      │                                 ╰─── Use of direct `eval` here.
+      │ 
+      │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+──────╯
+
+node_modules/.pnpm/web-tree-sitter@0.27.1/node_modules/web-tree-sitter/web-tree-sitter.js (2423:32) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+      ╭─[ node_modules/.pnpm/web-tree-sitter@0.27.1/node_modules/web-tree-sitter/web-tree-sitter.js:2423:33 ]
+      │
+ 2423 │           moduleExports[name] = eval(func);
+      │                                 ──┬─  
+      │                                   ╰─── Use of direct `eval` here.
+      │ 
+      │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+──────╯
+
+extensions/browser/src/browser/page-function-runtime.ts (13:31) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+    ╭─[ extensions/browser/src/browser/page-function-runtime.ts:13:32 ]
+    │
+ 13 │     const candidate: unknown = eval(`"use strict";\n(${options.fnSource})`);
+    │                                ──┬─  
+    │                                  ╰─── Use of direct `eval` here.
+    │ 
+    │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+────╯
+
+[tsdown-build] invocation 2/2 finished in 29.2s
+...
+[plugin-npm-runtime-build] build assets diffs: node --import tsx ../../scripts/build-diffs-viewer-runtime.mts curated
+[plugin-npm-runtime-build] build assets diffs-language-pack: node --import tsx ../../scripts/build-diffs-viewer-runtime.mts full
+[plugin-npm-runtime-build] build assets discord: node --import ../../scripts/tsx.mjs ../../scripts/build-discord-activity-sdk.mts
+[external-plugin-local-dist] built 105 plugins in 4798ms
+...
+agents/identity-file.worker.js: 203 evaluated modules (budget 220)
+extensions/codex/catalog-page.worker.js: 67 evaluated modules (budget 100)
+CLI bootstrap import guard passed.
+...
+[browser] copy: node scripts/copy-chrome-extension.mjs
+[clawrouter] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/clawrouter --copy
+[deep-research] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/deep-research --copy
+[knowledge] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/knowledge --copy
+[mcp-relay] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/mcp-relay --copy
+[memory-core] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/memory-core --copy
+[nostr] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/nostr --copy
+[openclaw-id-access] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/openclaw-id-access --copy
+[whatsapp] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/whatsapp --copy
+[workboard] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/workboard --copy
+[x] copy: cd ../.. && node --import ./scripts/tsx.mjs scripts/build-plugin-control-ui.mts extensions/x --copy
+...
+[plugin-control-plane-loads] verified 56 built modules with native require and checked doctor closures
+runtime-postbuild: 14 phases completed in 4445ms (slowest: built plugin control-plane loads 2479ms)
+...
+Workspace OK: $STATE/workspace
+Sessions OK: $STATE/agents/main/sessions
+...
+Updated config: $STATE/openclaw.json
+  Backup: $STATE/openclaw.json.bak
+...
+exit=0
+== openclaw models set litellm/gemini-2.5-flash
+$ node scripts/run-node.mjs models set litellm/gemini-2.5-flash
+Note: Provider "litellm" has no local model catalog, so "litellm/gemini-2.5-flash" could not be checked offline. The selection was saved.
+Updated config: $STATE/openclaw.json
+  Backup: $STATE/openclaw.json.bak
+Default model: litellm/gemini-2.5-flash
+...
+exit=0
+== openclaw models list --provider litellm --refresh --json
+$ node scripts/run-node.mjs models list --provider litellm --refresh --json
+Gateway is not running. Refreshing the local model catalog.
+...
+{
+  "count": 4,
+  "models": [
+    {
+      "key": "litellm/gemini-2.5-flash",
+      "name": "gemini-2.5-flash",
+      "input": "text",
+      "contextWindow": 1048576,
+      "local": true,
+      "available": true,
+      "tags": [
+        "default",
+        "configured"
+      ]
+    },
+    {
+      "key": "litellm/claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "input": "text+image",
+      "contextWindow": 1000000,
+      "local": true,
+      "available": true,
+      "tags": [
+        "configured",
+        "alias:LiteLLM"
+      ]
+    },
+    {
+      "key": "litellm/local-qwen",
+      "name": "local-qwen",
+      "input": "text",
+      "contextWindow": 128000,
+      "local": true,
+      "available": true,
+      "tags": []
+    },
+    {
+      "key": "litellm/local-unlabeled",
+      "name": "local-unlabeled",
+      "input": "text",
+      "contextWindow": 128000,
+      "local": true,
+      "available": true,
+      "tags": []
+    }
+  ],
+  "providerOutcomes": [
+    {
+      "provider": "litellm",
+      "status": "ready"
+    }
+  ]
+}
+exit=0
+== openclaw agent --local --model litellm/gemini-2.5-flash -m 'Say hi'
+$ node scripts/run-node.mjs agent --local --session-id proof633 --model litellm/gemini-2.5-flash -m 'Say hi'
+...
+[provider-transport-fetch] [model-fetch] response provider=litellm api=openai-completions model=gemini-2.5-flash status=500 elapsedMs=4760 dispatcher=new contentType=application/json httpRequestId=unknown sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:1" requestNumber=1
+[provider-error] Model request failed sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:1" requestNumber=1 provider=litellm model=gemini-2.5-flash name=Error status=500 code=500 type=internal_server_error
+[agent/embedded] embedded run agent end: runId=faa6b5b7-3fe0-4f5f-abef-1f67e5a17477 isError=true model=gemini-2.5-flash provider=litellm failoverReason=server_error
+[provider-transport-fetch] [model-fetch] response provider=litellm api=openai-completions model=gemini-2.5-flash status=500 elapsedMs=4680 dispatcher=reused contentType=application/json httpRequestId=unknown sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:2" requestNumber=2
+[provider-error] Model request failed sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:2" requestNumber=2 provider=litellm model=gemini-2.5-flash name=Error status=500 code=500 type=internal_server_error
+[agent/embedded] embedded run agent end: runId=faa6b5b7-3fe0-4f5f-abef-1f67e5a17477 isError=true model=gemini-2.5-flash provider=litellm failoverReason=server_error
+[provider-transport-fetch] [model-fetch] response provider=litellm api=openai-completions model=gemini-2.5-flash status=500 elapsedMs=4273 dispatcher=reused contentType=application/json httpRequestId=unknown sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:3" requestNumber=3
+[provider-error] Model request failed sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:3" requestNumber=3 provider=litellm model=gemini-2.5-flash name=Error status=500 code=500 type=internal_server_error
+[agent/embedded] embedded run agent end: runId=faa6b5b7-3fe0-4f5f-abef-1f67e5a17477 isError=true model=gemini-2.5-flash provider=litellm failoverReason=server_error
+[provider-transport-fetch] [model-fetch] response provider=litellm api=openai-completions model=gemini-2.5-flash status=500 elapsedMs=4775 dispatcher=reused contentType=application/json httpRequestId=unknown sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:4" requestNumber=4
+[provider-error] Model request failed sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:4" requestNumber=4 provider=litellm model=gemini-2.5-flash name=Error status=500 code=500 type=internal_server_error
+[agent/embedded] embedded run agent end: runId=faa6b5b7-3fe0-4f5f-abef-1f67e5a17477 isError=true model=gemini-2.5-flash provider=litellm failoverReason=server_error
+[provider-transport-fetch] [model-fetch] response provider=litellm api=openai-completions model=gemini-2.5-flash status=500 elapsedMs=4228 dispatcher=reused contentType=application/json httpRequestId=unknown sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:5" requestNumber=5
+[provider-error] Model request failed sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:5" requestNumber=5 provider=litellm model=gemini-2.5-flash name=Error status=500 code=500 type=internal_server_error
+[agent/embedded] embedded run agent end: runId=faa6b5b7-3fe0-4f5f-abef-1f67e5a17477 isError=true model=gemini-2.5-flash provider=litellm failoverReason=server_error
+[provider-transport-fetch] [model-fetch] response provider=litellm api=openai-completions model=gemini-2.5-flash status=500 elapsedMs=4581 dispatcher=reused contentType=application/json httpRequestId=unknown sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:6" requestNumber=6
+[provider-error] Model request failed sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:6" requestNumber=6 provider=litellm model=gemini-2.5-flash name=Error status=500 code=500 type=internal_server_error
+[agent/embedded] embedded run agent end: runId=faa6b5b7-3fe0-4f5f-abef-1f67e5a17477 isError=true model=gemini-2.5-flash provider=litellm failoverReason=server_error
+[provider-transport-fetch] [model-fetch] response provider=litellm api=openai-completions model=gemini-2.5-flash status=500 elapsedMs=4871 dispatcher=reused contentType=application/json httpRequestId=unknown sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:7" requestNumber=7
+[provider-error] Model request failed sessionKey="agent:main:explicit:proof633" runId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477" requestId="faa6b5b7-3fe0-4f5f-abef-1f67e5a17477:model:7" requestNumber=7 provider=litellm model=gemini-2.5-flash name=Error status=500 code=500 type=internal_server_error
+[agent/embedded] embedded run agent end: runId=faa6b5b7-3fe0-4f5f-abef-1f67e5a17477 isError=true model=gemini-2.5-flash provider=litellm failoverReason=server_error
+[agent/embedded] transient retry window elapsed for litellm/gemini-2.5-flash after 6/8 retries; stopping same-model retries
+[agent/embedded] embedded run failover decision: runId=faa6b5b7-3fe0-4f5f-abef-1f67e5a17477 stage=assistant decision=surface_error reason=server_error attempt=1 retry=6 rotations=0 from=litellm/gemini-2.5-flash profile=<hash>
+[model-fallback/decision] model fallback decision: decision=candidate_failed requested=litellm/gemini-2.5-flash candidate=litellm/gemini-2.5-flash reason=server_error next=none
+⚠️ The AI service is having trouble. Please try again in a moment.
+...
+[ELIFECYCLE] Command failed with exit code 1.
+exit=1
