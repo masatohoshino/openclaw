@@ -1,0 +1,66 @@
+== before: git rev-parse HEAD
+009fcd9b53b22ba476feee93e9bd2b8cab2d7d68
+== GET https://api.together.xyz/v1/models, answered by the local stand-in (rows in Together's SDK ModelObject shape; one row per line)
+{"id": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "object": "model", "created": 1730000000, "type": "chat", "display_name": "Llama 3.3 70B Instruct Turbo", "organization": "meta-llama", "link": "https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct-Turbo", "license": "other", "context_length": 131072, "pricing": {"hourly": 0, "input": 0.6, "output": 1.7, "base": 0, "finetune": 0}}
+{"id": "zai-org/GLM-5.2", "object": "model", "created": 1730000000, "type": "chat", "display_name": "GLM 5.2", "organization": "zai-org", "link": "https://huggingface.co/zai-org/GLM-5.2", "license": "other", "context_length": 262144, "pricing": {"hourly": 0, "input": 0.6, "output": 1.7, "base": 0, "finetune": 0}}
+{"id": "deepseek-ai/DeepSeek-V3.1", "object": "model", "created": 1730000000, "type": "chat", "display_name": "DeepSeek V3.1", "organization": "deepseek-ai", "link": "https://huggingface.co/deepseek-ai/DeepSeek-V3.1", "license": "other", "context_length": 131072, "pricing": {"hourly": 0, "input": 0.6, "output": 1.7, "base": 0, "finetune": 0}}
+{"id": "Qwen/Qwen3-235B-A22B-Instruct-2507-tput", "object": "model", "created": 1730000000, "type": "chat", "display_name": "Qwen3 235B A22B Instruct 2507", "organization": "Qwen", "link": "https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507-tput", "license": "other", "context_length": 262144, "pricing": {"hourly": 0, "input": 0.6, "output": 1.7, "base": 0, "finetune": 0}}
+{"id": "meta-llama/Meta-Llama-3-8B", "object": "model", "created": 1730000000, "type": "language", "display_name": "Meta Llama 3 8B", "organization": "meta-llama", "link": "https://huggingface.co/meta-llama/Meta-Llama-3-8B", "license": "other", "context_length": 8192, "pricing": {"hourly": 0, "input": 0.6, "output": 1.7, "base": 0, "finetune": 0}}
+{"id": "BAAI/bge-large-en-v1.5", "object": "model", "created": 1730000000, "type": "embedding", "display_name": "BAAI-Bge-Large-1p5", "organization": "BAAI", "link": "https://huggingface.co/BAAI/bge-large-en-v1.5", "license": "other", "context_length": 512, "pricing": {"hourly": 0, "input": 0.6, "output": 1.7, "base": 0, "finetune": 0}}
+{"id": "black-forest-labs/FLUX.1-schnell", "object": "model", "created": 1730000000, "type": "image", "display_name": "FLUX.1 [schnell]", "organization": "black-forest-labs", "link": "https://huggingface.co/black-forest-labs/FLUX.1-schnell", "license": "other", "context_length": 0, "pricing": {"hourly": 0, "input": 0.6, "output": 1.7, "base": 0, "finetune": 0}}
+== openclaw onboard (non-interactive, Together)
+...
+Workspace OK: $STATE/workspace
+Sessions OK: $STATE/agents/main/sessions
+Updated config: $STATE/openclaw.json
+  Backup: $STATE/openclaw.json.bak
+...
+exit=0
+== openclaw models list --provider together --refresh --json
+...
+Gateway is not running. Refreshing the local model catalog.
+...
+{
+  "count": 2,
+  "models": [
+    {
+      "key": "together/zai-org/GLM-5.2",
+      "name": "GLM 5.2 FP4",
+      "input": "text",
+      "contextWindow": 262144,
+      "local": false,
+      "available": true,
+      "tags": [
+        "default",
+        "configured",
+        "alias:Together AI"
+      ]
+    },
+    {
+      "key": "together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "name": "Llama 3.3 70B Instruct Turbo",
+      "input": "text",
+      "contextWindow": 131072,
+      "local": false,
+      "available": true,
+      "tags": []
+    }
+  ],
+  "providerOutcomes": [
+    {
+      "provider": "together",
+      "status": "ready"
+    }
+  ]
+}
+exit=0
+== openclaw agent --local --session-id <id> --model together/deepseek-ai/DeepSeek-V3.1 -m 'Say hi'
+...
+[model-fallback/decision] model fallback decision: decision=candidate_failed requested=together/deepseek-ai/DeepSeek-V3.1 candidate=together/deepseek-ai/DeepSeek-V3.1 reason=format next=none
+...
+This model doesn't support chat; pick another model.
+exit=1
+== stand-in request log (the first GET /v1/models is the driver's raw GET above; the requests after it come from openclaw)
+2026-11-14T04:55:58.933Z stand-in listening on :443
+2026-11-14T04:55:59.341Z GET /v1/models auth=bearer -> 200 (7 rows)
+2026-11-14T04:56:08.762Z GET /v1/models auth=bearer -> 200 (7 rows)
