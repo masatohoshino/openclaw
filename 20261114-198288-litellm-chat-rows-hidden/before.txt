@@ -1,0 +1,64 @@
+== Before: git rev-parse HEAD
+211bc77fff4533cfba01950553c2aeefd486804f
+== litellm --version (the real proxy, run with its own config, bound to 127.0.0.1)
+LiteLLM: Current Version = 1.109.1
+== GET /v1/models from the proxy (raw body, one row per line)
+{"id": "gemini-2.5-flash", "object": "model", "created": 1677610602, "owned_by": "openai", "mode": "chat", "max_input_tokens": 1048576, "max_output_tokens": 65536}
+{"id": "claude-opus-4-6", "object": "model", "created": 1677610602, "owned_by": "openai", "mode": "chat", "max_input_tokens": 1000000, "max_output_tokens": 128000}
+{"id": "text-embedding-004", "object": "model", "created": 1677610602, "owned_by": "openai", "mode": "embedding", "max_input_tokens": 2048}
+{"id": "local-qwen", "object": "model", "created": 1677610602, "owned_by": "openai", "mode": "chat"}
+{"id": "local-unlabeled", "object": "model", "created": 1677610602, "owned_by": "openai"}
+== openclaw onboard (non-interactive, LiteLLM)
+$ node scripts/run-node.mjs onboard --non-interactive --accept-risk --skip-health --auth-choice litellm-api-key --litellm-api-key <proxy key> --custom-base-url http://127.0.0.1:<port>/v1
+...
+Workspace OK: $STATE/workspace
+Sessions OK: $STATE/agents/main/sessions
+...
+Updated config: $STATE/openclaw.json
+  Backup: $STATE/openclaw.json.bak
+...
+exit=0
+== openclaw models set litellm/gemini-2.5-flash
+$ node scripts/run-node.mjs models set litellm/gemini-2.5-flash
+Note: Provider "litellm" has no local model catalog, so "litellm/gemini-2.5-flash" could not be checked offline. The selection was saved.
+Updated config: $STATE/openclaw.json
+  Backup: $STATE/openclaw.json.bak
+Default model: litellm/gemini-2.5-flash
+...
+exit=0
+== openclaw models list --provider litellm --refresh --json
+$ node scripts/run-node.mjs models list --provider litellm --refresh --json
+Gateway is not running. Refreshing the local model catalog.
+...
+{
+  "count": 1,
+  "models": [
+    {
+      "key": "litellm/claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "input": "text+image",
+      "contextWindow": 1000000,
+      "local": true,
+      "available": true,
+      "tags": [
+        "configured",
+        "alias:LiteLLM"
+      ]
+    }
+  ],
+  "providerOutcomes": [
+    {
+      "provider": "litellm",
+      "status": "ready"
+    }
+  ]
+}
+exit=0
+== openclaw agent --local --model litellm/gemini-2.5-flash -m 'Say hi'
+$ node scripts/run-node.mjs agent --local --session-id proof633 --model litellm/gemini-2.5-flash -m 'Say hi'
+...
+[model-fallback/decision] model fallback decision: decision=candidate_failed requested=litellm/gemini-2.5-flash candidate=litellm/gemini-2.5-flash reason=format next=none
+...
+This model doesn't support chat; pick another model.
+[ELIFECYCLE] Command failed with exit code 1.
+exit=1
