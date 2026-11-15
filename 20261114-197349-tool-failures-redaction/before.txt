@@ -1,0 +1,18 @@
+# synthetic token assignment and sk- key shown as placeholders, summary heading line shown as "Tool Failures section:"; marker counts are from the unedited run
+label=before head=8aa2434748afb90b64e2de12b645d61f1538b8cf
+turn exit=0 message=First, please note the project is called heron.
+turn exit=0 message=RUNFAIL run the diagnostic command.
+turn exit=0 message=Thanks, what is the project called?
+compact exit=0
+turn exit=0 message=What should we do next?
+Tool Failures section:
+- exec (status=failed): connecting with <synthetic token assignment> <synthetic sk- key> Command timed out after 2 seconds. The command was terminated, but external side effects may already have completed. Verify the resulting state before retryi...
+- Tool result (exec): connecting with [redacted] [redacted]
+FAKEE2E markers in stored summary: 2
+request after compaction: roles=system,user,assistant,user,user; FAKEE2E markers sent to the model: 2; tool messages: 0
+stored compaction entries: 1 (database copy: openclaw-agent.sqlite)
+--- session fb4a1459-2948-4bef-b9e1-6ae719b0b111 seq 23 (event_zstd)
+Tool Failures section:
+- exec (status=failed): connecting with <synthetic token assignment> <synthetic sk- key> Command timed out after 2 seconds. The command was terminated, but external side effects may already have completed. Verify the resulting state before retryi...
+- Tool result (exec): connecting with [redacted] [redacted]
+FAKEE2E markers in stored summary: 2
