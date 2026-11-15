@@ -1,0 +1,130 @@
+
+===== driver.log: transcript of drive.sh voice (each command printed with "$ " before it runs)
+$ git checkout --quiet --detach 945f96776971a7e8da9839a0e6bfc227e2654869
+$ git rev-parse HEAD
+945f96776971a7e8da9839a0e6bfc227e2654869
+$ git status --short
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_FORCE_BUILD=1 pnpm openclaw --version > build.log 2>&1
+[build exit 0]
+$ cp dist/.buildstamp <run dir>/buildstamp.json
+$ cat <run dir>/buildstamp.json
+{"builtAt":1794748935316,"head":"945f96776971a7e8da9839a0e6bfc227e2654869","inputsClean":true,"inputSignature":"e1d8a94c59ae821504f804e5e65ba50ef061d39ab0d82fa0eba5b2c130656859"}
+
+$ uname -sr
+Linux 6.8.0-138-generic
+$ node -v
+v24.22.1
+$ bash -c ffmpeg\ -version\ \|\ head\ -n\ 1
+ffmpeg version n8.1.3-34-ga35157abb9-20261104 Copyright (c) 2000-2026 the FFmpeg developers
+$ bash -c ffprobe\ -version\ \|\ head\ -n\ 1
+ffprobe version n8.1.3-34-ga35157abb9-20261104 Copyright (c) 2007-2026 the FFmpeg developers
+$ bash -c command\ -v\ ffmpeg\ ffprobe
+<user bin dir>/ffmpeg
+<user bin dir>/ffprobe
+$ node --import ./scripts/tsx.mjs --input-type=module -e const\ \{\ resolveSystemBin\ \}\ =\ await\ import\(\'./src/infra/resolve-system-bin.ts\'\)\;\ for\ \(const\ name\ of\ \[\'ffmpeg\'\,\ \'ffprobe\'\]\)\ console.log\(name\ +\ \':\ \'\ +\ \(resolveSystemBin\(name\,\ \{\ trust:\ \'standard\'\ \}\)\ \?\?\ \'not\ found\ in\ trusted\ system\ directories\'\)\)\;
+ffmpeg: /usr/local/bin/ffmpeg
+ffprobe: /usr/local/bin/ffprobe
+
+$ stat -c %a\ %n <gateway dir>
+700 <gateway dir>
+$ mkdir -m 700 <gateway dir>/state <gateway dir>/state/workspace <gateway dir>/tmp
+$ cat <gateway dir>/state/openclaw.json
+{"gateway":{"mode":"local","bind":"loopback","port":18667,"auth":{"mode":"token","token":"standin-gateway-token"},"controlUi":{"enabled":false}},"channels":{"feishu":{"enabled":true,"appId":"cli_standin","appSecret":"standin-secret","domain":"https://127.0.0.1:18657"}}}
+$ cp <gateway dir>/state/openclaw.json <run dir>/openclaw.json
+$ cp <standin dir>/voice.ogg <standin dir>/native.ogg <gateway dir>/state/workspace/
+$ node <standin dir>/server.mjs 18657 <run dir>/standin &
+$ cat <run dir>/standin.log
+feishu stand-in listening on https://127.0.0.1:18657
+$ setsid env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<gateway dir>/state OPENCLAW_CONFIG_PATH=<gateway dir>/state/openclaw.json TMPDIR=<gateway dir>/tmp NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem pnpm openclaw gateway run --port 18667 --bind loopback > gateway.log 2>&1 &
+[gateway ready: yes]
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<gateway dir>/state OPENCLAW_CONFIG_PATH=<gateway dir>/state/openclaw.json TMPDIR=<gateway dir>/tmp NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem timeout 180 pnpm openclaw gateway call --url ws://127.0.0.1:18667 --token standin-gateway-token send --params \{\"channel\":\"feishu\"\,\"to\":\"ou_standin_user\"\,\"mediaUrl\":\"<gateway dir>/state/workspace/voice.ogg\"\,\"asVoice\":true\,\"idempotencyKey\":\"657-voice-1\"\} --json > voice-1-vorbis.log 2>&1
+[exit 0]
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<gateway dir>/state OPENCLAW_CONFIG_PATH=<gateway dir>/state/openclaw.json TMPDIR=<gateway dir>/tmp NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem timeout 180 pnpm openclaw gateway call --url ws://127.0.0.1:18667 --token standin-gateway-token send --params \{\"channel\":\"feishu\"\,\"to\":\"ou_standin_user\"\,\"mediaUrl\":\"<gateway dir>/state/workspace/native.ogg\"\,\"asVoice\":true\,\"idempotencyKey\":\"657-voice-2\"\} --json > voice-2-native.log 2>&1
+[exit 0]
+$ kill -- -571875
+$ pgrep -g 571875 -l
+$ kill 571852
+$ grep -n -i -E feishu\|ffmpeg\|ffprobe\|transcode <run dir>/gateway.log
+123:2026-11-15T22:22:20.783+09:00 [gateway] http server listening (19 plugins: acpx, anthropic, browser, canvas, cua-computer, deep-research, device-pair, feishu, file-transfer, geolocation, github, linux-node, llama-cpp, memory-core, ollama, openai, skill-workshop, talk-voice, xai; 1.4s)
+154:2026-11-15T22:22:21.236+09:00 [feishu] [default] starting account (reason: startup)
+155:2026-11-15T22:22:21.238+09:00 [feishu] starting feishu[default] (mode: websocket)
+161:2026-11-15T22:22:21.308+09:00 [feishu] feishu[default]: bot open_id resolved: unknown
+162:2026-11-15T22:22:21.308+09:00 [feishu] feishu[default]: bot open_id unknown; starting background provider refresh (delays: 60s, 120s, 300s, 600s, 900s)
+163:2026-11-15T22:22:21.308+09:00 [feishu] feishu[default]: requireMention group messages stay gated until bot identity recovery succeeds
+165:2026-11-15T22:22:21.313+09:00 [feishu] feishu[default]: starting WebSocket connection...
+167:2026-11-15T22:22:21.314+09:00 [feishu] feishu[default]: WebSocket client started
+194:2026-11-15T22:22:25.238+09:00 [feishu] feishu[default]: abort signal received, stopping
+$ cat <run dir>/standin/requests.log
+01 POST /open-apis/auth/v3/tenant_access_token/internal
+02 GET /open-apis/bot/v3/info
+03 POST /open-apis/im/v1/files
+04 POST /open-apis/im/v1/messages?receive_id_type=open_id
+05 POST /open-apis/im/v1/files
+06 POST /open-apis/im/v1/messages?receive_id_type=open_id
+$ sha256sum <standin dir>/voice.ogg <standin dir>/native.ogg
+a5dc1b53480f7229fd888d075cd06f84527472ad1829f8b37109c1907d7187d4  <standin dir>/voice.ogg
+d4ead4bb75cd48a5d5a43362ab3116ac87f2c8acd5c0e5ee3911a61b80e044ee  <standin dir>/native.ogg
+$ sha256sum <run dir>/standin/upload-03.bin
+c9869adfbd2fcc2e10e8dba6f172ef2972415095efde897d7dd093024e198e9e  <run dir>/standin/upload-03.bin
+$ ffprobe -v error -show_entries stream=codec_name\,sample_rate\,channels -of compact <run dir>/standin/upload-03.bin
+stream|codec_name=opus|sample_rate=48000|channels=1
+$ sha256sum <run dir>/standin/upload-05.bin
+d4ead4bb75cd48a5d5a43362ab3116ac87f2c8acd5c0e5ee3911a61b80e044ee  <run dir>/standin/upload-05.bin
+$ ffprobe -v error -show_entries stream=codec_name\,sample_rate\,channels -of compact <run dir>/standin/upload-05.bin
+stream|codec_name=opus|sample_rate=48000|channels=1
+$ rm -rf <gateway dir>
+$ git checkout --quiet t657-slot
+$ git rev-parse HEAD
+945f96776971a7e8da9839a0e6bfc227e2654869
+
+===== voice-1-vorbis.log: stdout and stderr of the pnpm openclaw gateway call send shown in driver.log
+$ node scripts/run-node.mjs gateway call --url ws://127.0.0.1:18667 --token standin-gateway-token send --params '{"channel":"feishu","to":"ou_standin_user","mediaUrl":"<gateway dir>/state/workspace/voice.ogg","asVoice":true,"idempotencyKey":"657-voice-1"}' --json
+{
+  "runId": "657-voice-1",
+  "messageId": "om_standin_04",
+  "channel": "feishu"
+}
+
+===== voice-2-native.log: stdout and stderr of the pnpm openclaw gateway call send shown in driver.log
+$ node scripts/run-node.mjs gateway call --url ws://127.0.0.1:18667 --token standin-gateway-token send --params '{"channel":"feishu","to":"ou_standin_user","mediaUrl":"<gateway dir>/state/workspace/native.ogg","asVoice":true,"idempotencyKey":"657-voice-2"}' --json
+{
+  "runId": "657-voice-2",
+  "messageId": "om_standin_06",
+  "channel": "feishu"
+}
+
+===== standin/requests.log
+01 POST /open-apis/auth/v3/tenant_access_token/internal
+02 GET /open-apis/bot/v3/info
+03 POST /open-apis/im/v1/files
+04 POST /open-apis/im/v1/messages?receive_id_type=open_id
+05 POST /open-apis/im/v1/files
+06 POST /open-apis/im/v1/messages?receive_id_type=open_id
+
+===== standin/upload-03.json
+{
+  "fields": {
+    "file_type": "opus",
+    "file_name": "voice.ogg",
+    "duration": "1007"
+  },
+  "fileName": "voice.ogg",
+  "bytes": 10400
+}
+
+===== standin/upload-05.json
+{
+  "fields": {
+    "file_type": "opus",
+    "file_name": "native.ogg",
+    "duration": "1007"
+  },
+  "fileName": "native.ogg",
+  "bytes": 9520
+}
+
+===== standin/message-04.json
+{"content":"{\"file_key\":\"file_key_03\"}","msg_type":"audio","uuid":"1fa2e6ca-2343-4a4a-a186-552ff2244d3f","receive_id":"ou_standin_user"}
+
+===== standin/message-06.json
+{"content":"{\"file_key\":\"file_key_05\"}","msg_type":"audio","uuid":"da8cefdb-eaeb-4ace-90a4-6e5a282c9079","receive_id":"ou_standin_user"}
