@@ -1,0 +1,86 @@
+# Usage refresh after deleting 100 of 5000 transcripts (24 months each), three runs, after the fix.
+# Each run: build the cache with a real refresh, set the cache_entries planner statistics to the
+# ones SQLite's own PRAGMA optimize writes for a one-row table (the driver edits sqlite_stat1
+# directly to simulate a cache that held one row when statistics were last written), delete
+# 100 transcripts, then run one real refresh with a foreground writer probe every 10 ms.
+# Refresh JSON fields: pruneWriterHoldMs = the prune transaction's writer hold;
+#   overlapProbeWaitMs = waits of probes started while the prune transaction held the writer;
+#   foregroundWriterWaitMs = waits of all probes during the whole refresh;
+#   writerPhases = every refresh writer hold, grouped by worker operation.
+# plans-summary.txt shortens statement text: bind lists collapsed to (...), the OR chain of the
+#   rollup batch delete replaced by (OR ...), each statement cut at 110 characters. The full
+#   statements and plans are in each run's plans.jsonl, kept with the proof logs.
+# Environment lines, identical on both sides: "log file append failed" comes from the proof
+#   environment's file-log target; "integrity gate ... reason=file-mismatch" and
+#   "clean-close receipt: verification-missing" follow the driver's direct sqlite_stat1 edit
+#   outside OpenClaw; the other "clean-close receipt" lines are written when the driver process
+#   closes the database at exit.
+
+### run after-1
+$ git rev-parse HEAD
+f66d5f53ef93de93a101bd6ab833475854f13d04
+$ cat stale.log   # planner statistics left on cache_entries before the refresh
+[state/agent-db] agent database clean-close receipt: written; agent=prune-proof
+{"phase":"stale","statistics":[{"idx":"idx_agent_voice_session_open_updated","stat":"0 0 0"},{"idx":"idx_agent_voice_session_open_scope","stat":"0 0 0 0"},{"idx":"idx_agent_cache_updated","stat":"1 1 1 1"},{"idx":"idx_agent_cache_expiry","stat":"0 0 0 0"},{"idx":"sqlite_autoindex_cache_entries_1","stat":"1 1 1"}],"rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000}}
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+$ cat delete.log  # transcripts removed before the refresh
+[state/agent-db] agent database integrity gate for prune-proof: reason=file-mismatch, mode=deferred, outcome=pending, elapsedMs=15
+{"phase":"delete","removed":100,"first":"session-00000.jsonl","last":"session-00099.jsonl","remaining":4900}
+[state/agent-db] agent database clean-close receipt: verification-missing; agent=prune-proof
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+$ cat output.log  # the real usage refresh (prune runs inside it)
+[state/agent-db] agent database integrity gate for prune-proof: reason=file-mismatch, mode=deferred, outcome=pending, elapsedMs=15
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{"phase":"refresh","result":"refreshed","elapsedMs":15186,"pruneWriterHoldMs":[92],"foregroundWriterWaitMs":{"samples":1471,"p50":0.15452400000140187,"p95":3206.6043149999996,"max":3935.1404100000004},"pruneWindowMs":[[15085,15177]],"overlapProbeWaitMs":{"samples":9,"p50":45.6,"p95":86.2,"max":86.2},"writerPhases":{"open+database.prepareWrite":{"count":1,"totalMs":3934,"maxMs":3934},"usageCache.prune":{"count":1,"totalMs":92,"maxMs":92}},"rowsBefore":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rowsAfter":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900}}
+[state/agent-db] agent database clean-close receipt: active-leases; agent=prune-proof; blockingLeaseId=44fdfbf0-cf21-4645-93c7-ff688e5c71a4; ownerPid=4040325
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+[state/agent-db] agent database clean-close receipt: verification-missing; agent=prune-proof
+$ cat plans-summary.txt  # EXPLAIN QUERY PLAN of every cache_entries DELETE the refresh ran, grouped, statement text shortened
+100 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" in (. => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key>? AND key<?)
+4 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" = ? a => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key=?)
+
+### run after-2
+$ git rev-parse HEAD
+f66d5f53ef93de93a101bd6ab833475854f13d04
+$ cat stale.log   # planner statistics left on cache_entries before the refresh
+[state/agent-db] agent database clean-close receipt: written; agent=prune-proof
+{"phase":"stale","statistics":[{"idx":"idx_agent_voice_session_open_updated","stat":"0 0 0"},{"idx":"idx_agent_voice_session_open_scope","stat":"0 0 0 0"},{"idx":"idx_agent_cache_updated","stat":"1 1 1 1"},{"idx":"idx_agent_cache_expiry","stat":"0 0 0 0"},{"idx":"sqlite_autoindex_cache_entries_1","stat":"1 1 1"}],"rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000}}
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+$ cat delete.log  # transcripts removed before the refresh
+[state/agent-db] agent database integrity gate for prune-proof: reason=file-mismatch, mode=deferred, outcome=pending, elapsedMs=10
+{"phase":"delete","removed":100,"first":"session-00000.jsonl","last":"session-00099.jsonl","remaining":4900}
+[state/agent-db] agent database clean-close receipt: verification-missing; agent=prune-proof
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+$ cat output.log  # the real usage refresh (prune runs inside it)
+[state/agent-db] agent database integrity gate for prune-proof: reason=file-mismatch, mode=deferred, outcome=pending, elapsedMs=11
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{"phase":"refresh","result":"refreshed","elapsedMs":15186,"pruneWriterHoldMs":[94],"foregroundWriterWaitMs":{"samples":1471,"p50":0.16514999999890279,"p95":6066.215714999999,"max":6793.597614999999},"pruneWindowMs":[[15078,15172]],"overlapProbeWaitMs":{"samples":10,"p50":41.1,"p95":91.8,"max":91.8},"writerPhases":{"open+database.prepareWrite":{"count":1,"totalMs":6792,"maxMs":6792},"usageCache.prune":{"count":1,"totalMs":94,"maxMs":94}},"rowsBefore":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rowsAfter":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900}}
+[state/agent-db] agent database clean-close receipt: active-leases; agent=prune-proof; blockingLeaseId=0a6ec776-9184-4937-8ec0-a4e97e7462a4; ownerPid=4054667
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+[state/agent-db] agent database clean-close receipt: verification-missing; agent=prune-proof
+$ cat plans-summary.txt  # EXPLAIN QUERY PLAN of every cache_entries DELETE the refresh ran, grouped, statement text shortened
+100 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" in (. => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key>? AND key<?)
+4 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" = ? a => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key=?)
+
+### run after-3
+$ git rev-parse HEAD
+f66d5f53ef93de93a101bd6ab833475854f13d04
+$ cat stale.log   # planner statistics left on cache_entries before the refresh
+[state/agent-db] agent database clean-close receipt: written; agent=prune-proof
+{"phase":"stale","statistics":[{"idx":"idx_agent_voice_session_open_updated","stat":"0 0 0"},{"idx":"idx_agent_voice_session_open_scope","stat":"0 0 0 0"},{"idx":"idx_agent_cache_updated","stat":"1 1 1 1"},{"idx":"idx_agent_cache_expiry","stat":"0 0 0 0"},{"idx":"sqlite_autoindex_cache_entries_1","stat":"1 1 1"}],"rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000}}
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+$ cat delete.log  # transcripts removed before the refresh
+[state/agent-db] agent database integrity gate for prune-proof: reason=file-mismatch, mode=deferred, outcome=pending, elapsedMs=17
+{"phase":"delete","removed":100,"first":"session-00000.jsonl","last":"session-00099.jsonl","remaining":4900}
+[state/agent-db] agent database clean-close receipt: verification-missing; agent=prune-proof
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+$ cat output.log  # the real usage refresh (prune runs inside it)
+[state/agent-db] agent database integrity gate for prune-proof: reason=file-mismatch, mode=deferred, outcome=pending, elapsedMs=11
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{"phase":"refresh","result":"refreshed","elapsedMs":13515,"pruneWriterHoldMs":[603],"foregroundWriterWaitMs":{"samples":1308,"p50":0.137471000000005,"p95":3125.5609860000004,"max":3775.2488960000005},"pruneWindowMs":[[12899,13502]],"overlapProbeWaitMs":{"samples":59,"p50":304.3,"p95":582.5,"max":602.8},"writerPhases":{"open+database.prepareWrite":{"count":1,"totalMs":3777,"maxMs":3777},"usageCache.prune":{"count":1,"totalMs":603,"maxMs":603}},"rowsBefore":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rowsAfter":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900}}
+[state/agent-db] agent database clean-close receipt: active-leases; agent=prune-proof; blockingLeaseId=1324aeda-803a-48d8-8338-331f8a0c0126; ownerPid=4058059
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+[state/agent-db] agent database clean-close receipt: verification-missing; agent=prune-proof
+$ cat plans-summary.txt  # EXPLAIN QUERY PLAN of every cache_entries DELETE the refresh ran, grouped, statement text shortened
+100 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" in (. => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key>? AND key<?)
+4 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" = ? a => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key=?)
