@@ -1,0 +1,405 @@
+
+===== driver.log: transcript of drive.sh (each command printed with "$ " before it runs)
+$ git checkout --quiet --detach 71fe30869afb45a40696ac304c9a794e9b12befe
+$ git rev-parse HEAD
+71fe30869afb45a40696ac304c9a794e9b12befe
+$ git status --short
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_FORCE_BUILD=1 pnpm openclaw --version > build.log 2>&1
+[build exit 0]
+$ cp dist/.buildstamp <run dir>/buildstamp.json
+$ cat <run dir>/buildstamp.json
+{"builtAt":1794740979765,"head":"71fe30869afb45a40696ac304c9a794e9b12befe","inputsClean":true,"inputSignature":"30b86c7e22e2024fcf30fc4ddd3bd03a28c9ef637339f2b158fd8b511cb7d6c8"}
+
+$ mkdir -m 700 <run dir>/state
+$ cat <run dir>/state/openclaw.json
+{"channels":{"feishu":{"enabled":true,"appId":"cli_standin","appSecret":"standin-secret","domain":"https://127.0.0.1:18657"}}}
+$ cp <run dir>/state/openclaw.json <run dir>/openclaw.json
+$ node <standin dir>/server.mjs 18657 <run dir>/standin &
+$ cat <run dir>/standin.log
+feishu stand-in listening on https://127.0.0.1:18657
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<run dir>/state OPENCLAW_CONFIG_PATH=<run dir>/state/openclaw.json NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem timeout 180 pnpm openclaw message send --channel feishu --target ou_standin_user --media <standin dir>/voice.ogg --json > send-1-voice.log 2>&1
+[exit 0]
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<run dir>/state OPENCLAW_CONFIG_PATH=<run dir>/state/openclaw.json NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem timeout 180 pnpm openclaw message send --channel feishu --target ou_standin_user --media <standin dir>/native.ogg --json > send-2-native.log 2>&1
+[exit 0]
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<run dir>/state OPENCLAW_CONFIG_PATH=<run dir>/state/openclaw.json NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem timeout 180 pnpm openclaw message send --channel feishu --target ou_standin_user --media <standin dir>/voice.ogg --message Caption\ for\ the\ Vorbis\ file --json > send-3-voice-caption.log 2>&1
+[exit 0]
+$ kill 313530
+$ cat <run dir>/standin/requests.log
+01 POST /open-apis/auth/v3/tenant_access_token/internal
+02 POST /open-apis/im/v1/files
+03 POST /open-apis/im/v1/messages?receive_id_type=open_id
+04 POST /open-apis/auth/v3/tenant_access_token/internal
+05 POST /open-apis/im/v1/files
+06 POST /open-apis/im/v1/messages?receive_id_type=open_id
+07 POST /open-apis/auth/v3/tenant_access_token/internal
+08 POST /open-apis/im/v1/files
+09 POST /open-apis/im/v1/messages?receive_id_type=open_id
+$ sha256sum <standin dir>/voice.ogg <standin dir>/native.ogg
+a5dc1b53480f7229fd888d075cd06f84527472ad1829f8b37109c1907d7187d4  <standin dir>/voice.ogg
+d4ead4bb75cd48a5d5a43362ab3116ac87f2c8acd5c0e5ee3911a61b80e044ee  <standin dir>/native.ogg
+$ sha256sum <run dir>/standin/upload-02.bin
+a5dc1b53480f7229fd888d075cd06f84527472ad1829f8b37109c1907d7187d4  <run dir>/standin/upload-02.bin
+$ ffprobe -v error -show_entries stream=codec_name\,sample_rate\,channels -of compact <run dir>/standin/upload-02.bin
+stream|codec_name=vorbis|sample_rate=44100|channels=1
+$ sha256sum <run dir>/standin/upload-05.bin
+d4ead4bb75cd48a5d5a43362ab3116ac87f2c8acd5c0e5ee3911a61b80e044ee  <run dir>/standin/upload-05.bin
+$ ffprobe -v error -show_entries stream=codec_name\,sample_rate\,channels -of compact <run dir>/standin/upload-05.bin
+stream|codec_name=opus|sample_rate=48000|channels=1
+$ sha256sum <run dir>/standin/upload-08.bin
+a5dc1b53480f7229fd888d075cd06f84527472ad1829f8b37109c1907d7187d4  <run dir>/standin/upload-08.bin
+$ ffprobe -v error -show_entries stream=codec_name\,sample_rate\,channels -of compact <run dir>/standin/upload-08.bin
+stream|codec_name=vorbis|sample_rate=44100|channels=1
+$ rm -rf <run dir>/state
+$ git checkout --quiet t657-slot
+$ git rev-parse HEAD
+945f96776971a7e8da9839a0e6bfc227e2654869
+
+===== send-1-voice.log: stdout and stderr of the pnpm openclaw message send shown in driver.log
+$ node scripts/run-node.mjs message send --channel feishu --target ou_standin_user --media <standin dir>/voice.ogg --json
+[feishu] failed to check media duration; upload will omit it: Error: ffprobe not found in trusted system directories. Install it via your system package manager (e.g. apt install ffmpeg / dnf install ffmpeg).
+    at requireSystemBin (<checkout>/src/media/ffmpeg-exec.ts:43:11)
+    at runFfprobe (<checkout>/src/media/ffmpeg-exec.ts:59:5)
+    at <anonymous> (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2785:25)
+    at async withTempWorkspace (<checkout>/node_modules/.pnpm/@openclaw+fs-safe@0.27.1/node_modules/@openclaw/fs-safe/dist/private-temp-workspace.js:255:16)
+    at async probeMediaDurationMs (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2778:10)
+    at async sendMediaFeishu (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2926:82)
+    at async <anonymous> (<checkout>/dist/extensions/feishu/.setup/channel-CtlDA6QX.mjs:1297:19)
+    at async <anonymous> (<checkout>/src/plugin-sdk/channel-send-result.ts:82:62)
+[info]: [ 'client ready' ]
+[info]: [ 'client ready' ]
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{
+  "action": "send",
+  "channel": "feishu",
+  "dryRun": false,
+  "handledBy": "plugin",
+  "messageId": "om_standin_03",
+  "payload": {
+    "ok": true,
+    "channel": "feishu",
+    "action": "send",
+    "messageId": "om_standin_03",
+    "receipt": {
+      "primaryPlatformMessageId": "om_standin_03",
+      "platformMessageIds": [
+        "om_standin_03"
+      ],
+      "parts": [
+        {
+          "platformMessageId": "om_standin_03",
+          "kind": "voice",
+          "index": 0,
+          "raw": {
+            "channel": "feishu",
+            "messageId": "om_standin_03",
+            "chatId": "ou_standin_user",
+            "conversationId": "ou_standin_user"
+          }
+        }
+      ],
+      "sentAt": 1794740983852,
+      "raw": [
+        {
+          "messageId": "om_standin_03",
+          "chatId": "ou_standin_user",
+          "receipt": {
+            "primaryPlatformMessageId": "om_standin_03",
+            "platformMessageIds": [
+              "om_standin_03"
+            ],
+            "parts": [
+              {
+                "platformMessageId": "om_standin_03",
+                "kind": "voice",
+                "index": 0,
+                "raw": {
+                  "channel": "feishu",
+                  "messageId": "om_standin_03",
+                  "chatId": "ou_standin_user",
+                  "conversationId": "ou_standin_user"
+                }
+              }
+            ],
+            "sentAt": 1794740983852,
+            "raw": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_03",
+                "chatId": "ou_standin_user",
+                "conversationId": "ou_standin_user"
+              }
+            ],
+            "sourceResults": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_03"
+              }
+            ]
+          }
+        }
+      ],
+      "sourceResults": [
+        {
+          "channel": "feishu",
+          "messageId": "om_standin_03"
+        }
+      ]
+    },
+    "target": {
+      "kind": "chat",
+      "id": "ou_standin_user"
+    }
+  }
+}
+[state/agent-db] agent database clean-close receipt: written; agent=main
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+
+===== send-2-native.log: stdout and stderr of the pnpm openclaw message send shown in driver.log
+$ node scripts/run-node.mjs message send --channel feishu --target ou_standin_user --media <standin dir>/native.ogg --json
+[feishu] failed to check media duration; upload will omit it: Error: ffprobe not found in trusted system directories. Install it via your system package manager (e.g. apt install ffmpeg / dnf install ffmpeg).
+    at requireSystemBin (<checkout>/src/media/ffmpeg-exec.ts:43:11)
+    at runFfprobe (<checkout>/src/media/ffmpeg-exec.ts:59:5)
+    at <anonymous> (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2785:25)
+    at async withTempWorkspace (<checkout>/node_modules/.pnpm/@openclaw+fs-safe@0.27.1/node_modules/@openclaw/fs-safe/dist/private-temp-workspace.js:255:16)
+    at async probeMediaDurationMs (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2778:10)
+    at async sendMediaFeishu (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2926:82)
+    at async <anonymous> (<checkout>/dist/extensions/feishu/.setup/channel-CtlDA6QX.mjs:1297:19)
+    at async <anonymous> (<checkout>/src/plugin-sdk/channel-send-result.ts:82:62)
+[info]: [ 'client ready' ]
+[info]: [ 'client ready' ]
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{
+  "action": "send",
+  "channel": "feishu",
+  "dryRun": false,
+  "handledBy": "plugin",
+  "messageId": "om_standin_06",
+  "payload": {
+    "ok": true,
+    "channel": "feishu",
+    "action": "send",
+    "messageId": "om_standin_06",
+    "receipt": {
+      "primaryPlatformMessageId": "om_standin_06",
+      "platformMessageIds": [
+        "om_standin_06"
+      ],
+      "parts": [
+        {
+          "platformMessageId": "om_standin_06",
+          "kind": "voice",
+          "index": 0,
+          "raw": {
+            "channel": "feishu",
+            "messageId": "om_standin_06",
+            "chatId": "ou_standin_user",
+            "conversationId": "ou_standin_user"
+          }
+        }
+      ],
+      "sentAt": 1794740988588,
+      "raw": [
+        {
+          "messageId": "om_standin_06",
+          "chatId": "ou_standin_user",
+          "receipt": {
+            "primaryPlatformMessageId": "om_standin_06",
+            "platformMessageIds": [
+              "om_standin_06"
+            ],
+            "parts": [
+              {
+                "platformMessageId": "om_standin_06",
+                "kind": "voice",
+                "index": 0,
+                "raw": {
+                  "channel": "feishu",
+                  "messageId": "om_standin_06",
+                  "chatId": "ou_standin_user",
+                  "conversationId": "ou_standin_user"
+                }
+              }
+            ],
+            "sentAt": 1794740988588,
+            "raw": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_06",
+                "chatId": "ou_standin_user",
+                "conversationId": "ou_standin_user"
+              }
+            ],
+            "sourceResults": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_06"
+              }
+            ]
+          }
+        }
+      ],
+      "sourceResults": [
+        {
+          "channel": "feishu",
+          "messageId": "om_standin_06"
+        }
+      ]
+    },
+    "target": {
+      "kind": "chat",
+      "id": "ou_standin_user"
+    }
+  }
+}
+[state/agent-db] agent database clean-close receipt: written; agent=main
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+
+===== send-3-voice-caption.log: stdout and stderr of the pnpm openclaw message send shown in driver.log
+$ node scripts/run-node.mjs message send --channel feishu --target ou_standin_user --media <standin dir>/voice.ogg --message 'Caption for the Vorbis file' --json
+[feishu] failed to check media duration; upload will omit it: Error: ffprobe not found in trusted system directories. Install it via your system package manager (e.g. apt install ffmpeg / dnf install ffmpeg).
+    at requireSystemBin (<checkout>/src/media/ffmpeg-exec.ts:43:11)
+    at runFfprobe (<checkout>/src/media/ffmpeg-exec.ts:59:5)
+    at <anonymous> (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2785:25)
+    at async withTempWorkspace (<checkout>/node_modules/.pnpm/@openclaw+fs-safe@0.27.1/node_modules/@openclaw/fs-safe/dist/private-temp-workspace.js:255:16)
+    at async probeMediaDurationMs (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2778:10)
+    at async sendMediaFeishu (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-DSslMqUD.mjs:2926:82)
+    at async <anonymous> (<checkout>/dist/extensions/feishu/.setup/channel-CtlDA6QX.mjs:1297:19)
+    at async <anonymous> (<checkout>/src/plugin-sdk/channel-send-result.ts:82:62)
+[info]: [ 'client ready' ]
+[info]: [ 'client ready' ]
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{
+  "action": "send",
+  "channel": "feishu",
+  "dryRun": false,
+  "handledBy": "plugin",
+  "messageId": "om_standin_09",
+  "payload": {
+    "ok": true,
+    "channel": "feishu",
+    "action": "send",
+    "messageId": "om_standin_09",
+    "receipt": {
+      "primaryPlatformMessageId": "om_standin_09",
+      "platformMessageIds": [
+        "om_standin_09"
+      ],
+      "parts": [
+        {
+          "platformMessageId": "om_standin_09",
+          "kind": "voice",
+          "index": 0,
+          "raw": {
+            "channel": "feishu",
+            "messageId": "om_standin_09",
+            "chatId": "ou_standin_user",
+            "conversationId": "ou_standin_user"
+          }
+        }
+      ],
+      "sentAt": 1794740993218,
+      "raw": [
+        {
+          "messageId": "om_standin_09",
+          "chatId": "ou_standin_user",
+          "receipt": {
+            "primaryPlatformMessageId": "om_standin_09",
+            "platformMessageIds": [
+              "om_standin_09"
+            ],
+            "parts": [
+              {
+                "platformMessageId": "om_standin_09",
+                "kind": "voice",
+                "index": 0,
+                "raw": {
+                  "channel": "feishu",
+                  "messageId": "om_standin_09",
+                  "chatId": "ou_standin_user",
+                  "conversationId": "ou_standin_user"
+                }
+              }
+            ],
+            "sentAt": 1794740993218,
+            "raw": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_09",
+                "chatId": "ou_standin_user",
+                "conversationId": "ou_standin_user"
+              }
+            ],
+            "sourceResults": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_09"
+              }
+            ]
+          }
+        }
+      ],
+      "sourceResults": [
+        {
+          "channel": "feishu",
+          "messageId": "om_standin_09"
+        }
+      ]
+    },
+    "target": {
+      "kind": "chat",
+      "id": "ou_standin_user"
+    }
+  }
+}
+[state/agent-db] agent database clean-close receipt: written; agent=main
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+
+===== standin/requests.log
+01 POST /open-apis/auth/v3/tenant_access_token/internal
+02 POST /open-apis/im/v1/files
+03 POST /open-apis/im/v1/messages?receive_id_type=open_id
+04 POST /open-apis/auth/v3/tenant_access_token/internal
+05 POST /open-apis/im/v1/files
+06 POST /open-apis/im/v1/messages?receive_id_type=open_id
+07 POST /open-apis/auth/v3/tenant_access_token/internal
+08 POST /open-apis/im/v1/files
+09 POST /open-apis/im/v1/messages?receive_id_type=open_id
+
+===== standin/upload-02.json
+{
+  "fields": {
+    "file_type": "opus",
+    "file_name": "voice.ogg"
+  },
+  "fileName": "voice.ogg",
+  "bytes": 5237
+}
+
+===== standin/upload-05.json
+{
+  "fields": {
+    "file_type": "opus",
+    "file_name": "native.ogg"
+  },
+  "fileName": "native.ogg",
+  "bytes": 9520
+}
+
+===== standin/upload-08.json
+{
+  "fields": {
+    "file_type": "opus",
+    "file_name": "voice.ogg"
+  },
+  "fileName": "voice.ogg",
+  "bytes": 5237
+}
+
+===== standin/message-03.json
+{"content":"{\"file_key\":\"file_key_02\"}","msg_type":"audio","uuid":"10f8a310-8834-41ae-9705-b6a1f74b6fca","receive_id":"ou_standin_user"}
+
+===== standin/message-06.json
+{"content":"{\"file_key\":\"file_key_05\"}","msg_type":"audio","uuid":"8fe60486-1700-40fc-9cc6-85872f7e2afe","receive_id":"ou_standin_user"}
+
+===== standin/message-09.json
+{"content":"{\"file_key\":\"file_key_08\"}","msg_type":"audio","uuid":"c8721f92-e361-488b-84a2-d44def1fc5dc","receive_id":"ou_standin_user"}
