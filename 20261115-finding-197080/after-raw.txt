@@ -1,0 +1,482 @@
+
+===== driver.log: transcript of drive.sh (each command printed with "$ " before it runs)
+$ git checkout --quiet --detach 945f96776971a7e8da9839a0e6bfc227e2654869
+$ git rev-parse HEAD
+945f96776971a7e8da9839a0e6bfc227e2654869
+$ git status --short
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_FORCE_BUILD=1 pnpm openclaw --version > build.log 2>&1
+[build exit 0]
+$ cp dist/.buildstamp <run dir>/buildstamp.json
+$ cat <run dir>/buildstamp.json
+{"builtAt":1794741056740,"head":"945f96776971a7e8da9839a0e6bfc227e2654869","inputsClean":true,"inputSignature":"e1d8a94c59ae821504f804e5e65ba50ef061d39ab0d82fa0eba5b2c130656859"}
+
+$ mkdir -m 700 <run dir>/state
+$ cat <run dir>/state/openclaw.json
+{"channels":{"feishu":{"enabled":true,"appId":"cli_standin","appSecret":"standin-secret","domain":"https://127.0.0.1:18657"}}}
+$ cp <run dir>/state/openclaw.json <run dir>/openclaw.json
+$ node <standin dir>/server.mjs 18657 <run dir>/standin &
+$ cat <run dir>/standin.log
+feishu stand-in listening on https://127.0.0.1:18657
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<run dir>/state OPENCLAW_CONFIG_PATH=<run dir>/state/openclaw.json NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem timeout 180 pnpm openclaw message send --channel feishu --target ou_standin_user --media <standin dir>/voice.ogg --json > send-1-voice.log 2>&1
+[exit 0]
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<run dir>/state OPENCLAW_CONFIG_PATH=<run dir>/state/openclaw.json NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem timeout 180 pnpm openclaw message send --channel feishu --target ou_standin_user --media <standin dir>/native.ogg --json > send-2-native.log 2>&1
+[exit 0]
+$ env NO_COLOR=1 FORCE_COLOR=0 OPENCLAW_STATE_DIR=<run dir>/state OPENCLAW_CONFIG_PATH=<run dir>/state/openclaw.json NODE_EXTRA_CA_CERTS=<standin dir>/cert.pem timeout 180 pnpm openclaw message send --channel feishu --target ou_standin_user --media <standin dir>/voice.ogg --message Caption\ for\ the\ Vorbis\ file --json > send-3-voice-caption.log 2>&1
+[exit 0]
+$ kill 317545
+$ cat <run dir>/standin/requests.log
+01 POST /open-apis/auth/v3/tenant_access_token/internal
+02 POST /open-apis/im/v1/files
+03 POST /open-apis/im/v1/messages?receive_id_type=open_id
+04 POST /open-apis/auth/v3/tenant_access_token/internal
+05 POST /open-apis/im/v1/files
+06 POST /open-apis/im/v1/messages?receive_id_type=open_id
+07 POST /open-apis/auth/v3/tenant_access_token/internal
+08 POST /open-apis/im/v1/files
+09 POST /open-apis/im/v1/messages?receive_id_type=open_id
+10 POST /open-apis/im/v1/messages?receive_id_type=open_id
+$ sha256sum <standin dir>/voice.ogg <standin dir>/native.ogg
+a5dc1b53480f7229fd888d075cd06f84527472ad1829f8b37109c1907d7187d4  <standin dir>/voice.ogg
+d4ead4bb75cd48a5d5a43362ab3116ac87f2c8acd5c0e5ee3911a61b80e044ee  <standin dir>/native.ogg
+$ sha256sum <run dir>/standin/upload-02.bin
+a5dc1b53480f7229fd888d075cd06f84527472ad1829f8b37109c1907d7187d4  <run dir>/standin/upload-02.bin
+$ ffprobe -v error -show_entries stream=codec_name\,sample_rate\,channels -of compact <run dir>/standin/upload-02.bin
+stream|codec_name=vorbis|sample_rate=44100|channels=1
+$ sha256sum <run dir>/standin/upload-05.bin
+d4ead4bb75cd48a5d5a43362ab3116ac87f2c8acd5c0e5ee3911a61b80e044ee  <run dir>/standin/upload-05.bin
+$ ffprobe -v error -show_entries stream=codec_name\,sample_rate\,channels -of compact <run dir>/standin/upload-05.bin
+stream|codec_name=opus|sample_rate=48000|channels=1
+$ sha256sum <run dir>/standin/upload-08.bin
+a5dc1b53480f7229fd888d075cd06f84527472ad1829f8b37109c1907d7187d4  <run dir>/standin/upload-08.bin
+$ ffprobe -v error -show_entries stream=codec_name\,sample_rate\,channels -of compact <run dir>/standin/upload-08.bin
+stream|codec_name=vorbis|sample_rate=44100|channels=1
+$ rm -rf <run dir>/state
+$ git checkout --quiet t657-slot
+$ git rev-parse HEAD
+945f96776971a7e8da9839a0e6bfc227e2654869
+
+===== send-1-voice.log: stdout and stderr of the pnpm openclaw message send shown in driver.log
+$ node scripts/run-node.mjs message send --channel feishu --target ou_standin_user --media <standin dir>/voice.ogg --json
+[info]: [ 'client ready' ]
+[info]: [ 'client ready' ]
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{
+  "action": "send",
+  "channel": "feishu",
+  "dryRun": false,
+  "handledBy": "plugin",
+  "messageId": "om_standin_03",
+  "payload": {
+    "ok": true,
+    "channel": "feishu",
+    "action": "send",
+    "messageId": "om_standin_03",
+    "receipt": {
+      "primaryPlatformMessageId": "om_standin_03",
+      "platformMessageIds": [
+        "om_standin_03"
+      ],
+      "parts": [
+        {
+          "platformMessageId": "om_standin_03",
+          "kind": "media",
+          "index": 0,
+          "raw": {
+            "channel": "feishu",
+            "messageId": "om_standin_03",
+            "chatId": "ou_standin_user",
+            "conversationId": "ou_standin_user"
+          }
+        }
+      ],
+      "sentAt": 1794741060783,
+      "raw": [
+        {
+          "messageId": "om_standin_03",
+          "chatId": "ou_standin_user",
+          "receipt": {
+            "primaryPlatformMessageId": "om_standin_03",
+            "platformMessageIds": [
+              "om_standin_03"
+            ],
+            "parts": [
+              {
+                "platformMessageId": "om_standin_03",
+                "kind": "media",
+                "index": 0,
+                "raw": {
+                  "channel": "feishu",
+                  "messageId": "om_standin_03",
+                  "chatId": "ou_standin_user",
+                  "conversationId": "ou_standin_user"
+                }
+              }
+            ],
+            "sentAt": 1794741060783,
+            "raw": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_03",
+                "chatId": "ou_standin_user",
+                "conversationId": "ou_standin_user"
+              }
+            ],
+            "sourceResults": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_03"
+              }
+            ]
+          },
+          "voiceIntentDegradedToFile": true
+        }
+      ],
+      "sourceResults": [
+        {
+          "channel": "feishu",
+          "messageId": "om_standin_03"
+        }
+      ]
+    },
+    "voiceIntentDegradedToFile": true,
+    "target": {
+      "kind": "chat",
+      "id": "ou_standin_user"
+    }
+  }
+}
+[state/agent-db] agent database clean-close receipt: written; agent=main
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+
+===== send-2-native.log: stdout and stderr of the pnpm openclaw message send shown in driver.log
+$ node scripts/run-node.mjs message send --channel feishu --target ou_standin_user --media <standin dir>/native.ogg --json
+[feishu] failed to check media duration; upload will omit it: Error: ffprobe not found in trusted system directories. Install it via your system package manager (e.g. apt install ffmpeg / dnf install ffmpeg).
+    at requireSystemBin (<checkout>/src/media/ffmpeg-exec.ts:43:11)
+    at runFfprobe (<checkout>/src/media/ffmpeg-exec.ts:59:5)
+    at <anonymous> (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-Dcan9Dz_.mjs:2791:25)
+    at async withTempWorkspace (<checkout>/node_modules/.pnpm/@openclaw+fs-safe@0.27.1/node_modules/@openclaw/fs-safe/dist/private-temp-workspace.js:255:16)
+    at async probeMediaDurationMs (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-Dcan9Dz_.mjs:2784:10)
+    at async sendMediaFeishu (<checkout>/dist/extensions/feishu/.setup/reply-delivery-result-Dcan9Dz_.mjs:2932:82)
+    at async <anonymous> (<checkout>/dist/extensions/feishu/.setup/channel-DIXj_Te9.mjs:1297:19)
+    at async <anonymous> (<checkout>/src/plugin-sdk/channel-send-result.ts:82:62)
+[info]: [ 'client ready' ]
+[info]: [ 'client ready' ]
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{
+  "action": "send",
+  "channel": "feishu",
+  "dryRun": false,
+  "handledBy": "plugin",
+  "messageId": "om_standin_06",
+  "payload": {
+    "ok": true,
+    "channel": "feishu",
+    "action": "send",
+    "messageId": "om_standin_06",
+    "receipt": {
+      "primaryPlatformMessageId": "om_standin_06",
+      "platformMessageIds": [
+        "om_standin_06"
+      ],
+      "parts": [
+        {
+          "platformMessageId": "om_standin_06",
+          "kind": "voice",
+          "index": 0,
+          "raw": {
+            "channel": "feishu",
+            "messageId": "om_standin_06",
+            "chatId": "ou_standin_user",
+            "conversationId": "ou_standin_user"
+          }
+        }
+      ],
+      "sentAt": 1794741065501,
+      "raw": [
+        {
+          "messageId": "om_standin_06",
+          "chatId": "ou_standin_user",
+          "receipt": {
+            "primaryPlatformMessageId": "om_standin_06",
+            "platformMessageIds": [
+              "om_standin_06"
+            ],
+            "parts": [
+              {
+                "platformMessageId": "om_standin_06",
+                "kind": "voice",
+                "index": 0,
+                "raw": {
+                  "channel": "feishu",
+                  "messageId": "om_standin_06",
+                  "chatId": "ou_standin_user",
+                  "conversationId": "ou_standin_user"
+                }
+              }
+            ],
+            "sentAt": 1794741065501,
+            "raw": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_06",
+                "chatId": "ou_standin_user",
+                "conversationId": "ou_standin_user"
+              }
+            ],
+            "sourceResults": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_06"
+              }
+            ]
+          }
+        }
+      ],
+      "sourceResults": [
+        {
+          "channel": "feishu",
+          "messageId": "om_standin_06"
+        }
+      ]
+    },
+    "target": {
+      "kind": "chat",
+      "id": "ou_standin_user"
+    }
+  }
+}
+[state/agent-db] agent database clean-close receipt: written; agent=main
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+
+===== send-3-voice-caption.log: stdout and stderr of the pnpm openclaw message send shown in driver.log
+$ node scripts/run-node.mjs message send --channel feishu --target ou_standin_user --media <standin dir>/voice.ogg --message 'Caption for the Vorbis file' --json
+[info]: [ 'client ready' ]
+[info]: [ 'client ready' ]
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+{
+  "action": "send",
+  "channel": "feishu",
+  "dryRun": false,
+  "handledBy": "plugin",
+  "messageId": "om_standin_09",
+  "payload": {
+    "ok": true,
+    "channel": "feishu",
+    "action": "send",
+    "messageId": "om_standin_09",
+    "receipt": {
+      "primaryPlatformMessageId": "om_standin_09",
+      "platformMessageIds": [
+        "om_standin_09",
+        "om_standin_10"
+      ],
+      "parts": [
+        {
+          "platformMessageId": "om_standin_09",
+          "kind": "media",
+          "index": 0,
+          "raw": {
+            "channel": "feishu",
+            "messageId": "om_standin_09",
+            "chatId": "ou_standin_user",
+            "conversationId": "ou_standin_user"
+          }
+        },
+        {
+          "platformMessageId": "om_standin_10",
+          "kind": "text",
+          "index": 0,
+          "raw": {
+            "channel": "feishu",
+            "messageId": "om_standin_10",
+            "chatId": "ou_standin_user",
+            "conversationId": "ou_standin_user"
+          }
+        }
+      ],
+      "sentAt": 1794741070045,
+      "raw": [
+        {
+          "messageId": "om_standin_09",
+          "chatId": "ou_standin_user",
+          "receipt": {
+            "primaryPlatformMessageId": "om_standin_09",
+            "platformMessageIds": [
+              "om_standin_09"
+            ],
+            "parts": [
+              {
+                "platformMessageId": "om_standin_09",
+                "kind": "media",
+                "index": 0,
+                "raw": {
+                  "channel": "feishu",
+                  "messageId": "om_standin_09",
+                  "chatId": "ou_standin_user",
+                  "conversationId": "ou_standin_user"
+                }
+              }
+            ],
+            "sentAt": 1794741070045,
+            "raw": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_09",
+                "chatId": "ou_standin_user",
+                "conversationId": "ou_standin_user"
+              }
+            ],
+            "sourceResults": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_09"
+              }
+            ]
+          },
+          "voiceIntentDegradedToFile": true
+        },
+        {
+          "messageId": "om_standin_10",
+          "chatId": "ou_standin_user",
+          "receipt": {
+            "primaryPlatformMessageId": "om_standin_10",
+            "platformMessageIds": [
+              "om_standin_10"
+            ],
+            "parts": [
+              {
+                "platformMessageId": "om_standin_10",
+                "kind": "text",
+                "index": 0,
+                "raw": {
+                  "channel": "feishu",
+                  "messageId": "om_standin_10",
+                  "chatId": "ou_standin_user",
+                  "conversationId": "ou_standin_user"
+                }
+              }
+            ],
+            "sentAt": 1794741070047,
+            "raw": [
+              {
+                "messageId": "om_standin_10",
+                "chatId": "ou_standin_user",
+                "receipt": {
+                  "primaryPlatformMessageId": "om_standin_10",
+                  "platformMessageIds": [
+                    "om_standin_10"
+                  ],
+                  "parts": [
+                    {
+                      "platformMessageId": "om_standin_10",
+                      "kind": "text",
+                      "index": 0,
+                      "raw": {
+                        "channel": "feishu",
+                        "messageId": "om_standin_10",
+                        "chatId": "ou_standin_user",
+                        "conversationId": "ou_standin_user"
+                      }
+                    }
+                  ],
+                  "sentAt": 1794741070047,
+                  "raw": [
+                    {
+                      "channel": "feishu",
+                      "messageId": "om_standin_10",
+                      "chatId": "ou_standin_user",
+                      "conversationId": "ou_standin_user"
+                    }
+                  ],
+                  "sourceResults": [
+                    {
+                      "channel": "feishu",
+                      "messageId": "om_standin_10"
+                    }
+                  ]
+                }
+              }
+            ],
+            "sourceResults": [
+              {
+                "channel": "feishu",
+                "messageId": "om_standin_10"
+              }
+            ]
+          }
+        }
+      ],
+      "sourceResults": [
+        {
+          "channel": "feishu",
+          "messageId": "om_standin_09"
+        },
+        {
+          "channel": "feishu",
+          "messageId": "om_standin_10"
+        }
+      ]
+    },
+    "voiceIntentDegradedToFile": true,
+    "target": {
+      "kind": "chat",
+      "id": "ou_standin_user"
+    }
+  }
+}
+[state/agent-db] agent database clean-close receipt: written; agent=main
+[openclaw] log file append failed; records dropped; check that the path is a writable regular file; file=openclaw-2026-11-15.log
+
+===== standin/requests.log
+01 POST /open-apis/auth/v3/tenant_access_token/internal
+02 POST /open-apis/im/v1/files
+03 POST /open-apis/im/v1/messages?receive_id_type=open_id
+04 POST /open-apis/auth/v3/tenant_access_token/internal
+05 POST /open-apis/im/v1/files
+06 POST /open-apis/im/v1/messages?receive_id_type=open_id
+07 POST /open-apis/auth/v3/tenant_access_token/internal
+08 POST /open-apis/im/v1/files
+09 POST /open-apis/im/v1/messages?receive_id_type=open_id
+10 POST /open-apis/im/v1/messages?receive_id_type=open_id
+
+===== standin/upload-02.json
+{
+  "fields": {
+    "file_type": "stream",
+    "file_name": "voice.ogg"
+  },
+  "fileName": "voice.ogg",
+  "bytes": 5237
+}
+
+===== standin/upload-05.json
+{
+  "fields": {
+    "file_type": "opus",
+    "file_name": "native.ogg"
+  },
+  "fileName": "native.ogg",
+  "bytes": 9520
+}
+
+===== standin/upload-08.json
+{
+  "fields": {
+    "file_type": "stream",
+    "file_name": "voice.ogg"
+  },
+  "fileName": "voice.ogg",
+  "bytes": 5237
+}
+
+===== standin/message-03.json
+{"content":"{\"file_key\":\"file_key_02\"}","msg_type":"file","uuid":"2aee054c-ddc5-4c2e-b86a-56c6c427f199","receive_id":"ou_standin_user"}
+
+===== standin/message-06.json
+{"content":"{\"file_key\":\"file_key_05\"}","msg_type":"audio","uuid":"c2e47050-6244-46b4-aec6-16db2ac094a6","receive_id":"ou_standin_user"}
+
+===== standin/message-09.json
+{"content":"{\"file_key\":\"file_key_08\"}","msg_type":"file","uuid":"2aafea6e-43be-4cd8-ad50-7790b842a9bb","receive_id":"ou_standin_user"}
+
+===== standin/message-10.json
+{"content":"{\"zh_cn\":{\"content\":[[{\"tag\":\"md\",\"text\":\"Caption for the Vorbis file\"}]]}}","msg_type":"post","uuid":"540aa36c-d33f-4000-8ee9-06bf7f778f94","receive_id":"ou_standin_user"}
