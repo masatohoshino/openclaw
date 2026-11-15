@@ -1,0 +1,17 @@
+# Before: main at 2928381894f
+# Isolated Gateway (own state dir, loopback port), local OpenAI-compatible mock provider.
+# Summary rendered from the run's saved outputs, not raw terminal output: each $ line is
+# a command the driver ran, in order; the lines under it summarize that command's output.
+# The provider line comes from the mock provider's request log.
+$ openclaw automations add "every 24h" "Read big.txt in the workspace and summarize it." --name "proof-<label>" --session isolated --no-deliver --json
+$ openclaw automations run <job-id> --wait --wait-timeout 6m --poll-interval 2s
+run exit=1 seconds=82
+provider requests: 23 (main: tool_call read, 400 context_length_exceeded; summary: 21 x status 502 over 78s)
+$ openclaw automations runs <job-id> --limit 5 --json
+cron run: status=error error="Auto-compaction could not reach the model provider after the provider rejected the prompt. Try again or run /compact."
+$ openclaw gateway call sessions.list --params '{"limit":50}' --json
+cron session <cron-session-key>: status=(absent) lastRunError=(absent)
+$ openclaw gateway call chat.history --params '{"sessionKey":"<cron-session-key>","limit":50}' --json
+cron session notice (run-failed-before-reply):
+  content: "⚠️ Context overflow: prompt too large for the model. Try /reset (or /new) to start a fresh session, or use a larger-context model."
+  cause:   {"provider":"mock","failoverReason":"context_overflow"}
