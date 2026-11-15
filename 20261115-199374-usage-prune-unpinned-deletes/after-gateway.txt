@@ -1,0 +1,209 @@
+# /usage cost through an isolated Gateway after deleting 100 of 5000 transcripts (24 months each), with the fix.
+# Entry point: chat.send {"message":"/usage cost"} -> handleUsageCommand -> formatSessionUsageCostSummary
+#   -> loadCostUsageSummary -> full refreshCostUsageCacheForAgent (no sessionFiles, so it prunes)
+#   -> usageCache.prune writer transaction (operation=session-cost-usage.rollup.prune).
+# State: the same prepared state as the refresh media (cache built by a real refresh with the head
+#   driver at the Gateway's live path, cache_entries planner statistics set to the one-row values,
+#   moved to a pristine directory). Each run restores the database and config as copies and the
+#   transcripts as hard links (the usage checkpoint records device and inode), starts the Gateway
+#   (own state directory, loopback port, token auth, channels/providers/cron off; no model is called:
+#   the /usage reply is gateway-injected), waits until the Gateway's process group is idle, opens
+#   the agent database writer with three sessions.patch writes, deletes 100 transcripts, then sends
+#   /usage cost while a foreground sessions.patch probe writes the same agent database every 10 ms.
+# steps.log "rows" lines are read-only SQLite reads of cache_entries between steps (rollupLastWrite
+#   unchanged = no session was rescanned). EXPLAIN plans come from an observer preload that runs
+#   EXPLAIN QUERY PLAN for each cache_entries DELETE in worker threads; no product code is changed.
+# Runtime: both sides ran built dist under Bun 1.4.4 through scripts/run-node.mjs gateway run.
+#   An observer preload (reservation-preload.cjs) subscribed to the agent-database reservation
+#   diagnostic channel; it loaded in each Gateway thread but recorded no channel message on either side, so its file is
+#   not a measure ("reservations before delete" counts only its per-thread "loaded" records).
+# Hold measure: the product's own state-log lines, shown raw. "slow agent database reservation"
+#   with workerOperations ["usageCache.prune"] is the prune's writer hold (writerExecutionMs);
+#   "slow SQLite session write" with holderAtEnqueue usageCache.prune is a sessions.patch that
+#   queued behind it (queueWaitMs); "slow SQLite transaction hold" is the prune transaction
+#   (threshold 1000 ms). Both sides log at the same thresholds. The 18:07:34 reservation line
+#   (pid 43240, open/database.prepareWrite) is in the restored log file from the template build,
+#   before every run; it is not part of the run.
+# On this state the /usage cost reply is cut off by the 360 s reply watchdog on both sides. It is
+#   attributed to the read-only sessions.usage.summary transaction that follows the refresh
+#   (unchanged by this change): at 500 sessions on the head, under the same one-row statistics,
+#   that read held 44 s and 61 s and the request replied in 44.8 s (run smoke8); without the
+#   statistics the request replied in 0.7 s (run smoke9, which has no row counts). At 5,000
+#   sessions it did not finish before the watchdog and no summary line was logged. For the same
+#   reason the follow-up usage.cost request hits its 15 s budget, so retained usage is shown by the
+#   rows lines.
+# Time stamps: steps.log lines are UTC; Gateway and state-log lines and the probe times below are
+#   local time (+09:00). ANSI color codes were stripped from the command output.
+# summarize.mjs prints the figures from the files shown; probesDuringRequest are the sessions.patch
+#   round trips that overlapped the request. Omitted in place: the client's chat.history output
+#   (the request and final chat event are shown), the 26k raw probe records (summarized), and the
+#   final payload's message.idempotencyKey (equal to runId).
+# Placeholders: <checkout>, <state-dir>, <state-root>, <proof-dir>, <home>, <loopback>, <port>, <host>.
+
+### run after-c1
+$ cat steps.log
+[09:40:27.217] head f66d5f53ef93de93a101bd6ab833475854f13d04
+[09:40:27.218] db <state-dir>/agents/main/agent/openclaw-agent.sqlite
+{"at":"template","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":null}
+[09:40:27.255] start gateway
+[09:40:31.521] gateway listening (listener process group is the Gateway's: found)
+[09:41:17.903] gateway idle after 46s (last window -3237 ticks of 100/s)
+{"at":"after-startup","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":null}
+[09:41:17.942] warm writer
+{"phase":"warm","writes":[175,22,8]}
+{"at":"after-warm","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 3"}
+[09:41:21.863] reservations before delete: 40
+[09:41:21.897] deleted 100 transcripts (session-00000.jsonl .. session-00099.jsonl); remaining 4900
+{"at":"after-delete","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 3"}
+[09:41:23.945] chat.send /usage cost
+[09:47:29.879] client exit 0
+{"at":"after-refresh","rows":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 26446"}
+[09:47:30.018] usage-cost
+[09:47:46.514] usage-cost exit 1
+[09:48:49.761] gateway stopped; live state removed
+$ node -e 'const c = JSON.parse(require("fs").readFileSync("client.json", "utf8")); const { idempotencyKey, ...message } = c.finalPayload.message; console.log(JSON.stringify({ request: c.request, ack: c.ack, replyMs: c.replyMs, finalPayload: { ...c.finalPayload, message } }))'  # history, probe records and message.idempotencyKey (equal to runId) omitted
+{"request":{"method":"chat.send","sessionKey":"agent:main:main","message":"/usage cost"},"ack":{"runId":"6980d861-79dc-47df-8ad8-2ed0cca3b26f","status":"started"},"replyMs":360378,"finalPayload":{"runId":"6980d861-79dc-47df-8ad8-2ed0cca3b26f","sessionKey":"agent:main:main","seq":1,"state":"final","message":{"role":"assistant","content":[{"type":"text","text":"⚠️ This turn was interrupted because it stopped making progress. Please try again."}],"timestamp":1794736048751,"stopReason":"stop","usage":{"input":0,"output":0,"totalTokens":0,"cacheRead":0,"cacheWrite":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"api":"openai-responses","provider":"openclaw","model":"gateway-injected"}}}
+$ grep -hE 'slow SQLite transaction hold|slow chat send|reply watchdog|stuck session|usage-cost-cache|usage\.cost ' gateway.log
+2026-11-15T18:43:28.650+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=warn reason=no_semantic_progress
+2026-11-15T18:43:30.002+09:00 [diagnostic] stuck session: sessionId=8d9d8920-ead4-4cd5-98f5-e62082423ddc sessionKey=agent:main:main state=processing age=121s queueDepth=0 reason=stale_session_state classification=stale_session_state lastProgress=reply_operation:session_updated lastProgressAge=121s recovery=controller_owned
+2026-11-15T18:46:00.002+09:00 [diagnostic] stuck session: sessionId=8d9d8920-ead4-4cd5-98f5-e62082423ddc sessionKey=agent:main:main state=processing age=271s queueDepth=0 reason=stale_session_state classification=stale_session_state lastProgress=reply_operation:session_updated lastProgressAge=271s recovery=controller_owned
+2026-11-15T18:47:28.698+09:00 [gateway] slow chat send 360246ms stage=startup sessionId=6980d861-79dc-47df-8ad8-2ed0cca3b26f runId=6980d861-79dc-47df-8ad8-2ed0cca3b26f ack=50ms preparation=359965ms replyContext=0ms authoring=0ms runAdmission=1ms replyInitialization=279ms dispatch=0ms detail.auto_reply.dispatch_reply_from_config=360236ms detail.auto_reply.finalize_context=0ms detail.dispatch.accepted_handoff=2ms detail.dispatch.admission_wait=0ms detail.dispatch.external_handoff=0ms detail.reply.admit_dispatch=0ms detail.reply.admit_pre_dispatch=6ms detail.reply.capture_session_diff_baseline=112ms detail.reply.ensure_workspace=38ms detail.reply.handle_inline_actions=359943ms detail.reply.init_session_state=49ms detail.reply.load_prepared_dispatch_runtime=1ms detail.reply.load_reply_resolver=9ms detail.reply.native_slash_command_fast_path=1ms detail.reply.resolve_directives=16ms detail.reply.run_reply_resolver=360051ms detail.reply.session.binding=1ms detail.reply.session.commit=30ms detail.reply.session.commit.fresh_read=0ms detail.reply.session.commit.mutation=29ms detail.reply.session.hydrate=9ms detail.reply.session.initialize=39ms detail.reply.session.snapshot=1ms detail.reply.session.writer=39ms detail.run_admission.steer_prepare=1ms detail.run_admission.steer_settlement=0ms
+2026-11-15T18:47:29.683+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=blocked reason=cleanup_pending
+2026-11-15T18:47:46.465+09:00 [ws] ⇄ res ✗ usage.cost 15003ms errorCode=UNAVAILABLE errorMessage=Usage request exceeded its 15-second budget; narrow the date range or select a session. bytes=202 conn=94c33fcb…8281 id=2:a12bda13-0…5ffd
+2026-11-15T18:48:29.861+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=blocked reason=cleanup_pending
+$ node -e 'for (const f of process.argv.slice(1)) for (const l of require("fs").readFileSync(f, "utf8").split("\n")) if (l.includes("slow SQLite transaction hold")) { const r = JSON.parse(l); console.log(r.time, r[1].operation, "elapsedMs=" + r[1].elapsedMs) }' state-logs/*.log  # wall time of each slow-transaction line
+$ grep -hE 'slow agent database reservation|slow SQLite session write' state-logs/*.log  # raw state-log lines
+{"0":"{\"subsystem\":\"session-sqlite\"}","1":{"operation":"worker","workerOperations":["open","database.prepareWrite"],"transactionCount":1,"outcome":"ok","pid":43240,"threadId":0,"isMainThread":true,"reentrant":false,"elapsedMs":6389,"queueWaitMs":1,"writerExecutionMs":6389,"completionDelayMs":0},"2":"slow agent database reservation","_meta":{"runtime":"node","runtimeVersion":"24.22.1","hostname":"<host>","date":"2026-11-15T09:07:34.217Z","logLevelId":4,"logLevelName":"WARN","name":"{\"subsystem\":\"session-sqlite\"}","parentNames":["openclaw"],"path":{"fullFilePath":"<checkout>/src/state/openclaw-agent-write-admission.ts:129:55","fileName":"openclaw-agent-write-admission.ts","fileNameWithLine":"openclaw-agent-write-admission.ts:129","fileColumn":"55","fileLine":"129","filePath":"src/state/openclaw-agent-write-admission.ts","filePathWithLine":"src/state/openclaw-agent-write-admission.ts:129","method":"report"}},"time":"2026-11-15T18:07:34.218+09:00","hostname":"<host>","message":"slow agent database reservation"}
+$ node -e 'const c = JSON.parse(require("fs").readFileSync("client.json", "utf8")); const t = (ms) => new Date(ms + 9 * 3600e3).toISOString().slice(11, 23); console.log("send", t(c.sendStartWallMs)); for (const p of c.probes.map((p) => ({ ...p, ms: p.end - p.start })).sort((a, b) => b.ms - a.ms).slice(0, 3)) console.log("probe", p.ms + "ms", t(p.start), "->", t(p.end))'  # three longest foreground writes (local time)
+send 18:41:28.400
+probe 322ms 18:45:56.015 -> 18:45:56.337
+probe 250ms 18:46:26.035 -> 18:46:26.285
+probe 216ms 18:43:55.988 -> 18:43:56.204
+$ node -e 'const g = {}; for (const l of require("fs").readFileSync("plans.jsonl", "utf8").trim().split("\n")) { const p = JSON.parse(l); const k = p.sql.replace(/\((\?, )*\?\)/g, "(...)").slice(0, 110) + " => " + p.plan.join("; "); g[k] = (g[k] ?? 0) + 1 } for (const [k, n] of Object.entries(g)) console.log(n, k)'  # EXPLAIN QUERY PLAN of each cache_entries DELETE, grouped, statement cut at 110 characters
+103 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" in (. => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key>? AND key<?)
+4 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" = ? a => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key=?)
+1 delete from "cache_entries" where "scope" = ? and "expires_at" < ? => SEARCH cache_entries USING INDEX idx_agent_cache_expiry (scope=? AND expires_at<?)
+$ cat usage-cost.json usage-cost.err  # gateway usage-cost --days 700 --json after the request
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_request_error",
+    "code": "UNAVAILABLE",
+    "message": "Usage request exceeded its 15-second budget; narrow the date range or select a session.",
+    "retryable": false
+  }
+}
+$ node <proof-dir>/summarize.mjs <proof-dir>/runs/after-c1
+{"run":"after-c1","replyMs":360378,"ackMs":51,"reply":"⚠️ This turn was interrupted because it stopped making progress. Please try again.","rows":{"template":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-startup":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-warm":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-delete":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-refresh":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900}},"autoindexStat":{"template":"1 1 1","after-startup":"1 1 1","after-warm":"1 1 1","after-delete":"1 1 1","after-refresh":"1 1 1"},"probeLabel":"probe 26446","probesBeforeRequest":{"n":45,"p50":9,"p95":21,"max":26},"probesDuringRequest":{"n":26333,"p50":3,"p95":5,"max":322},"deletes":108,"scanDeletes":0,"searchDeletes":108,"slowTransactionHolds":0,"slowTransactionHoldMs":[],"usageTotals":null,"usageDays":null,"usageError":""}
+
+### run after-c2
+$ cat steps.log
+[09:57:06.540] head f66d5f53ef93de93a101bd6ab833475854f13d04
+[09:57:06.541] db <state-dir>/agents/main/agent/openclaw-agent.sqlite
+{"at":"template","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":null}
+[09:57:06.579] start gateway
+[09:57:11.107] gateway listening (listener process group is the Gateway's: found)
+[09:57:57.475] gateway idle after 46s (last window 3 ticks of 100/s)
+{"at":"after-startup","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":null}
+[09:57:57.527] warm writer
+{"phase":"warm","writes":[174,21,9]}
+{"at":"after-warm","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 3"}
+[09:58:01.170] reservations before delete: 40
+[09:58:01.211] deleted 100 transcripts (session-00000.jsonl .. session-00099.jsonl); remaining 4900
+{"at":"after-delete","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 3"}
+[09:58:03.244] chat.send /usage cost
+[10:04:09.501] client exit 0
+{"at":"after-refresh","rows":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 25722"}
+[10:04:09.682] usage-cost
+[10:04:26.307] usage-cost exit 1
+[10:05:29.957] gateway stopped; live state removed
+$ node -e 'const c = JSON.parse(require("fs").readFileSync("client.json", "utf8")); const { idempotencyKey, ...message } = c.finalPayload.message; console.log(JSON.stringify({ request: c.request, ack: c.ack, replyMs: c.replyMs, finalPayload: { ...c.finalPayload, message } }))'  # history, probe records and message.idempotencyKey (equal to runId) omitted
+{"request":{"method":"chat.send","sessionKey":"agent:main:main","message":"/usage cost"},"ack":{"runId":"2698c854-588c-46e4-b7d8-b5e493e44007","status":"started"},"replyMs":360397,"finalPayload":{"runId":"2698c854-588c-46e4-b7d8-b5e493e44007","sessionKey":"agent:main:main","seq":1,"state":"final","message":{"role":"assistant","content":[{"type":"text","text":"⚠️ This turn was interrupted because it stopped making progress. Please try again."}],"timestamp":1794737048364,"stopReason":"stop","usage":{"input":0,"output":0,"totalTokens":0,"cacheRead":0,"cacheWrite":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"api":"openai-responses","provider":"openclaw","model":"gateway-injected"}}}
+$ grep -hE 'slow SQLite transaction hold|slow chat send|reply watchdog|stuck session|usage-cost-cache|usage\.cost ' gateway.log
+2026-11-15T19:00:08.260+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=warn reason=no_semantic_progress
+2026-11-15T19:00:10.002+09:00 [diagnostic] stuck session: sessionId=c8bb717d-ee99-49d2-9832-c3e9967fabc7 sessionKey=agent:main:main state=processing age=122s queueDepth=0 reason=stale_session_state classification=stale_session_state lastProgress=reply_operation:session_updated lastProgressAge=122s recovery=controller_owned
+2026-11-15T19:02:40.002+09:00 [diagnostic] stuck session: sessionId=c8bb717d-ee99-49d2-9832-c3e9967fabc7 sessionKey=agent:main:main state=processing age=272s queueDepth=0 reason=stale_session_state classification=stale_session_state lastProgress=reply_operation:session_updated lastProgressAge=272s recovery=controller_owned
+2026-11-15T19:04:08.315+09:00 [gateway] slow chat send 360258ms stage=startup sessionId=2698c854-588c-46e4-b7d8-b5e493e44007 runId=2698c854-588c-46e4-b7d8-b5e493e44007 ack=58ms preparation=359952ms replyContext=0ms authoring=0ms runAdmission=1ms replyInitialization=303ms dispatch=0ms detail.auto_reply.dispatch_reply_from_config=360249ms detail.auto_reply.finalize_context=0ms detail.dispatch.accepted_handoff=2ms detail.dispatch.admission_wait=0ms detail.dispatch.external_handoff=0ms detail.reply.admit_dispatch=0ms detail.reply.admit_pre_dispatch=6ms detail.reply.capture_session_diff_baseline=108ms detail.reply.ensure_workspace=44ms detail.reply.handle_inline_actions=359932ms detail.reply.init_session_state=64ms detail.reply.load_prepared_dispatch_runtime=2ms detail.reply.load_reply_resolver=9ms detail.reply.native_slash_command_fast_path=1ms detail.reply.resolve_directives=16ms detail.reply.run_reply_resolver=360060ms detail.reply.session.binding=1ms detail.reply.session.commit=41ms detail.reply.session.commit.fresh_read=1ms detail.reply.session.commit.mutation=39ms detail.reply.session.hydrate=9ms detail.reply.session.initialize=53ms detail.reply.session.snapshot=1ms detail.reply.session.writer=54ms detail.run_admission.steer_prepare=1ms detail.run_admission.steer_settlement=0ms
+2026-11-15T19:04:09.300+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=blocked reason=cleanup_pending
+2026-11-15T19:04:26.256+09:00 [ws] ⇄ res ✗ usage.cost 15004ms errorCode=UNAVAILABLE errorMessage=Usage request exceeded its 15-second budget; narrow the date range or select a session. bytes=202 conn=e079fcd0…084c id=2:9d16c687-0…7af1
+2026-11-15T19:05:09.448+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=blocked reason=cleanup_pending
+$ node -e 'for (const f of process.argv.slice(1)) for (const l of require("fs").readFileSync(f, "utf8").split("\n")) if (l.includes("slow SQLite transaction hold")) { const r = JSON.parse(l); console.log(r.time, r[1].operation, "elapsedMs=" + r[1].elapsedMs) }' state-logs/*.log  # wall time of each slow-transaction line
+$ grep -hE 'slow agent database reservation|slow SQLite session write' state-logs/*.log  # raw state-log lines
+{"0":"{\"subsystem\":\"session-sqlite\"}","1":{"operation":"worker","workerOperations":["open","database.prepareWrite"],"transactionCount":1,"outcome":"ok","pid":43240,"threadId":0,"isMainThread":true,"reentrant":false,"elapsedMs":6389,"queueWaitMs":1,"writerExecutionMs":6389,"completionDelayMs":0},"2":"slow agent database reservation","_meta":{"runtime":"node","runtimeVersion":"24.22.1","hostname":"<host>","date":"2026-11-15T09:07:34.217Z","logLevelId":4,"logLevelName":"WARN","name":"{\"subsystem\":\"session-sqlite\"}","parentNames":["openclaw"],"path":{"fullFilePath":"<checkout>/src/state/openclaw-agent-write-admission.ts:129:55","fileName":"openclaw-agent-write-admission.ts","fileNameWithLine":"openclaw-agent-write-admission.ts:129","fileColumn":"55","fileLine":"129","filePath":"src/state/openclaw-agent-write-admission.ts","filePathWithLine":"src/state/openclaw-agent-write-admission.ts:129","method":"report"}},"time":"2026-11-15T18:07:34.218+09:00","hostname":"<host>","message":"slow agent database reservation"}
+$ node -e 'const c = JSON.parse(require("fs").readFileSync("client.json", "utf8")); const t = (ms) => new Date(ms + 9 * 3600e3).toISOString().slice(11, 23); console.log("send", t(c.sendStartWallMs)); for (const p of c.probes.map((p) => ({ ...p, ms: p.end - p.start })).sort((a, b) => b.ms - a.ms).slice(0, 3)) console.log("probe", p.ms + "ms", t(p.start), "->", t(p.end))'  # three longest foreground writes (local time)
+send 18:58:07.990
+probe 219ms 18:58:08.007 -> 18:58:08.226
+probe 102ms 18:58:08.466 -> 18:58:08.568
+probe 49ms 18:58:08.315 -> 18:58:08.364
+$ node -e 'const g = {}; for (const l of require("fs").readFileSync("plans.jsonl", "utf8").trim().split("\n")) { const p = JSON.parse(l); const k = p.sql.replace(/\((\?, )*\?\)/g, "(...)").slice(0, 110) + " => " + p.plan.join("; "); g[k] = (g[k] ?? 0) + 1 } for (const [k, n] of Object.entries(g)) console.log(n, k)'  # EXPLAIN QUERY PLAN of each cache_entries DELETE, grouped, statement cut at 110 characters
+103 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" in (. => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key>? AND key<?)
+4 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" = ? a => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key=?)
+1 delete from "cache_entries" where "scope" = ? and "expires_at" < ? => SEARCH cache_entries USING INDEX idx_agent_cache_expiry (scope=? AND expires_at<?)
+$ cat usage-cost.json usage-cost.err  # gateway usage-cost --days 700 --json after the request
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_request_error",
+    "code": "UNAVAILABLE",
+    "message": "Usage request exceeded its 15-second budget; narrow the date range or select a session.",
+    "retryable": false
+  }
+}
+$ node <proof-dir>/summarize.mjs <proof-dir>/runs/after-c2
+{"run":"after-c2","replyMs":360397,"ackMs":66,"reply":"⚠️ This turn was interrupted because it stopped making progress. Please try again.","rows":{"template":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-startup":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-warm":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-delete":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-refresh":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900}},"autoindexStat":{"template":"1 1 1","after-startup":"1 1 1","after-warm":"1 1 1","after-delete":"1 1 1","after-refresh":"1 1 1"},"probeLabel":"probe 25722","probesBeforeRequest":{"n":29,"p50":25,"p95":29,"max":29},"probesDuringRequest":{"n":25627,"p50":4,"p95":6,"max":219},"deletes":108,"scanDeletes":0,"searchDeletes":108,"slowTransactionHolds":0,"slowTransactionHoldMs":[],"usageTotals":null,"usageDays":null,"usageError":""}
+
+### run after-c3
+$ cat steps.log
+[10:13:29.799] head f66d5f53ef93de93a101bd6ab833475854f13d04
+[10:13:29.800] db <state-dir>/agents/main/agent/openclaw-agent.sqlite
+{"at":"template","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":null}
+[10:13:29.835] start gateway
+[10:13:35.158] gateway listening (listener process group is the Gateway's: found)
+[10:14:17.503] gateway idle after 42s (last window 4 ticks of 100/s)
+{"at":"after-startup","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":null}
+[10:14:17.551] warm writer
+{"phase":"warm","writes":[186,22,7]}
+{"at":"after-warm","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 3"}
+[10:14:20.676] reservations before delete: 40
+[10:14:20.709] deleted 100 transcripts (session-00000.jsonl .. session-00099.jsonl); remaining 4900
+{"at":"after-delete","rows":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 3"}
+[10:14:22.762] chat.send /usage cost
+[10:20:28.876] client exit 0
+{"at":"after-refresh","rows":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900},"rollupLastWrite":1794733674713,"autoindexStat":"1 1 1","probeLabel":"probe 25160"}
+[10:20:29.590] usage-cost
+[10:20:46.470] usage-cost exit 1
+[10:21:50.076] gateway stopped; live state removed
+$ node -e 'const c = JSON.parse(require("fs").readFileSync("client.json", "utf8")); const { idempotencyKey, ...message } = c.finalPayload.message; console.log(JSON.stringify({ request: c.request, ack: c.ack, replyMs: c.replyMs, finalPayload: { ...c.finalPayload, message } }))'  # history, probe records and message.idempotencyKey (equal to runId) omitted
+{"request":{"method":"chat.send","sessionKey":"agent:main:main","message":"/usage cost"},"ack":{"runId":"d69f8af4-bb05-4691-967d-7659302f57b6","status":"started"},"replyMs":360248,"finalPayload":{"runId":"d69f8af4-bb05-4691-967d-7659302f57b6","sessionKey":"agent:main:main","seq":1,"state":"final","message":{"role":"assistant","content":[{"type":"text","text":"⚠️ This turn was interrupted because it stopped making progress. Please try again."}],"timestamp":1794738027708,"stopReason":"stop","usage":{"input":0,"output":0,"totalTokens":0,"cacheRead":0,"cacheWrite":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"api":"openai-responses","provider":"openclaw","model":"gateway-injected"}}}
+$ grep -hE 'slow SQLite transaction hold|slow chat send|reply watchdog|stuck session|usage-cost-cache|usage\.cost ' gateway.log
+2026-11-15T19:16:27.610+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=warn reason=no_semantic_progress
+2026-11-15T19:16:30.002+09:00 [diagnostic] stuck session: sessionId=1cb5ae16-bdf6-4c89-af92-1960af4c36e3 sessionKey=agent:main:main state=processing age=122s queueDepth=0 reason=stale_session_state classification=stale_session_state lastProgress=reply_operation:session_updated lastProgressAge=122s recovery=controller_owned
+2026-11-15T19:19:00.004+09:00 [diagnostic] stuck session: sessionId=1cb5ae16-bdf6-4c89-af92-1960af4c36e3 sessionKey=agent:main:main state=processing age=272s queueDepth=0 reason=stale_session_state classification=stale_session_state lastProgress=reply_operation:session_updated lastProgressAge=272s recovery=controller_owned
+2026-11-15T19:20:27.655+09:00 [gateway] slow chat send 360103ms stage=startup sessionId=d69f8af4-bb05-4691-967d-7659302f57b6 runId=d69f8af4-bb05-4691-967d-7659302f57b6 ack=61ms preparation=359917ms replyContext=0ms authoring=0ms runAdmission=1ms replyInitialization=184ms dispatch=0ms detail.auto_reply.dispatch_reply_from_config=360093ms detail.auto_reply.finalize_context=0ms detail.dispatch.accepted_handoff=2ms detail.dispatch.admission_wait=0ms detail.dispatch.external_handoff=0ms detail.reply.admit_dispatch=0ms detail.reply.admit_pre_dispatch=6ms detail.reply.capture_session_diff_baseline=104ms detail.reply.ensure_workspace=79ms detail.reply.handle_inline_actions=359895ms detail.reply.init_session_state=53ms detail.reply.load_prepared_dispatch_runtime=1ms detail.reply.load_reply_resolver=10ms detail.reply.native_slash_command_fast_path=0ms detail.reply.resolve_directives=16ms detail.reply.run_reply_resolver=360048ms detail.reply.session.binding=1ms detail.reply.session.commit=34ms detail.reply.session.commit.fresh_read=1ms detail.reply.session.commit.mutation=33ms detail.reply.session.hydrate=8ms detail.reply.session.initialize=44ms detail.reply.session.snapshot=1ms detail.reply.session.writer=44ms detail.run_admission.steer_prepare=1ms detail.run_admission.steer_settlement=0ms
+2026-11-15T19:20:28.645+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=blocked reason=cleanup_pending
+2026-11-15T19:20:46.419+09:00 [ws] ⇄ res ✗ usage.cost 15006ms errorCode=UNAVAILABLE errorMessage=Usage request exceeded its 15-second budget; narrow the date range or select a session. bytes=202 conn=48878f3e…bd63 id=2:542e80bc-6…4f09
+2026-11-15T19:21:28.816+09:00 [diagnostic] reply watchdog: sessionKey=agent:main:main action=blocked reason=cleanup_pending
+$ node -e 'for (const f of process.argv.slice(1)) for (const l of require("fs").readFileSync(f, "utf8").split("\n")) if (l.includes("slow SQLite transaction hold")) { const r = JSON.parse(l); console.log(r.time, r[1].operation, "elapsedMs=" + r[1].elapsedMs) }' state-logs/*.log  # wall time of each slow-transaction line
+$ grep -hE 'slow agent database reservation|slow SQLite session write' state-logs/*.log  # raw state-log lines
+{"0":"{\"subsystem\":\"session-sqlite\"}","1":{"operation":"worker","workerOperations":["open","database.prepareWrite"],"transactionCount":1,"outcome":"ok","pid":43240,"threadId":0,"isMainThread":true,"reentrant":false,"elapsedMs":6389,"queueWaitMs":1,"writerExecutionMs":6389,"completionDelayMs":0},"2":"slow agent database reservation","_meta":{"runtime":"node","runtimeVersion":"24.22.1","hostname":"<host>","date":"2026-11-15T09:07:34.217Z","logLevelId":4,"logLevelName":"WARN","name":"{\"subsystem\":\"session-sqlite\"}","parentNames":["openclaw"],"path":{"fullFilePath":"<checkout>/src/state/openclaw-agent-write-admission.ts:129:55","fileName":"openclaw-agent-write-admission.ts","fileNameWithLine":"openclaw-agent-write-admission.ts:129","fileColumn":"55","fileLine":"129","filePath":"src/state/openclaw-agent-write-admission.ts","filePathWithLine":"src/state/openclaw-agent-write-admission.ts:129","method":"report"}},"time":"2026-11-15T18:07:34.218+09:00","hostname":"<host>","message":"slow agent database reservation"}
+$ node -e 'const c = JSON.parse(require("fs").readFileSync("client.json", "utf8")); const t = (ms) => new Date(ms + 9 * 3600e3).toISOString().slice(11, 23); console.log("send", t(c.sendStartWallMs)); for (const p of c.probes.map((p) => ({ ...p, ms: p.end - p.start })).sort((a, b) => b.ms - a.ms).slice(0, 3)) console.log("probe", p.ms + "ms", t(p.start), "->", t(p.end))'  # three longest foreground writes (local time)
+send 19:14:27.488
+probe 273ms 19:16:40.945 -> 19:16:41.218
+probe 86ms 19:14:27.865 -> 19:14:27.951
+probe 56ms 19:14:55.999 -> 19:14:56.055
+$ node -e 'const g = {}; for (const l of require("fs").readFileSync("plans.jsonl", "utf8").trim().split("\n")) { const p = JSON.parse(l); const k = p.sql.replace(/\((\?, )*\?\)/g, "(...)").slice(0, 110) + " => " + p.plan.join("; "); g[k] = (g[k] ?? 0) + 1 } for (const [k, n] of Object.entries(g)) console.log(n, k)'  # EXPLAIN QUERY PLAN of each cache_entries DELETE, grouped, statement cut at 110 characters
+103 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" in (. => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key>? AND key<?)
+4 delete from "cache_entries" as "cache_entries" INDEXED BY sqlite_autoindex_cache_entries_1 where "scope" = ? a => SEARCH cache_entries USING INDEX sqlite_autoindex_cache_entries_1 (scope=? AND key=?)
+1 delete from "cache_entries" where "scope" = ? and "expires_at" < ? => SEARCH cache_entries USING INDEX idx_agent_cache_expiry (scope=? AND expires_at<?)
+$ cat usage-cost.json usage-cost.err  # gateway usage-cost --days 700 --json after the request
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_request_error",
+    "code": "UNAVAILABLE",
+    "message": "Usage request exceeded its 15-second budget; narrow the date range or select a session.",
+    "retryable": false
+  }
+}
+$ node <proof-dir>/summarize.mjs <proof-dir>/runs/after-c3
+{"run":"after-c3","replyMs":360248,"ackMs":62,"reply":"⚠️ This turn was interrupted because it stopped making progress. Please try again.","rows":{"template":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-startup":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-warm":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-delete":{"session-cost-usage-projection-v2":120000,"session-cost-usage-quarters-v1":120000,"session-cost-usage-rollup-v3":5000},"after-refresh":{"session-cost-usage-projection-v2":117600,"session-cost-usage-quarters-v1":117600,"session-cost-usage-rollup-v3":4900}},"autoindexStat":{"template":"1 1 1","after-startup":"1 1 1","after-warm":"1 1 1","after-delete":"1 1 1","after-refresh":"1 1 1"},"probeLabel":"probe 25160","probesBeforeRequest":{"n":37,"p50":14,"p95":28,"max":28},"probesDuringRequest":{"n":25057,"p50":4,"p95":7,"max":273},"deletes":108,"scanDeletes":0,"searchDeletes":108,"slowTransactionHolds":0,"slowTransactionHoldMs":[],"usageTotals":null,"usageDays":null,"usageError":""}
